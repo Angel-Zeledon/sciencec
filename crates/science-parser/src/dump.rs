@@ -798,11 +798,14 @@ impl Dump for Expr {
                     w.child("end", &**end);
                 })
             }
-            ExprKind::Closure { param, body } => {
+            ExprKind::Closure { param, rest, body } => {
                 // The implicit form has no parameter to print, and the
                 // `Each` in its body is what says so.
                 w.node("Closure", self.span, |w| {
                     w.child_opt("param", param.as_ref());
+                    for more in rest {
+                        w.child("param", more);
+                    }
                     w.child("body", &**body);
                 })
             }

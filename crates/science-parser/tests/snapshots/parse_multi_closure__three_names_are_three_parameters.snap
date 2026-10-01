@@ -1,0 +1,13 @@
+---
+source: crates/science-parser/tests/parse_multi_closure.rs
+expression: "shape_of_expr(\"(a, b, c) giving a + b + c\")"
+---
+Closure
+  param: Ident `a`
+  param: Ident `b`
+  param: Ident `c`
+  body: Binary `+`
+    lhs: Binary `+`
+      lhs: Path `a`
+      rhs: Path `b`
+    rhs: Path `c`

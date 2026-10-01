@@ -1135,6 +1135,18 @@ pub mod codes {
     /// front half had called the program clean.
     pub const UNHASHABLE_KEY: Code = Code(548);
 
+    // --- a chain link and the shape of its items, `SC0549` -----------------
+
+    /// A chain link whose items are not the shape the link reads: `keep_some()`
+    /// over items that cannot be absent, `flatten()` over items that are not
+    /// arrays.
+    ///
+    /// **The clause `collections-and-chains.md` §1.4 writes as `where
+    /// Self.Item is T?`**, which the prelude's declarations cannot carry while
+    /// the item is a type parameter; `check`'s `chain_item_shape` holds the
+    /// call to it instead, `chain_total`'s way, and says what the link wanted.
+    pub const WRONG_ITEM_SHAPE: Code = Code(549);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1177,6 +1189,7 @@ pub mod codes {
         MUTABLE_THROUGH_BOX,
         NOT_SUMMABLE,
         UNHASHABLE_KEY,
+        WRONG_ITEM_SHAPE,
     ];
 
     #[cfg(test)]

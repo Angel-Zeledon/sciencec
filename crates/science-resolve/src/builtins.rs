@@ -200,6 +200,10 @@ const LIBRARY_TYPES: &[&str] = &[
     "MapIterate",
     "MapKeys",
     "MapValues",
+    "KeepSome",
+    "Accumulate",
+    "Reverse",
+    // @LIB-END
 ];
 
 /// The interfaces the compiler knows about (§5.4).
@@ -1093,6 +1097,53 @@ macro_rules! chain_links {
             },
             Method { name: "count", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some(INT) },
             Method { name: "sum", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some($total) },
+            // `keep_some()`: items `T?` become `T`. The declaration names the
+            // item; `science-types`' `chain_item_shape` peels the nullable,
+            // as `chain_total` peels `sum()`'s borrow.
+            Method {
+                name: "keep_some",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("KeepSome", &[$this, $item])),
+            },
+            // `accumulate(initial, f)`: the running fold. The chain's item is
+            // the state, `A`; `science-types` holds `A` to a type that owns
+            // nothing, because the chain yields a copy of it each turn.
+            Method {
+                name: "accumulate",
+                generics: &["A"],
+                recv: Some(SelfKind::Value),
+                params: &[
+                    ("initial", Ty::Var("A")),
+                    ("f", Ty::Fn(&[Ty::Var("A"), $item], &Ty::Var("A"))),
+                ],
+                ret: Some(Ty::App("Accumulate", &[$this, Ty::Var("A")])),
+            },
+            // `reverse()`: §1.4's second barrier. The item is unchanged.
+            Method {
+                name: "reverse",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Reverse", &[$this, $item])),
+            },
+            // `product()` is `sum()`'s twin: the item with a borrow peeled, from
+            // one, held to the same numbers by the same checker half.
+            Method { name: "product", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some($total) },
+            // `reduce of A(self, initial: A, f: (A, Self.Item) -> A) -> A`.
+            // The closure is the two-parameter form `(acc, x) giving ...`;
+            // the item goes in by value, as `map`'s does.
+            Method {
+                name: "reduce",
+                generics: &["A"],
+                recv: Some(SelfKind::Value),
+                params: &[
+                    ("initial", Ty::Var("A")),
+                    ("f", Ty::Fn(&[Ty::Var("A"), $item], &Ty::Var("A"))),
+                ],
+                ret: Some(Ty::Var("A")),
+            },
             Method {
                 name: "has_any",
                 generics: &[],
@@ -2554,10 +2605,14 @@ const BLOCKS: &[Block] = &[
     //   `O: Iterate` and an item `O.Item` this prelude cannot spell. It is the
     //   one second source a fused loop can walk beside its own, and the
     //   yielded `Pair[Self.Item, &U]` is §1.3's, borrow and all.
-    // - **`reduce` is not declared**, although the note specifies it: its
-    //   closure is `(A, Self.Item) -> A`, and a two-parameter closure
-    //   (`(acc, x) giving …`, AMENDMENT 3) does not parse yet, so no program
-    //   could write the argument.
+    // - **`reduce` was not declared** until the two-parameter closure
+    //   (`(acc, x) giving …`, AMENDMENT 3) parsed. It does now, and `reduce`,
+    //   `accumulate` and `product` are declared with `keep_some` and
+    //   `reverse` (the third tranche). `keep_some`'s result type is peeled by
+    //   `science-types`' `chain_item_shape` and `accumulate` is held there to
+    //   a state that owns nothing (it yields a copy per item); `reverse` is a
+    //   barrier, lowered with `sorted(by:)` by `science-mir`'s
+    //   `lower_chain_over`, and anything may follow either barrier.
     //
     // **Every chain type also `implements Iterate`**, at the end of this
     // section: that is what gives `for x in xs.iterate().keep(…):` an element
@@ -2727,6 +2782,10 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("SkipWhile"),
     chain_adapter!("Every"),
     chain_adapter!("Zip"),
+    chain_adapter!("KeepSome"),
+    chain_adapter!("Accumulate"),
+    chain_adapter!("Reverse"),
+    // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
     // same `&Entry[K, V]` `for entry in m:` does, `keys()` a borrow of each
@@ -2812,6 +2871,10 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("SkipWhile"),
     chain_iterate!("Every"),
     chain_iterate!("Zip"),
+    chain_iterate!("KeepSome"),
+    chain_iterate!("Accumulate"),
+    chain_iterate!("Reverse"),
+    // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
     // **Methods, and §8.2 is why.** *"The Level 1 subset is methods on `F32`,
@@ -3173,6 +3236,10 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("SkipWhile", CHAIN_UNWRITTEN),
     ("Every", CHAIN_UNWRITTEN),
     ("Zip", CHAIN_UNWRITTEN),
+    ("KeepSome", CHAIN_UNWRITTEN),
+    ("Accumulate", CHAIN_UNWRITTEN),
+    ("Reverse", CHAIN_UNWRITTEN),
+    // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
     ("MapValues", CHAIN_UNWRITTEN),
@@ -3210,7 +3277,8 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// `collections-and-chains.md` §1.4's names that no chain type in [`BLOCKS`]
 /// declares yet, in the note's own order.
 ///
-/// Eighteen names. §1.4 counts *rows* — thirty-eight — and a row is not a
+/// Thirteen names (the third tranche removed `reduce`, `product`, `accumulate`,
+/// `keep_some` and `reverse`). §1.4 counts *rows* — thirty-eight — and a row is not a
 /// name: `minimum`/`maximum` and `has_any`/`has_all` are one row and two
 /// names each, and `sorted()`/`sorted(by:)` and `unique()`/`unique(by:)` are
 /// two rows and one name each. Twenty-one names are declared; these are the
@@ -3221,11 +3289,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// by), so §1.4's bare `minimum()` is a wrong argument count and not a
 /// silence. **`every(n)` is §1.4's `step_by`**, under the name the note gives
 /// it. **`zip` is declared for an `Array.iterate()` as its `other` and for no
-/// other chain** (see the declaration). **`reduce` is here although it is
-/// specified**: its closure is
-/// `(A, Self.Item) -> A`, and the multi-parameter form `(acc, x) giving …`
-/// (§1.2's AMENDMENT 3) does not parse yet, so a program could not write the
-/// argument the method takes.
+/// other chain** (see the declaration).
 ///
 /// **Two names in §1.4 are not here although only one of their forms is
 /// declared**: `sorted()` beside `sorted(by:)`, and `unique()` beside
@@ -3238,22 +3302,17 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "expand",
     "flatten",
     "owned",
-    "accumulate",
     // Filtering and selecting.
-    "keep_some",
     "keep_ok",
     "unique",
     // Pairing, grouping, windowing.
     "followed_by",
     "batches",
     "windows",
-    "reverse",
     // Terminals.
     "collect_or_error",
     "partition_results",
     "partition",
-    "reduce",
-    "product",
     "group",
     "tally",
 ];
@@ -3392,6 +3451,10 @@ pub const CHAIN_TYPES: &[&str] = &[
     "MapIterate",
     "MapKeys",
     "MapValues",
+    "KeepSome",
+    "Accumulate",
+    "Reverse",
+    // @CHAIN-END
 ];
 
 /// The free functions' signatures.

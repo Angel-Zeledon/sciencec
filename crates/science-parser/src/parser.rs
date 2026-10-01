@@ -4053,11 +4053,61 @@ impl<'t> Parser<'t> {
             let body = self.parse_expr();
             let span = start.merge(self.last_text_span());
             return Expr {
-                kind: ExprKind::Closure { param, body: Box::new(body) },
+                kind: ExprKind::Closure { param, rest: Vec::new(), body: Box::new(body) },
+                span,
+            };
+        }
+        if self.at_multi_param_closure() {
+            let start = self.span();
+            self.advance(); // `(`
+            let mut names = Vec::new();
+            loop {
+                names.push(self.expect_ident());
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RParen, "`)`");
+            self.advance(); // `giving`
+            let body = self.parse_expr();
+            let span = start.merge(self.last_text_span());
+            let mut names = names.into_iter();
+            let param = names.next().flatten();
+            let rest: Vec<Ident> = names.flatten().collect();
+            return Expr {
+                kind: ExprKind::Closure { param, rest, body: Box::new(body) },
                 span,
             };
         }
         self.parse_range()
+    }
+
+    /// Whether the cursor is at `(a, b, ...) giving`, the multi-parameter
+    /// closure of `def-and-lambda.md` §4.5.
+    ///
+    /// Two or more names, comma-separated, in parentheses and followed by
+    /// `giving`: a parenthesised tuple of names is never otherwise followed by
+    /// that word, so the scan needs no backtracking, and a one-name `(a)
+    /// giving` is left to its own diagnostic rather than read as a closure.
+    fn at_multi_param_closure(&self) -> bool {
+        if !matches!(self.peek(), TokenKind::LParen) {
+            return false;
+        }
+        let mut at = 1;
+        let mut names = 0;
+        loop {
+            if !matches!(self.peek_ahead(at), TokenKind::Ident(_)) {
+                return false;
+            }
+            names += 1;
+            at += 1;
+            match self.peek_ahead(at) {
+                TokenKind::Comma => at += 1,
+                TokenKind::RParen => break,
+                _ => return false,
+            }
+        }
+        names >= 2 && matches!(self.peek_ahead(at + 1), TokenKind::Giving)
     }
 
     /// `a..b` and `a..=b` (§4.5).
@@ -4609,7 +4659,7 @@ impl<'t> Parser<'t> {
             let claimed = self.each_scopes.pop().unwrap_or(false);
             let span = start.merge(self.last_text_span());
             let value = if claimed {
-                Expr { kind: ExprKind::Closure { param: None, body: Box::new(value) }, span }
+                Expr { kind: ExprKind::Closure { param: None, rest: Vec::new(), body: Box::new(value) }, span }
             } else {
                 value
             };
@@ -4649,7 +4699,7 @@ impl<'t> Parser<'t> {
                     let claimed = self.each_scopes.pop().unwrap_or(false);
                     let span = start.merge(self.last_text_span());
                     let value = if claimed {
-                        Expr { kind: ExprKind::Closure { param: None, body: Box::new(value) }, span }
+                        Expr { kind: ExprKind::Closure { param: None, rest: Vec::new(), body: Box::new(value) }, span }
                     } else {
                         value
                     };

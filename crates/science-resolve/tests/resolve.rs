@@ -1106,7 +1106,7 @@ fn each_names_the_subject_the_implicit_closure_binds() {
         other => panic!("{other:?}"),
     };
     match &args[0].value.kind {
-        ExprKind::Closure { param, body } => {
+        ExprKind::Closure { param, body, .. } => {
             assert_eq!(
                 krate.defs[*param].name, "each",
                 "the implicit form binds a subject the programmer never wrote"
@@ -1141,7 +1141,7 @@ fn the_named_closure_form_binds_what_was_written() {
         other => panic!("{other:?}"),
     };
     match &args[0].value.kind {
-        ExprKind::Closure { param, body } => {
+        ExprKind::Closure { param, body, .. } => {
             assert_eq!(krate.defs[*param].name, "doc");
             assert_eq!(path_res(body), Res::Def(*param), "the body sees its own parameter");
         }

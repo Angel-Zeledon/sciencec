@@ -697,8 +697,12 @@ impl DumpIn for Expr {
                     w.child("end", &Node(defs, end.as_ref()));
                 });
             }
-            ExprKind::Closure { param, body } => {
-                let header = defined(defs, "Closure", *param);
+            ExprKind::Closure { param, rest, body } => {
+                let mut header = defined(defs, "Closure", *param);
+                for more in rest {
+                    header.push(' ');
+                    header.push_str(&defined(defs, "param", *more));
+                }
                 w.node(&header, self.span, |w| {
                     w.child("body", &Node(defs, body.as_ref()));
                 });

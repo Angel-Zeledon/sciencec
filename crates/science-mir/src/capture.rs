@@ -150,10 +150,10 @@ pub struct Capture {
 pub fn captures_of(
     decls: &Declarations,
     thir: &thir::Body,
-    param: DefId,
+    params: &[DefId],
     body: ExprId,
 ) -> Vec<Capture> {
-    let mut walker = Walker { thir, decls, bound: vec![param], found: Vec::new() };
+    let mut walker = Walker { thir, decls, bound: params.to_vec(), found: Vec::new() };
     walker.bind_expr(body);
     walker.expr(body, Ctx::Consume(body));
     walker.found
@@ -256,8 +256,9 @@ impl Walker<'_> {
             // A nested closure's parameter is bound inside this body too, so a
             // name the inner closure introduced can never be mistaken for one
             // the outer body has to reach out for.
-            ExprKind::Closure { param, body } => {
+            ExprKind::Closure { param, rest, body } => {
                 self.bound.push(*param);
+                self.bound.extend(rest.iter().copied());
                 self.bind_expr(*body);
             }
             ExprKind::If { cond, then_branch, else_branch } => {
@@ -454,8 +455,9 @@ impl Walker<'_> {
             // wherever they reach past both. The inner walk classifies them and
             // this one merges the answer, so `giving (giving outer.f be 1)`
             // captures `outer` exclusively at both levels.
-            ExprKind::Closure { param, body } => {
-                for capture in captures_of(self.decls, thir, *param, *body) {
+            ExprKind::Closure { param, rest, body } => {
+                let params: Vec<DefId> = std::iter::once(*param).chain(rest.iter().copied()).collect();
+                for capture in captures_of(self.decls, thir, &params, *body) {
                     match capture.use_kind {
                         Use::Read => self.record(capture.def, Ctx::Read, capture.span),
                         Use::Write => self.record(capture.def, Ctx::Write, capture.span),

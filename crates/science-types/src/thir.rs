@@ -333,6 +333,9 @@ pub enum ExprKind {
     },
     Closure {
         param: DefId,
+        /// The parameters after the first of `(acc, x) giving ...`; empty
+        /// for a closure of one.
+        rest: Vec<DefId>,
         body: ExprId,
     },
     If {

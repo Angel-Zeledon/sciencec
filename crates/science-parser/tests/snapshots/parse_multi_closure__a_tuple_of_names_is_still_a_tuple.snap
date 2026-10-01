@@ -1,0 +1,7 @@
+---
+source: crates/science-parser/tests/parse_multi_closure.rs
+expression: "shape_of_expr(\"(a, b)\")"
+---
+Tuple
+  Path `a`
+  Path `b`

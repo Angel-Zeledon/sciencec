@@ -1313,7 +1313,10 @@ pub enum ExprKind {
     /// programmer did not write. [`ExprKind::Each`] then points at it like any
     /// other reference, so nothing downstream has to know which form was
     /// written.
-    Closure { param: DefId, body: Box<Expr> },
+    ///
+    /// `rest` is the parameters after the first when the closure was written
+    /// `(acc, x) giving ...`; empty for every other closure.
+    Closure { param: DefId, rest: Vec<DefId>, body: Box<Expr> },
     /// `each` — the subject of the enclosing implicit closure (§4.6).
     Each(Res),
     If(IfExpr),

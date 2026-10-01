@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_multi_closure.rs
+expression: "shape_of_expr(\"(a, b) giving if a > b: a else: b\")"
+---
+Closure
+  param: Ident `a`
+  param: Ident `b`
+  body: If
+    cond: Binary `>`
+      lhs: Path `a`
+      rhs: Path `b`
+    then: Block
+      tail: Path `a`
+    else: Block
+      tail: Path `b`

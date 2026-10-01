@@ -149,8 +149,8 @@ fn a_misspelled_link_is_reported_and_an_untranscribed_one_is_not() {
 def uses(xs: &Array[Int]) -> Int:
     let a be xs.iterate().frist()
     let b be xs.iterate().keep(each > 1).colect()
-    let c be xs.iterate().unique()
-    let d be xs.iterate().map(each * 2).reduce(0, each)
+    let c be xs.iterate().group()
+    let d be xs.iterate().map(each * 2).collect_or_error()
     0
 ",
     );
@@ -298,4 +298,123 @@ def together(xs: &Array[Int], names: &Array[String]) -> Int:
         "{:?}",
         checked.messages()
     );
+}
+
+// --- the third tranche: reduce, product ------------------------------------
+
+/// **`reduce`'s result is its accumulator's type**, and its closure takes the
+/// accumulator and the item: `(acc, x) giving ...`, the multi-parameter form
+/// (`def-and-lambda.md` §4.5). Both parameters are typed from the declaration,
+/// so `acc + x` over an `Int` and a borrowed `Int` checks clean and the call is
+/// an `Int`.
+#[test]
+fn reduce_is_typed_by_its_accumulator() {
+    let checked = check(
+        "\
+def total(xs: &Array[Int]) -> Int:
+    xs.iterate().reduce(0, (acc, x) giving acc + x)
+
+def widest(xs: &Array[F64]) -> F64:
+    xs.iterate().map(each * 2.0).reduce(0.0, (a, b) giving if b > a: b else: a)
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "total", "reduce"), "I64");
+    assert_eq!(terminal_type(&checked, "widest", "reduce"), "F64");
+}
+
+/// **A closure with the wrong number of parameters is refused**, where it used
+/// to be accepted in silence: the arity of the closure a position takes is
+/// part of its type, and `reduce`'s fold takes two.
+#[test]
+fn a_closure_of_the_wrong_arity_is_refused() {
+    let checked = check(
+        "\
+def one(xs: &Array[Int]) -> Int:
+    xs.iterate().reduce(0, x giving x)
+
+def three(xs: &Array[Int]) -> Int:
+    xs.iterate().reduce(0, (a, b, c) giving a)
+",
+    );
+    assert_eq!(checked.codes(), vec![527, 527], "{:?}", checked.messages());
+}
+
+/// **`product()` over non-numbers is `SC0547`**, `sum()`'s refusal, and names
+/// itself in the message.
+#[test]
+fn product_over_non_numeric_items_is_refused() {
+    let checked = check(
+        "\
+type Doc:
+    title: String
+
+def f(docs: &Array[Doc]) -> Int:
+    let t be docs.iterate().product()
+    0
+",
+    );
+    assert_eq!(checked.codes(), vec![547], "{:?}", checked.messages());
+    assert!(checked.messages()[0].contains("`product()`"), "{:?}", checked.messages());
+}
+
+// --- keep_some, accumulate --------------------------------------------------
+
+/// **`keep_some()` peels the nullable off the item**, and a borrow of a
+/// nullable of a type that owns nothing with it: an `Array[Int?]` iterates
+/// `&Int?` and `keep_some()` yields `Int`. The declaration says the item and
+/// `chain_item_shape` does the peeling, as `chain_total` does for `sum()`.
+#[test]
+fn keep_some_peels_the_nullable_off_the_item() {
+    let checked = check(
+        "\
+def half(n: Int) -> Int?:
+    null
+
+def from_a_map(xs: &Array[Int]) -> Array[Int]:
+    xs.iterate().map(x giving half(x)).keep_some().collect()
+
+def through_a_borrow(xs: &Array[Int?]) -> Array[Int]:
+    xs.iterate().keep_some().collect()
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "from_a_map", "collect"), "Array[I64]");
+    assert_eq!(terminal_type(&checked, "through_a_borrow", "collect"), "Array[I64]");
+}
+
+/// **A `keep_some()` over items that cannot be absent is `SC0549`**, once, and
+/// the chain after it is silent rather than a cascade.
+#[test]
+fn keep_some_over_items_that_cannot_be_absent_is_refused() {
+    let checked = check(
+        "\
+def f(xs: &Array[Int]) -> Int:
+    xs.iterate().keep_some().count()
+",
+    );
+    assert_eq!(checked.codes(), vec![549], "{:?}", checked.messages());
+    assert!(checked.messages()[0].contains("`keep_some()`"), "{:?}", checked.messages());
+}
+
+/// **`accumulate` yields its state, so the state must own nothing**: a number
+/// is a state and a `String` is `SC0549` — the chain would have to clone it
+/// per item, and the note does not say that it does.
+#[test]
+fn accumulate_is_typed_by_its_state_and_refuses_one_that_owns() {
+    let checked = check(
+        "\
+def running(xs: &Array[Int]) -> Array[Int]:
+    xs.iterate().accumulate(0, (acc, x) giving acc + x).collect()
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "running", "collect"), "Array[I64]");
+    let refused = check(
+        "\
+def f(xs: &Array[Int]) -> Int:
+    xs.iterate().accumulate(\"\", (acc, x) giving acc).count()
+",
+    );
+    assert_eq!(refused.codes(), vec![549], "{:?}", refused.messages());
 }

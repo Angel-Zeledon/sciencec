@@ -891,6 +891,7 @@ fn dump_statements_and_expressions() {
                         value: expr(
                             ExprKind::Closure {
                                 param: Some(ident("doc", 219)),
+                                rest: Vec::new(),
                                 body: Box::new(expr(
                                     ExprKind::Field {
                                         base: Box::new(var("doc", 229)),
@@ -925,6 +926,7 @@ fn dump_statements_and_expressions() {
                         value: expr(
                             ExprKind::Closure {
                                 param: None,
+                                rest: Vec::new(),
                                 body: Box::new(expr(
                                     ExprKind::Field {
                                         base: Box::new(expr(ExprKind::Each, 255, 259)),

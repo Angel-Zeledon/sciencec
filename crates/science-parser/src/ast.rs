@@ -1017,7 +1017,13 @@ pub enum ExprKind {
     /// The two closure forms of §4.6. `param: None` is the implicit-subject
     /// form `each.title`, whose body mentions [`ExprKind::Each`]; `Some(name)`
     /// is `doc giving doc.title`.
-    Closure { param: Option<Ident>, body: Box<Expr> },
+    ///
+    /// `rest` holds the parameters after the first of the multi-parameter
+    /// form `(acc, x) giving acc + x` (`def-and-lambda.md` §4.5, AMENDMENT 3):
+    /// `param` is the first, `rest` the others, and it is empty for every
+    /// closure of one parameter. The multi-parameter form is `giving`
+    /// unconditionally — `each` names one subject and has no spelling for two.
+    Closure { param: Option<Ident>, rest: Vec<Ident>, body: Box<Expr> },
     /// `each`, the undeclared subject of the enclosing call (§4.6).
     Each,
     If(IfExpr),

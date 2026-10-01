@@ -1378,8 +1378,8 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Match(match_expr) => {
                 self.match_expr(match_expr, expr.span, Some((expected, site))).id
             }
-            hir::ExprKind::Closure { param, body } => {
-                self.closure(*param, body, expr.span, Some(expected)).id
+            hir::ExprKind::Closure { param, rest, body } => {
+                self.closure(*param, rest, body, expr.span, Some(expected)).id
             }
             // Decision 11's bidirectional push, and the whole of it: an
             // expected `Array of E` drives `E` into every element, an empty
@@ -2313,7 +2313,9 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Range { start, end, inclusive } => {
                 self.range_expr(start, end, *inclusive, span)
             }
-            hir::ExprKind::Closure { param, body } => self.closure(*param, body, span, None),
+            hir::ExprKind::Closure { param, rest, body } => {
+                self.closure(*param, rest, body, span, None)
+            }
             hir::ExprKind::Each(res) => match res {
                 Res::Def(def) => {
                     let ty = self.local_ty(*def);
@@ -4133,10 +4135,10 @@ impl<'a> BodyChecker<'a> {
     /// `BodyChecker::closure` already makes: bind from the expectation,
     /// synthesise the body when the expected return is still a parameter.
     fn synth_against(&mut self, expr: &hir::Expr, param_ty: Ty) -> Typed {
-        if let hir::ExprKind::Closure { param, body } = &expr.kind {
+        if let hir::ExprKind::Closure { param, rest, body } = &expr.kind {
             let revealed = self.revealed(param_ty, expr.span);
             if matches!(self.types.kind(revealed), TyKind::Closure { .. }) {
-                return self.closure(*param, body, expr.span, Some(revealed));
+                return self.closure(*param, rest, body, expr.span, Some(revealed));
             }
         }
         self.synth(expr)
@@ -5127,9 +5129,99 @@ impl<'a> BodyChecker<'a> {
         let ret = self.apply(&generic, ret, span);
         let ret = self.instantiate(ret, span);
         if self.is_chain_sum(candidate.method) {
-            return (ids, InferTy::Known(self.chain_total(ret, span)));
+            let name = self.defs.get(candidate.method).name.clone();
+            return (ids, InferTy::Known(self.chain_total(ret, span, &name)));
         }
+        let ret = self.chain_item_shape(candidate.method, ret, span);
         (ids, InferTy::Known(ret))
+    }
+
+    /// The links whose result type depends on the *shape* of the chain's item,
+    /// which the prelude's declarations cannot say while the item is still a
+    /// parameter: `keep_some()` over `T?` items yields `T`.
+    ///
+    /// **The declaration says the item and this peels it**, `chain_total`'s
+    /// arrangement for `sum()` and for the same reason: `collections-and-
+    /// chains.md` §1.4's `where Self.Item is T?` is a clause a [`Method`]
+    /// cannot carry. An item of the wrong shape is `SC0549`, and the call's
+    /// type is then `Ty::ERROR`, so one mistake is one diagnostic.
+    ///
+    /// [`Method`]: science_resolve::builtins
+    fn chain_item_shape(&mut self, method: DefId, ret: Ty, span: Span) -> Ty {
+        let def = self.defs.get(method);
+        if !def.is_builtin() {
+            return ret;
+        }
+        let name = def.name.clone();
+        let on_a_chain = def.parent.is_some_and(|owner| {
+            science_resolve::builtins::CHAIN_TYPES.contains(&self.defs.get(owner).name.as_str())
+        });
+        if on_a_chain && name == "accumulate" {
+            // The chain yields a copy of its running state, so the state must
+            // be a thing that can be copied for free: `collections-and-
+            // chains.md` §1.4 leaves the yielded value's ownership unsaid,
+            // and a clone per item is not something to do unasked.
+            if let TyKind::Named { args, .. } = self.types.kind(ret).clone() {
+                if let Some(state) = args.get(1).and_then(|arg| arg.as_type()) {
+                    if !self.types.references_error(state)
+                        && ownership::needs_drop(self.decls, self.types, self.aliases, state)
+                    {
+                        let rendered = self.types.render(self.defs, state);
+                        self.diagnostics.push(wrong_item_shape(
+                            span,
+                            "accumulate",
+                            &rendered,
+                            "a state that owns nothing — the chain yields a copy of it per item",
+                        ));
+                        return Ty::ERROR;
+                    }
+                }
+            }
+            return ret;
+        }
+        if !on_a_chain || name != "keep_some" {
+            return ret;
+        }
+        let TyKind::Named { def: adapter, args } = self.types.kind(ret).clone() else {
+            return ret;
+        };
+        let (Some(source), Some(item)) =
+            (args.first().cloned(), args.get(1).and_then(|arg| arg.as_type()))
+        else {
+            return ret;
+        };
+        if self.types.references_error(item) {
+            return ret;
+        }
+        let peeled = match self.types.kind(item).clone() {
+            TyKind::Nullable(inner) => Some(inner),
+            // A borrow of a nullable of something that owns nothing is read
+            // through, and the chain carries the value: a borrow *into* a
+            // nullable's payload is not a thing a `Ty` can say, and a copy of
+            // something that owns is a second owner.
+            TyKind::Borrowed { mutable: false, inner } => match self.types.kind(inner).clone() {
+                TyKind::Nullable(payload)
+                    if !ownership::needs_drop(self.decls, self.types, self.aliases, payload) =>
+                {
+                    Some(payload)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        match peeled {
+            Some(payload) => self.types.named(adapter, vec![source, GenericArg::Type(payload)]),
+            None => {
+                let rendered = self.types.render(self.defs, item);
+                self.diagnostics.push(wrong_item_shape(
+                    span,
+                    &name,
+                    &rendered,
+                    "items that may be absent, `T?`",
+                ));
+                Ty::ERROR
+            }
+        }
     }
 
     /// Whether this callee is `sum()` on one of the prelude's chain types.
@@ -5142,7 +5234,7 @@ impl<'a> BodyChecker<'a> {
     /// [`CHAIN_TYPES`]: science_resolve::builtins::CHAIN_TYPES
     fn is_chain_sum(&self, method: DefId) -> bool {
         let def = self.defs.get(method);
-        if !def.is_builtin() || def.name != "sum" {
+        if !def.is_builtin() || (def.name != "sum" && def.name != "product") {
             return false;
         }
         def.parent.is_some_and(|owner| {
@@ -5167,7 +5259,7 @@ impl<'a> BodyChecker<'a> {
     /// because *"concatenation is not summation"*. A type parameter is refused
     /// too, and that is the narrowing this costs — the note would admit a
     /// `T: Add`, and F0 has no `Output` to say what such a sum's type is.
-    fn chain_total(&mut self, ret: Ty, span: Span) -> Ty {
+    fn chain_total(&mut self, ret: Ty, span: Span, method: &str) -> Ty {
         let total = match *self.types.kind(ret) {
             TyKind::Borrowed { mutable: false, inner } => inner,
             _ => ret,
@@ -5177,7 +5269,7 @@ impl<'a> BodyChecker<'a> {
             return total;
         }
         let rendered = self.types.render(self.defs, total);
-        self.diagnostics.push(not_summable(span, &rendered));
+        self.diagnostics.push(not_summable(span, &rendered, method));
         Ty::ERROR
     }
 
@@ -7600,16 +7692,31 @@ impl<'a> BodyChecker<'a> {
     fn closure(
         &mut self,
         param: DefId,
+        rest: &[DefId],
         body: &hir::Expr,
         span: Span,
         expected: Option<Ty>,
     ) -> Typed {
         let expected = expected.map(|ty| self.revealed(ty, span));
-        let (param_ty, ret) = match expected.map(|ty| self.types.kind(ty).clone()) {
-            Some(TyKind::Closure { params, ret }) => (params.first().copied(), Some(ret)),
+        let (param_tys, ret) = match expected.map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Closure { params, ret }) => (Some(params), Some(ret)),
             // §6: a closure in synthesis mode has no parameter type to take.
             _ => (None, None),
         };
+        // One expected type per written parameter; a closure written with a
+        // different count from the one expected binds the surplus at `ERROR`,
+        // and the arity mismatch is reported when the closure's own type is
+        // compared with the expectation.
+        let written = 1 + rest.len();
+        if let Some(params) = &param_tys {
+            if params.len() != written {
+                self.diagnostics.push(wrong_closure_arity(span, params.len(), written));
+            }
+        }
+        let param_tys: Vec<Option<Ty>> = (0..written)
+            .map(|at| param_tys.as_ref().and_then(|params| params.get(at).copied()))
+            .collect();
+        let param_ty = param_tys[0];
         // **A return that is still a type parameter is a return this call has
         // not solved yet, and the body is what solves it.**
         //
@@ -7635,16 +7742,24 @@ impl<'a> BodyChecker<'a> {
         // `x giving x * 2` binds its parameter the way a pattern does, and
         // there is no place in that syntax for `mutable`.
         self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);
+        for (more, ty) in rest.iter().zip(&param_tys[1..]) {
+            self.bind_local(*more, InferTy::Known(ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);
+        }
         let body_id = match ret {
             Some(ret) => self.check(body, ret, Site::Return),
             None => self.synth(body).id,
         };
         let body_ty = self.body.ty(body_id);
+        let all: Vec<Ty> = param_tys.iter().map(|ty| ty.unwrap_or(Ty::ERROR)).collect();
         let ty = match (param_ty, ret) {
-            (Some(param_ty), Some(ret)) => self.types.closure(vec![param_ty], ret),
-            _ => self.types.closure(vec![param_ty.unwrap_or(Ty::ERROR)], body_ty),
+            (Some(_), Some(ret)) => self.types.closure(all, ret),
+            _ => self.types.closure(all, body_ty),
         };
-        let id = self.body.push_expr(ExprKind::Closure { param, body: body_id }, ty, span);
+        let id = self.body.push_expr(
+            ExprKind::Closure { param, rest: rest.to_vec(), body: body_id },
+            ty,
+            span,
+        );
         Typed { id, ty: InferTy::Known(ty) }
     }
 
@@ -9235,6 +9350,31 @@ fn wrong_argument_count(span: Span, expected: usize, found: usize) -> Diagnostic
     .with_label(Label::primary(span, format!("{found} given")))
 }
 
+/// `SC0549` — a chain link that needs its items to have a shape they do not.
+fn wrong_item_shape(span: Span, method: &str, found: &str, wanted: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::WRONG_ITEM_SHAPE,
+        format!("`{method}()` needs {wanted}, and these are `{found}`"),
+    )
+    .with_label(Label::primary(span, format!("a chain of `{found}`")))
+}
+
+/// `SC0527` — a closure written with a different number of parameters from the
+/// one its position takes: `reduce(0, x giving x)`, where the fold takes
+/// `(acc, x)`.
+fn wrong_closure_arity(span: Span, expected: usize, found: usize) -> Diagnostic {
+    let plural = if expected == 1 { "" } else { "s" };
+    Diagnostic::error(
+        codes::WRONG_ARGUMENT_COUNT,
+        format!("this closure is given {expected} parameter{plural} and was written with {found}"),
+    )
+    .with_label(Label::primary(span, format!("{found} written")))
+    .with_note(
+        "a closure with more than one parameter is written `(a, b) giving ...`; a single \
+         parameter is `a giving ...` or `each`",
+    )
+}
+
 /// `SC0528` — a field the type does not have.
 fn no_such_field(span: Span, name: &str, ty: &str) -> Diagnostic {
     Diagnostic::error(codes::NO_SUCH_FIELD, format!("`{ty}` has no field `{name}`"))
@@ -9298,12 +9438,12 @@ fn unsatisfied_bound(
 /// likely to be in.** A chain of strings wanted concatenation, which §1.5
 /// sends to `String.from(chain)`; a chain of records wanted a number out of
 /// each, which is a `map` before the `sum`.
-fn not_summable(span: Span, ty: &str) -> Diagnostic {
+fn not_summable(span: Span, ty: &str, method: &str) -> Diagnostic {
     Diagnostic::error(
         codes::NOT_SUMMABLE,
-        format!("`sum()` needs numeric items, and these are `{ty}`"),
+        format!("`{method}()` needs numeric items, and these are `{ty}`"),
     )
-    .with_label(Label::primary(span, format!("a chain of `{ty}` has no sum")))
+    .with_label(Label::primary(span, format!("a chain of `{ty}` has no {method}")))
     .with_note(
         "`collections-and-chains.md` §1.4 sums §5.1's numeric types only: concatenation is not \
          summation, and a record needs a `map` to the number it holds first — \

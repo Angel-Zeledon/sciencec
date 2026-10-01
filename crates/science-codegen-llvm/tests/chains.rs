@@ -622,33 +622,81 @@ fn an_empty_source_gives_every_terminal_its_empty_answer() {
     );
 }
 
-/// **A terminal after the barrier is refused by name**, not mis-lowered.
-/// `sorted(by:)` then `first()` is §1.4's top-one, and it is exactly the
-/// shape `science-mir`'s `Unresolved::Chain` carries: the buffer holds owned
-/// items, and what `first()` does with the ones it does not return is the
-/// ownership question the note leaves open.
+/// **Links and terminals after a barrier run over the buffer it filled**, and
+/// the buffer is popped, so an owned item is moved out exactly once and what
+/// the chain never reaches is released with the buffer. `sorted(by:)` then
+/// `first()` is §1.4's top-one: the `1` is returned, the `4`, `3` and `2` it
+/// did not return are dropped when the statement ends. `take(1)` after a
+/// descending sort pops the `4`, pops the `3` and drops it at the limit, and
+/// the `1` and `2` the loop never reached go with the buffer. (The `dropped 1`
+/// after `top 1` is the `if top?:` narrowing's, which does it without a sort.)
 #[test]
-fn a_scalar_terminal_after_sorted_is_refused_by_name() {
-    let lowered = lower(
-        "def main():
+fn a_terminal_after_the_barrier_pops_an_owned_buffer() {
+    assert_eq!(
+        prints(
+            "sorted-then-first",
+            "type Tracer:
+    tag: Int
+
+Tracer implements Drop:
+    def drop(mutable self):
+        print(f\"dropped {self.tag}\")
+
+def main():
     let mutable xs be Array[Int].new()
     xs.push(3)
     xs.push(1)
-    let top be xs.iterate().map(each * 1).sorted(by: n giving n).first()
+    xs.push(4)
+    xs.push(2)
+    let top be xs.iterate().map(x giving Tracer(tag: x)).sorted(by: t giving t.tag).first()
+    print(\"after first\")
+    if top?:
+        print(f\"top {top.tag}\")
+    let best be xs.iterate().map(x giving Tracer(tag: x)).sorted(by: t giving 0 - t.tag).take(1).collect()
+    print(f\"best {best[0].tag}\")
+    print(\"end\")
 ",
+        ),
+        "dropped 4\ndropped 3\ndropped 2\nafter first\ntop 1\ndropped 1\n\
+         dropped 3\ndropped 1\ndropped 2\nbest 4\nend\ndropped 4\n"
     );
-    let dir = scratch("chains", "sorted-then-first");
-    let diagnostics = lowered
-        .try_build(&dir.join("out"), OptLevel::O2)
-        .map(|_| ())
-        .expect_err("a terminal after the barrier is not lowered");
-    let _ = std::fs::remove_dir_all(&dir);
-    let first = diagnostics.first().expect("a diagnostic");
-    assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
-    assert!(
-        first.message.contains("sorted(by:)") && first.message.contains("first()"),
-        "the refusal must name the barrier and the terminal after it, and it said: {}",
-        first.message
+}
+
+/// **`reverse()` is a barrier that turns the stream round**: alone, twice (the
+/// identity), after a sort (top-k is `sorted(by:).reverse().take(k)`), before
+/// a `map` and a `keep`, as a `for`'s subject, and between two sorts.
+#[test]
+fn reverse_turns_the_chain_round() {
+    assert_eq!(
+        prints(
+            "reverse",
+            "def main():
+    let mutable xs be Array[Int].new()
+    xs.push(3)
+    xs.push(1)
+    xs.push(4)
+    xs.push(2)
+    let r be xs.iterate().reverse().collect()
+    print(f\"{r[0]} {r[1]} {r[2]} {r[3]}\")
+    let rr be xs.iterate().reverse().reverse().collect()
+    print(f\"{rr[0]} {rr[3]}\")
+    let top be xs.iterate().sorted(by: each * 1).reverse().take(2).collect()
+    print(f\"{top.length()} {top[0]} {top[1]}\")
+    let low be xs.iterate().sorted(by: each * 1).take(3).collect()
+    print(f\"{low[0]} {low[1]} {low[2]}\")
+    print(xs.iterate().sorted(by: each * 1).sum())
+    let f be xs.iterate().reverse().first()
+    if f?:
+        print(f\"first {f}\")
+    let m be xs.iterate().reverse().map(each * 10).keep(each > 10).collect()
+    print(f\"{m.length()} {m[0]} {m[1]} {m[2]}\")
+    for x in xs.iterate().sorted(by: each * 1).reverse():
+        print(x)
+    let both be xs.iterate().sorted(by: 0 - each).sorted(by: each * 1).collect()
+    print(f\"{both[0]} {both[3]}\")
+",
+        ),
+        "2 4 1 3\n3 2\n2 4 3\n1 2 3\n10\nfirst 2\n3 20 40 30\n4\n3\n2\n1\n1 4\n"
     );
 }
 
@@ -1123,4 +1171,169 @@ fn a_zip_with_anything_but_an_array_source_is_refused() {
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(first.message.contains("Zip["), "it must name the chain it could not build: {}", first.message);
+}
+
+// --- the third tranche: reduce, product ------------------------------------
+
+/// **`reduce` folds with the two-parameter closure `(acc, x) giving ...`**,
+/// from the initial value, in order. Subtraction is the order's witness: a fold
+/// from the right gives a different number, and so does one that starts from
+/// the first item instead of from `initial`.
+#[test]
+fn reduce_folds_from_the_initial_value_in_order() {
+    assert_eq!(
+        prints(
+            "reduce",
+            &over_five(
+                "    print(xs.iterate().reduce(0, (acc, x) giving acc + x))
+    print(xs.iterate().reduce(100, (acc, x) giving acc - x))
+    print(xs.iterate().reduce(10, (a, b) giving if b > a: b else: a))
+    let bound be 3
+    print(xs.iterate().keep(each > 1).map(each * 2).reduce(1, (acc, x) giving acc * x + bound))
+    let empty be xs.iterate().discard(each > 0).reduce(42, (acc, x) giving acc + x)
+    print(empty)
+    let text be xs.iterate().map(each * 7).reduce(\"\", (acc, x) giving f\"{acc}<{x}>\")
+    print(text)
+"
+            ),
+        ),
+        "15\n85\n10\n3633\n42\n<7><14><21><28><35>\n"
+    );
+}
+
+/// **A `reduce` over owned items and with an owned accumulator releases every
+/// one**: each item is dropped by the closure that takes it, and each
+/// accumulator it replaces is dropped by the next call, so the only `Tracer`
+/// alive at the end is the result, released when it goes out of scope.
+#[test]
+fn reduce_releases_the_items_and_the_accumulators_it_replaces() {
+    assert_eq!(
+        prints(
+            "reduce-owned",
+            &traced(
+                "    let sum be xs.iterate().map(x giving Tracer(tag: x)).reduce(0, (acc, t) giving acc + t.tag)
+    print(f\"sum {sum}\")
+    let last be xs.iterate().reduce(Tracer(tag: 0), (acc, x) giving Tracer(tag: acc.tag + x))
+    print(f\"end {last.tag}\")
+"
+            ),
+        ),
+        "dropped 1\ndropped 2\ndropped 3\ndropped 4\nsum 10\n\
+         dropped 0\ndropped 1\ndropped 3\ndropped 6\nend 10\ndropped 10\n"
+    );
+}
+
+/// **`product` is `sum`'s twin from one**: an `Int` chain, a float chain, a
+/// chain after a `map`, and the empty chain, whose product is the identity.
+#[test]
+fn product_multiplies_from_one() {
+    assert_eq!(
+        prints(
+            "product",
+            &over_five(
+                "    print(xs.iterate().product())
+    print(xs.iterate().map(each + 1).product())
+    print(xs.iterate().discard(each > 0).product())
+    let mutable fs be Array[F64].new()
+    fs.push(1.5)
+    fs.push(4.0)
+    print(fs.iterate().product())
+"
+            ),
+        ),
+        "120\n720\n1\n6.0\n"
+    );
+}
+
+// --- keep_some --------------------------------------------------------------
+
+/// **`keep_some()` drops the absent items and unwraps the rest**, over owned
+/// `T?` items (a `map` that can fail), and over a borrowed nullable of a type
+/// that owns nothing (an `Array[Int?]`). An owned payload that survives is
+/// moved on, so the `Tracer`s a `map` made are each released exactly once —
+/// by the closure that takes them — and the absent ones leave nothing behind.
+#[test]
+fn keep_some_drops_the_absent_and_unwraps_the_rest() {
+    assert_eq!(
+        prints(
+            "keep-some",
+            "type Tracer:
+    tag: Int
+
+Tracer implements Drop:
+    def drop(mutable self):
+        print(f\"dropped {self.tag}\")
+
+def half(n: Int) -> Int?:
+    if n % 2 is 0:
+        return n / 2
+    null
+
+def traced(n: Int) -> Tracer?:
+    if n > 2:
+        return Tracer(tag: n)
+    null
+
+def label(n: Int) -> String?:
+    if n > 1:
+        return f\"n{n}\"
+    null
+
+def main():
+    let mutable xs be Array[Int].new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    xs.push(4)
+    let halves be xs.iterate().map(x giving half(x)).keep_some().collect()
+    print(f\"{halves.length()} {halves[0]} {halves[1]}\")
+    let t be xs.iterate().map(x giving traced(x)).keep_some().map(each.tag).sum()
+    print(f\"sum {t}\")
+    let words be xs.iterate().map(x giving label(x)).keep_some().collect()
+    print(f\"{words.length()} {words[0]} {words[2]}\")
+    let mutable ns be Array[Int?].new()
+    ns.push(5)
+    ns.push(null)
+    ns.push(7)
+    let kept be ns.iterate().keep_some().collect()
+    print(f\"{kept.length()} {kept[0]} {kept[1]}\")
+    print(ns.iterate().keep_some().count())
+    for v in xs.iterate().map(x giving traced(x)).keep_some():
+        print(f\"loop {v.tag}\")
+",
+        ),
+        "2 1 2\ndropped 3\ndropped 4\nsum 7\n3 n2 n4\n2 5 7\n2\n\
+         loop 3\ndropped 3\nloop 4\ndropped 4\n"
+    );
+}
+
+// --- accumulate -------------------------------------------------------------
+
+/// **`accumulate(initial, f)` yields the running state after each item** —
+/// `reduce` that keeps its intermediates. The first value is `f(initial,
+/// first)`, not `initial`; a link before it filters, a link after it
+/// truncates, and `last()` of the chain is what `reduce` would have been.
+#[test]
+fn accumulate_yields_the_state_after_each_item() {
+    assert_eq!(
+        prints(
+            "accumulate",
+            &over_five(
+                "    let running be xs.iterate().accumulate(0, (acc, x) giving acc + x).collect()
+    print(f\"{running.length()} {running[0]} {running[1]} {running[4]}\")
+    let doubling be xs.iterate().accumulate(0.5, (acc, x) giving acc * 2.0).take(3).collect()
+    print(f\"{doubling[0]} {doubling[2]}\")
+    let tail be xs.iterate().keep(each > 1).accumulate(10, (acc, x) giving acc - x).last()
+    if tail?:
+        print(tail)
+    let total be xs.iterate().accumulate(1, (acc, x) giving acc * x).last()
+    if total?:
+        print(total)
+    for r in xs.iterate().accumulate(0, (acc, x) giving acc + x).skip(3):
+        print(r)
+"
+            ),
+        ),
+        "5 1 3 15\n1.0 4.0\n-4\n120\n10\n15\n"
+    );
 }

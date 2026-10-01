@@ -2308,7 +2308,9 @@ impl Resolver {
                 end: Box::new(self.resolve_expr(end)),
                 inclusive: *inclusive,
             },
-            ast::ExprKind::Closure { param, body } => self.resolve_closure(param, body, expr.span),
+            ast::ExprKind::Closure { param, rest, body } => {
+                self.resolve_closure(param, rest, body, expr.span)
+            }
             ast::ExprKind::Each => hir::ExprKind::Each(self.resolve_each(expr.span)),
             ast::ExprKind::If(if_expr) => hir::ExprKind::If(hir::IfExpr {
                 cond: Box::new(self.resolve_expr(&if_expr.cond)),
@@ -2354,6 +2356,7 @@ impl Resolver {
     fn resolve_closure(
         &mut self,
         param: &Option<ast::Ident>,
+        rest: &[ast::Ident],
         body: &ast::Expr,
         span: Span,
     ) -> hir::ExprKind {
@@ -2367,9 +2370,18 @@ impl Resolver {
         };
         let def = self.defs.alloc(DefKind::Param, name, name_span, Some(self.current_module));
         let _ = self.ribs.define(name, def);
+        // The multi-parameter form's other names, bound in the same rib.
+        let mut more = Vec::with_capacity(rest.len());
+        for ident in rest {
+            self.check_reserved(ident);
+            let def =
+                self.defs.alloc(DefKind::Param, &ident.name, ident.span, Some(self.current_module));
+            let _ = self.ribs.define(&ident.name, def);
+            more.push(def);
+        }
         let body = Box::new(self.resolve_expr(body));
         self.ribs.pop();
-        hir::ExprKind::Closure { param: def, body }
+        hir::ExprKind::Closure { param: def, rest: more, body }
     }
 
     /// `each` (§4.6).
@@ -2762,7 +2774,9 @@ impl Resolver {
                 // here it has no subject, so it is resolved bare and `SC0212`
                 // says so.
                 value: match &init.value.kind {
-                    ast::ExprKind::Closure { param: None, body } => self.resolve_expr(body),
+                    ast::ExprKind::Closure { param: None, rest, body } if rest.is_empty() => {
+                        self.resolve_expr(body)
+                    }
                     _ => self.resolve_expr(&init.value),
                 },
                 span: init.span,

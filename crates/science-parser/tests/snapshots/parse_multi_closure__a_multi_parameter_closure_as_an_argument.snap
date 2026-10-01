@@ -1,0 +1,14 @@
+---
+source: crates/science-parser/tests/parse_multi_closure.rs
+expression: "shape_of_expr(\"xs.reduce(0, (acc, x) giving acc + x)\")"
+---
+Method `reduce`
+  receiver: Path `xs`
+  args
+    Int 0
+    Closure
+      param: Ident `acc`
+      param: Ident `x`
+      body: Binary `+`
+        lhs: Path `acc`
+        rhs: Path `x`

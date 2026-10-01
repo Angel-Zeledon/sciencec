@@ -752,7 +752,7 @@ pub fn method_call_args(sp: &Sp, receiver: Expr, method: &str, args: Vec<Arg>) -
 pub fn closure(sp: &Sp, param: Option<&str>, body: Expr) -> Expr {
     let param = param.map(|n| ident(sp, n));
     let span = param.as_ref().map_or(body.span, |p| p.span.merge(body.span));
-    Expr { kind: ExprKind::Closure { param, body: Box::new(body) }, span }
+    Expr { kind: ExprKind::Closure { param, rest: Vec::new(), body: Box::new(body) }, span }
 }
 
 /// `each` — the subject the implicit closure form leaves unwritten.

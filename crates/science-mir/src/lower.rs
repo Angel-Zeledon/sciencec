@@ -608,6 +608,8 @@ const MAP_ENTRY_AT: &str = "science_map_entry_at";
 /// The keys are an `Array[Int]` the same loop computed — see the entry
 /// point's own note for why they are not computed inside the comparison.
 const ARRAY_SORT_BY_INT_KEY: &str = "science_array_sort_by_int_key";
+/// `reverse()`'s other barrier: the buffer turned round in place.
+const ARRAY_REVERSE: &str = "science_array_reverse";
 const PANIC_BYTES: &str = "science_panic_bytes";
 const PUSH_STR: &str = "science_string_push_str";
 /// `IoError implements Display` and `TextError implements Display`, as two
@@ -1048,15 +1050,24 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// §1.2's arrow type takes it as one — so this calls [`Builder::expr_into`]
     /// directly rather than [`Builder::lower_block`], which is the entry point
     /// every function body uses because a `def`'s is a block.
-    fn run_closure(&mut self, param: DefId, body: ExprId, ret_ty: Ty, captures: &[CaptureParam]) {
+    fn run_closure(
+        &mut self,
+        params: &[DefId],
+        body: ExprId,
+        ret_ty: Ty,
+        captures: &[CaptureParam],
+    ) {
         let span = self.thir.expr(body).span;
         self.span = span;
         self.push_local(ret_ty, LocalKind::Return, span);
-        let param_ty = self.thir.local_ty(param).unwrap_or(Ty::ERROR);
-        let param_span = self.context.defs.get(param).span;
-        let local = self.push_local(param_ty, LocalKind::Param(param), param_span);
-        self.bindings.insert(param, local);
-        let mut param_locals = vec![local];
+        let mut param_locals = Vec::with_capacity(params.len() + captures.len());
+        for param in params {
+            let param_ty = self.thir.local_ty(*param).unwrap_or(Ty::ERROR);
+            let param_span = self.context.defs.get(*param).span;
+            let local = self.push_local(param_ty, LocalKind::Param(*param), param_span);
+            self.bindings.insert(*param, local);
+            param_locals.push(local);
+        }
         // §8.6. Each capture is one more parameter, holding the reference the
         // enclosing body took, in [`crate::capture`]'s first-mention order —
         // the same order [`Builder::lower_captures`] wrote the aggregate in, so
@@ -1072,7 +1083,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             self.captured.insert(capture.def, capture.referent_ty);
             param_locals.push(local);
         }
-        self.arg_count = 1 + captures.len();
+        self.arg_count = params.len() + captures.len();
         self.closure_captures = Some(captures.len());
 
         let entry = self.new_block();
@@ -1822,9 +1833,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             // §8. The captures are lowered, and — new — a capture-free
             // closure's body now is too.
-            ExprKind::Closure { param, body } => {
+            ExprKind::Closure { param, rest, body } => {
                 let (param, body) = (*param, *body);
-                let (captures, capture_params, block) = self.lower_captures(param, body, block);
+                let all_params: Vec<DefId> =
+                    std::iter::once(param).chain(rest.iter().copied()).collect();
+                let (captures, capture_params, block) =
+                    self.lower_captures(&all_params, body, block);
                 // §8.5's follow-up, and §8.6's: a closure gets the [`Body`]
                 // every other definition gets — keyed on `param`, since a
                 // closure has no `DefId` of its own to be one of (§8.5's own
@@ -1856,7 +1870,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 if !moves_a_capture && !ty_mentions_param(self.context.types, ty) {
                     if let Some(ret) = closure_ret {
                         let mut nested = Builder::new(self.context, self.thir);
-                        nested.run_closure(param, body, ret, &capture_params);
+                        nested.run_closure(&all_params, body, ret, &capture_params);
                         let mut nested_closures = std::mem::take(&mut nested.closures);
                         self.closures.push(nested.finish_with(param));
                         self.closures.append(&mut nested_closures);
@@ -2074,9 +2088,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // it, and a `for` is something that pulls.
         if let Some(chain) = self.chain_of(iter) {
             let terminal = Terminal::Each { pattern, body };
-            if chain.steps.iter().all(|(step, _)| !matches!(step, Step::Sorted(_))) {
-                return self.lower_chain_terminal(dest, terminal, &chain, block, span);
-            }
+            return self.lower_chain_terminal(dest, terminal, &chain, block, span);
         }
 
         // **AMENDMENT 11's desugaring, taken for the one subject that cannot
@@ -5275,11 +5287,11 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// a hole is a missing capture, not a panic.
     fn lower_captures(
         &mut self,
-        param: DefId,
+        params: &[DefId],
         body: ExprId,
         mut block: BlockId,
     ) -> (Vec<Operand>, Vec<CaptureParam>, BlockId) {
-        let found = crate::capture::captures_of(self.context.decls, self.thir, param, body);
+        let found = crate::capture::captures_of(self.context.decls, self.thir, params, body);
         let mut captures = Vec::with_capacity(found.len());
         let mut params = Vec::with_capacity(found.len());
         for capture in found {
@@ -6338,6 +6350,15 @@ enum Step {
     /// `Array`'s `iterate()` whose array this holds; the chain ends when
     /// `other` does.
     Zip(ExprId),
+    /// `reverse()` — §1.4's second barrier: buffer, turn round, yield.
+    Reverse,
+    /// `accumulate(initial, f)` — the running fold: each item is folded into
+    /// the state with `f(state, item)` and the chain yields the new state. The
+    /// two expressions are the initial state and the two-parameter closure.
+    Accumulate(ExprId, ExprId),
+    /// `keep_some()` — items `T?` are dropped when absent and unwrapped to `T`
+    /// when present.
+    KeepSome,
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6352,6 +6373,9 @@ enum Source {
     MapKeys,
     /// `Map.values()` — a borrow of each entry's value.
     MapValues,
+    /// What follows a barrier: the buffer the barrier filled, popped from the
+    /// end, each item moved out owned. See [`Builder::lower_chain_over`].
+    Drain,
 }
 
 /// What a chain ends in: `collections-and-chains.md` §1.4's terminals that
@@ -6366,6 +6390,13 @@ enum Terminal {
     /// `sum()` — their total, from zero. `science-types`' `chain_total` has
     /// already made the result a number and taken any borrow off it.
     Sum,
+    /// `product()` — their product, from one, as `Sum` is their total from
+    /// zero.
+    Product,
+    /// `reduce(initial, f)` — `f(acc, item)` folded over every item, from
+    /// `initial`. `f` is the two-parameter closure `(acc, x) giving ...`;
+    /// the accumulator goes in by value and the result is the new one.
+    Reduce { initial: ExprId, f: ExprId },
     /// `has_any(p)` — whether one item satisfies `p`; leaves at the first.
     HasAny(ExprId),
     /// `has_all(p)` — whether every item does; leaves at the first that
@@ -6396,6 +6427,10 @@ impl Terminal {
             ("collect", _) => Terminal::Collect,
             ("count", _) => Terminal::Count,
             ("sum", _) => Terminal::Sum,
+            ("product", _) => Terminal::Product,
+            ("reduce", Some(initial)) if arguments.len() == 2 => {
+                Terminal::Reduce { initial, f: arguments[1] }
+            }
             ("first", _) => Terminal::First,
             ("last", _) => Terminal::Last,
             ("has_any", Some(predicate)) => Terminal::HasAny(predicate),
@@ -6416,9 +6451,11 @@ impl Terminal {
             | Terminal::Find(predicate)
             | Terminal::Minimum(predicate)
             | Terminal::Maximum(predicate) => Some(predicate),
+            Terminal::Reduce { f, .. } => Some(f),
             Terminal::Collect
             | Terminal::Count
             | Terminal::Sum
+            | Terminal::Product
             | Terminal::First
             | Terminal::Last
             | Terminal::Each { .. } => None,
@@ -6521,6 +6558,11 @@ impl Builder<'_, '_> {
                 ("skip", Some(arg)) => Step::Skip(*arg),
                 ("sorted", Some(arg)) => Step::Sorted(*arg),
                 ("numbered", _) => Step::Numbered,
+                ("keep_some", _) => Step::KeepSome,
+                ("reverse", _) => Step::Reverse,
+                ("accumulate", Some(initial)) if args.len() == 2 => {
+                    Step::Accumulate(*initial, args[1])
+                }
                 ("take_while", Some(arg)) => Step::TakeWhile(*arg),
                 ("skip_while", Some(arg)) => Step::SkipWhile(*arg),
                 ("every", Some(arg)) => Step::Every(*arg),
@@ -6603,73 +6645,166 @@ impl Builder<'_, '_> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
-        let barrier = chain.steps.iter().position(|(step, _)| matches!(step, Step::Sorted(_)));
-        let Some(at) = barrier else {
-            let (source, block) = self.chain_source(chain.source, block, span);
-            return self.chain_pass(
-                dest,
-                terminal,
-                None,
-                chain.kind,
-                &source,
-                &chain.steps,
-                block,
-                span,
-            );
-        };
-        if at + 1 != chain.steps.len() || !matches!(terminal, Terminal::Collect) {
-            // Something after the barrier. Named rather than mis-lowered.
-            let discard = Place::local(self.temp(Ty::UNIT, span, block));
-            return self.emit_call(
-                discard,
-                Callee::Unresolved(Unresolved::Chain),
-                Vec::new(),
-                block,
-                span,
-            );
-        }
-        let Step::Sorted(key) = chain.steps[at].0 else { unreachable!("the barrier") };
-
-        // **The keys are computed in the same pass that fills the buffer**,
-        // not in a second pass over it, and that is a correctness point
-        // rather than an optimisation. A second pass would have to re-read
-        // the buffer, and what it reads there is a *borrow* of an item the
-        // chain's own type says is a value — so the key closure would be
-        // handed eight bytes of pointer where its parameter declares a
-        // twenty-four-byte `String`, and would then drop it. Computing the
-        // key where the item is still in hand asks the closure for exactly
-        // what it was declared to take. It is also what
-        // `science_array_sort_by_int_key`'s own note says the two parallel
-        // arrays are for: one key per element, once.
-        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
-            return block;
-        };
-        let keys_ty = self.array_of(int_ty);
-        let keys = Place::local(self.temp(keys_ty, span, block));
         let (source, block) = self.chain_source(chain.source, block, span);
-        let mut block = self.chain_pass(
-            dest.clone(),
-            Terminal::Collect,
-            Some((keys.clone(), key)),
-            chain.kind,
-            &source,
-            &chain.steps[..at],
-            block,
-            span,
-        );
+        self.lower_chain_over(dest, terminal, chain.kind, &source, &chain.steps, block, span)
+    }
 
-        let (values_ref, next) = self.exclusive_ref(&dest, block, span);
-        block = next;
-        let (keys_ref, next) = self.exclusive_ref(&keys, block, span);
-        block = next;
+    /// A chain over `source`, split at its first barrier.
+    ///
+    /// # What a barrier is here
+    ///
+    /// `sorted(by:)` and `reverse()` (§1.4's two *barriers*) need every item
+    /// before they can yield one. The links before the barrier run in one
+    /// fused pass that **buffers** what survives into an array (and, for a
+    /// sort, the keys beside it); the buffer is sorted or reversed in place by
+    /// a runtime call; and whatever follows the barrier runs over the buffer
+    /// as a chain of its own, recursively, so `sorted(by: k).reverse().take(10)`
+    /// and a second barrier further on are the same code.
+    ///
+    /// # How the second half reads the buffer: it **pops** it
+    ///
+    /// The buffer holds owned items. A second pass that borrowed them would
+    /// hand `take` and `map` a `&T` where the chain's `Item` says `T`; one that
+    /// moved them out by index would leak every item a `take` never reached or
+    /// double-free the ones it did. Popping is the one reading that is both
+    /// honest and leak-free: each turn moves the last item out of the buffer
+    /// (`science_array_pop`, the owned-`T?` convention), and whatever the
+    /// chain leaves unread — a `take` that stops early, a `first()` — is still
+    /// in the buffer, which is a temporary of the statement and is dropped
+    /// with it. That is [`Source::Drain`].
+    ///
+    /// Popping reads the buffer **from the end**, so a buffer that a pass will
+    /// pop is stored in the *reverse* of the order the chain yields it: a sort
+    /// that feeds a pass is followed by a `reverse`, and a `reverse()` that
+    /// feeds one is the buffer as it arrived. A barrier that is the chain's
+    /// last link and ends in `collect()` is the exception, and is built in
+    /// place in `dest` in the order the chain yields.
+    ///
+    /// # The cost
+    ///
+    /// A barrier is **eager** by definition, so a `take` after it saves the
+    /// downstream work and not the upstream work, which §1.4 says in as many
+    /// words (*"buffers every item once"*). The links after a barrier run
+    /// after the whole upstream pass has finished, so a side effect in an
+    /// upstream closure and one in a downstream closure no longer interleave
+    /// by item.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_chain_over(
+        &mut self,
+        dest: Place,
+        terminal: Terminal,
+        kind: Source,
+        source: &Place,
+        steps: &[(Step, Ty)],
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let barrier = steps
+            .iter()
+            .position(|(step, _)| matches!(step, Step::Sorted(_) | Step::Reverse));
+        let Some(at) = barrier else {
+            return self.chain_pass(dest, terminal, None, kind, source, steps, block, span);
+        };
+        let rest = &steps[at + 1..];
+        let finishing = rest.is_empty() && matches!(terminal, Terminal::Collect);
+        let item_ty = steps[at].1;
+        let buffer = if finishing {
+            dest.clone()
+        } else {
+            let ty = self.array_of(item_ty);
+            Place::local(self.temp(ty, span, block))
+        };
+
+        let mut block = block;
+        match steps[at].0 {
+            Step::Sorted(key) => {
+                // **The keys are computed in the same pass that fills the
+                // buffer**, not in a second pass over it, and that is a
+                // correctness point rather than an optimisation. A second
+                // pass would have to re-read the buffer, and what it reads
+                // there is a *borrow* of an item the chain's own type says is
+                // a value — so the key closure would be handed eight bytes of
+                // pointer where its parameter declares a twenty-four-byte
+                // `String`, and would then drop it. Computing the key where
+                // the item is still in hand asks the closure for exactly what
+                // it was declared to take. It is also what
+                // `science_array_sort_by_int_key`'s own note says the two
+                // parallel arrays are for: one key per element, once.
+                let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int")
+                else {
+                    return block;
+                };
+                let keys_ty = self.array_of(int_ty);
+                let keys = Place::local(self.temp(keys_ty, span, block));
+                block = self.chain_pass(
+                    buffer.clone(),
+                    Terminal::Collect,
+                    Some((keys.clone(), key)),
+                    kind,
+                    source,
+                    &steps[..at],
+                    block,
+                    span,
+                );
+                let (values_ref, next) = self.exclusive_ref(&buffer, block, span);
+                block = next;
+                let (keys_ref, next) = self.exclusive_ref(&keys, block, span);
+                block = next;
+                let discard = Place::local(self.temp(Ty::UNIT, span, block));
+                block = self.emit_call(
+                    discard,
+                    Callee::Runtime(ARRAY_SORT_BY_INT_KEY),
+                    vec![values_ref, keys_ref],
+                    block,
+                    span,
+                );
+                // Ascending now; a pass that pops reads it from the end.
+                if !finishing {
+                    block = self.chain_reverse_buffer(&buffer, block, span);
+                }
+            }
+            Step::Reverse => {
+                block = self.chain_pass(
+                    buffer.clone(),
+                    Terminal::Collect,
+                    None,
+                    kind,
+                    source,
+                    &steps[..at],
+                    block,
+                    span,
+                );
+                // As it arrived is what a pass that pops wants; a `collect()`
+                // that ends here wants it turned round.
+                if finishing {
+                    block = self.chain_reverse_buffer(&buffer, block, span);
+                }
+            }
+            _ => unreachable!("`position` found a barrier"),
+        }
+        if finishing {
+            return block;
+        }
+        self.lower_chain_over(dest, terminal, Source::Drain, &buffer, rest, block, span)
+    }
+
+    /// `science_array_reverse(&mut buffer)`: the buffer turned round in place.
+    fn chain_reverse_buffer(&mut self, buffer: &Place, block: BlockId, span: Span) -> BlockId {
+        let (buffer_ref, block) = self.exclusive_ref(buffer, block, span);
         let discard = Place::local(self.temp(Ty::UNIT, span, block));
-        self.emit_call(
-            discard,
-            Callee::Runtime(ARRAY_SORT_BY_INT_KEY),
-            vec![values_ref, keys_ref],
-            block,
-            span,
-        )
+        self.emit_call(discard, Callee::Runtime(ARRAY_REVERSE), vec![buffer_ref], block, span)
+    }
+
+    /// The prelude's `Array` method of this name, for a call this crate builds
+    /// itself rather than reads off a `MethodCall`.
+    fn array_method(&mut self, array_ty: Ty, name: &str) -> Option<DefId> {
+        let ty = self.revealed(array_ty);
+        let methods = self.context.decls.methods();
+        let head = methods.receiver(self.context.defs, self.context.types, ty)?;
+        match methods.lookup(head, name, Form::Value) {
+            Found::One(candidate) => Some(candidate.method),
+            _ => None,
+        }
     }
 
     /// The operand a chain's closure is called with, read off the closure's
@@ -6690,10 +6825,24 @@ impl Builder<'_, '_> {
         block: BlockId,
         span: Span,
     ) -> (Operand, BlockId) {
+        self.chain_argument_at(value, closure_ty, consuming, 0, block, span)
+    }
+
+    /// [`Builder::chain_argument`] for the closure's `at`th parameter: `reduce`
+    /// takes the item second, after the accumulator.
+    fn chain_argument_at(
+        &mut self,
+        value: &Place,
+        closure_ty: Ty,
+        consuming: bool,
+        at: usize,
+        block: BlockId,
+        span: Span,
+    ) -> (Operand, BlockId) {
         let item_ty = self.place_ty(value);
         let revealed = self.revealed(closure_ty);
         let want = match self.context.types.kind(revealed) {
-            TyKind::Closure { params, .. } => params.first().copied(),
+            TyKind::Closure { params, .. } => params.get(at).copied(),
             _ => None,
         };
         let borrows_it = want.is_some_and(|want| {
@@ -6784,6 +6933,9 @@ impl Builder<'_, '_> {
             return block;
         };
         let element_ty = self.element_ty(source);
+        // A buffer a barrier filled is popped rather than indexed, and has no
+        // extent to loan out or compare a cursor against.
+        let drain = kind == Source::Drain;
 
         // What `dest` holds before the first item, for the three terminals
         // that accumulate into it. The other four write it once, at the edge
@@ -6804,6 +6956,15 @@ impl Builder<'_, '_> {
             Terminal::Sum => {
                 let zero = self.zero_of(self.place_ty(&dest));
                 self.assign(block, dest.clone(), Rvalue::Use(zero), span);
+            }
+            Terminal::Product => {
+                let one = self.one_of(self.place_ty(&dest));
+                self.assign(block, dest.clone(), Rvalue::Use(one), span);
+            }
+            // The accumulator starts as what the author wrote, evaluated once
+            // and before the loop, as every closure is.
+            Terminal::Reduce { initial, .. } => {
+                block = self.expr_into(dest.clone(), initial, block);
             }
             // `last` and the extremes hold `null` until an item replaces it,
             // which is what an empty chain answers.
@@ -6854,21 +7015,36 @@ impl Builder<'_, '_> {
         let array_ty = self.place_ty(source);
         let borrowed = self.context.types.borrowed(false, array_ty);
         let reference = self.temp(borrowed, span, block);
-        block =
-            self.borrow_place(Place::local(reference), false, source.clone(), block, span, false);
         let length = self.temp(int_ty, span, block);
-        let extent = if kind == Source::Array { ARRAY_LEN } else { MAP_EXTENT };
-        block = self.emit_call(
-            Place::local(length),
-            Callee::Runtime(extent),
-            vec![Operand::Copy(Place::local(reference))],
-            block,
-            span,
-        );
+        if !drain {
+            block = self.borrow_place(
+                Place::local(reference),
+                false,
+                source.clone(),
+                block,
+                span,
+                false,
+            );
+            let extent = if kind == Source::Array { ARRAY_LEN } else { MAP_EXTENT };
+            block = self.emit_call(
+                Place::local(length),
+                Callee::Runtime(extent),
+                vec![Operand::Copy(Place::local(reference))],
+                block,
+                span,
+            );
+        }
+        // What a drain pops into: the owned-`T?` slot `Array.pop` answers in.
+        let drain_slot = if drain {
+            let slot_ty = self.context.types.nullable(element_ty);
+            Some(self.temp(slot_ty, span, block))
+        } else {
+            None
+        };
         // A map is walked by entry, and an entry can be a hole (a removed
         // pair): the slot `science_map_entry_at` answers in, and its test.
         // Outside the loop for `lower_for_over_map`'s reason.
-        let (entry_slot, entry_present) = if kind == Source::Array {
+        let (entry_slot, entry_present) = if matches!(kind, Source::Array | Source::Drain) {
             (None, None)
         } else {
             let entry_ty = self.map_entry_ty(source);
@@ -6945,6 +7121,22 @@ impl Builder<'_, '_> {
                     self.chain_assign_bool(&Place::local(skipping), true, block, span);
                     limits.push(Some((skipping, skipping)));
                 }
+                Step::KeepSome | Step::Reverse => {
+                    closures.push(None);
+                    limits.push(None);
+                }
+                // The state, from what the author wrote, and the fold's
+                // closure: both evaluated once, before the loop.
+                Step::Accumulate(initial, f) => {
+                    let state_ty = self.thir.expr(*initial).ty;
+                    let state = self.temp(state_ty, span, block);
+                    block = self.expr_into(Place::local(state), *initial, block);
+                    let ty = self.thir.expr(*f).ty;
+                    let temp = self.temp(ty, span, block);
+                    block = self.expr_into(Place::local(temp), *f, block);
+                    closures.push(Some((temp, ty)));
+                    limits.push(Some((state, state)));
+                }
                 // The position the next item arrives at.
                 Step::Numbered => {
                     let counted = self.temp(int_ty, span, block);
@@ -6978,7 +7170,8 @@ impl Builder<'_, '_> {
         let step_block = self.new_block();
         // An array's element is read in the body; a map's entry is fetched
         // first, and a hole goes straight to the increment.
-        let fetch = if kind == Source::Array { body_block } else { self.new_block() };
+        let fetch =
+            if matches!(kind, Source::Array | Source::Drain) { body_block } else { self.new_block() };
         // Two ends, not one: `exhausted` is reached when the source or a
         // `take` runs out, and `done` also from a terminal that has its
         // answer early. `exhausted` writes the answer running out means —
@@ -6987,43 +7180,70 @@ impl Builder<'_, '_> {
         let done = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
 
+        if let Some(slot) = drain_slot {
+            // `slot = buffer.pop()`; absent is the end of the chain.
+            let (buffer_ref, popping) = self.exclusive_ref(source, head, span);
+            let callee = match self.array_method(array_ty, "pop") {
+                Some(def) => Callee::Def { def, self_ty: None },
+                None => Callee::Unresolved(Unresolved::Chain),
+            };
+            let popped = self.emit_call(Place::local(slot), callee, vec![buffer_ref], popping, span);
+            let present = self.temp(self.bool_ty, span, popped);
+            self.assign(
+                popped,
+                Place::local(present),
+                Rvalue::IsPresent(Operand::Copy(Place::local(slot))),
+                span,
+            );
+            self.terminate(
+                popped,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(present)),
+                    then_block: body_block,
+                    else_block: exhausted,
+                },
+                span,
+            );
+        }
         // `cursor < length`, compared unsigned, which is
         // `lower_for_over_array`'s own widening and its reason: a negative
         // cursor is not reachable and the comparison should not depend on it.
-        let wide_cursor = self.temp(u64_ty, span, head);
-        self.assign(
-            head,
-            Place::local(wide_cursor),
-            Rvalue::Cast { operand: Operand::Copy(Place::local(cursor)), from: int_ty, ty: u64_ty },
-            span,
-        );
-        let wide_length = self.temp(u64_ty, span, head);
-        self.assign(
-            head,
-            Place::local(wide_length),
-            Rvalue::Cast { operand: Operand::Copy(Place::local(length)), from: int_ty, ty: u64_ty },
-            span,
-        );
-        let more = self.temp(self.bool_ty, span, head);
-        self.assign(
-            head,
-            Place::local(more),
-            Rvalue::Binary {
-                op: BinaryOp::Lt,
-                lhs: Operand::Copy(Place::local(wide_cursor)),
-                rhs: Operand::Copy(Place::local(wide_length)),
-            },
-            span,
-        );
-        self.terminate(
-            head,
-            TerminatorKind::If {
-                cond: Operand::Copy(Place::local(more)),
-                then_block: fetch,
-                else_block: exhausted,
-            },
-            span,
-        );
+        if !drain {
+            let wide_cursor = self.temp(u64_ty, span, head);
+            self.assign(
+                head,
+                Place::local(wide_cursor),
+                Rvalue::Cast { operand: Operand::Copy(Place::local(cursor)), from: int_ty, ty: u64_ty },
+                span,
+            );
+            let wide_length = self.temp(u64_ty, span, head);
+            self.assign(
+                head,
+                Place::local(wide_length),
+                Rvalue::Cast { operand: Operand::Copy(Place::local(length)), from: int_ty, ty: u64_ty },
+                span,
+            );
+            let more = self.temp(self.bool_ty, span, head);
+            self.assign(
+                head,
+                Place::local(more),
+                Rvalue::Binary {
+                    op: BinaryOp::Lt,
+                    lhs: Operand::Copy(Place::local(wide_cursor)),
+                    rhs: Operand::Copy(Place::local(wide_length)),
+                },
+                span,
+            );
+            self.terminate(
+                head,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(more)),
+                    then_block: fetch,
+                    else_block: exhausted,
+                },
+                span,
+            );
+        }
         if let (Some((slot, _, _)), Some(present)) = (entry_slot, entry_present) {
             let at = self.temp(int_ty, span, fetch);
             self.assign(
@@ -7062,7 +7282,20 @@ impl Builder<'_, '_> {
 
         let mut current = body_block;
         let mut value;
-        if let Some((slot, entry_ref_ty, entry_ty)) = entry_slot {
+        if let Some(slot) = drain_slot {
+            // The item the pop found, moved out of its slot when it owns
+            // something: from here it is the chain's, as a `map`'s result is.
+            let slot_ty = self.place_ty(&Place::local(slot));
+            let narrowed = self.temp(element_ty, span, body_block);
+            let read = self.read(Place::local(slot), slot_ty);
+            self.assign(
+                body_block,
+                Place::local(narrowed),
+                Rvalue::Narrow { operand: read, ty: element_ty },
+                span,
+            );
+            value = Place::local(narrowed);
+        } else if let Some((slot, entry_ref_ty, entry_ty)) = entry_slot {
             // The entry the fetch found, narrowed out of its slot: a borrow,
             // so the read is a copy and nothing here owns anything.
             let narrowed = self.temp(entry_ref_ty, span, body_block);
@@ -7195,6 +7428,88 @@ impl Builder<'_, '_> {
                     self.chain_assign_bool(&Place::local(skipping), false, begin, span);
                     self.terminate(begin, TerminatorKind::Goto { target: through }, span);
                     current = through;
+                }
+                Step::Accumulate(..) => {
+                    let (closure, closure_ty) =
+                        closures[index].expect("an `accumulate` carries its closure");
+                    let (state, _) = limits[index].expect("an `accumulate` carries its state");
+                    let state_ty = *item_after;
+                    let (item, next) =
+                        self.chain_argument_at(&value, closure_ty, true, 1, current, span);
+                    current = next;
+                    let folded = self.temp(state_ty, span, current);
+                    current = self.emit_call(
+                        Place::local(folded),
+                        Callee::Indirect(Operand::Copy(Place::local(closure))),
+                        vec![Operand::Copy(Place::local(state)), item],
+                        current,
+                        span,
+                    );
+                    self.assign(
+                        current,
+                        Place::local(state),
+                        Rvalue::Use(Operand::Move(Place::local(folded))),
+                        span,
+                    );
+                    // The chain yields a copy of the state, which owns nothing
+                    // (the checker has said so), and the state stays for the
+                    // next turn.
+                    let yielded = self.temp(state_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(yielded),
+                        Rvalue::Use(Operand::Copy(Place::local(state))),
+                        span,
+                    );
+                    value = Place::local(yielded);
+                }
+                Step::KeepSome => {
+                    // The item is a `T?`, or a borrow of one over a `T` that
+                    // owns nothing (the checker's `chain_item_shape` says
+                    // which); either way the test reads the nullable itself.
+                    let nullable = match *self.context.types.kind(self.place_ty(&value)) {
+                        TyKind::Borrowed { inner, .. } => {
+                            (value.clone().project(Projection::Deref { ty: inner }), true)
+                        }
+                        _ => (value.clone(), false),
+                    };
+                    let (slot, through_a_borrow) = nullable;
+                    let present = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(present),
+                        Rvalue::IsPresent(Operand::Copy(slot.clone())),
+                        span,
+                    );
+                    let (some, none) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(present)),
+                            then_block: some,
+                            else_block: none,
+                        },
+                        span,
+                    );
+                    self.chain_leave(none, depth, step_block, span);
+                    let payload_ty = *item_after;
+                    let narrowed = self.temp(payload_ty, span, some);
+                    let slot_ty = self.place_ty(&slot);
+                    // Moved when the payload owns something, which only an
+                    // owned `T?` can: a borrow's payload owns nothing.
+                    let read = if through_a_borrow {
+                        Operand::Copy(slot)
+                    } else {
+                        self.read(slot, slot_ty)
+                    };
+                    self.assign(
+                        some,
+                        Place::local(narrowed),
+                        Rvalue::Narrow { operand: read, ty: payload_ty },
+                        span,
+                    );
+                    value = Place::local(narrowed);
+                    current = some;
                 }
                 Step::Numbered => {
                     let (counted, _) = limits[index].expect("a `numbered` carries its counter");
@@ -7434,7 +7749,7 @@ impl Builder<'_, '_> {
                         current = over;
                     }
                 }
-                Step::Sorted(_) => unreachable!("a barrier is split off before the pass"),
+                Step::Sorted(_) | Step::Reverse => unreachable!("a barrier is split off before the pass"),
             }
         }
 
@@ -7480,6 +7795,46 @@ impl Builder<'_, '_> {
                     _ => Operand::Copy(value),
                 };
                 self.chain_add(&dest, operand, current, span);
+                self.chain_leave(current, depth, step_block, span);
+            }
+            Terminal::Product => {
+                let operand = match *self.context.types.kind(self.place_ty(&value)) {
+                    TyKind::Borrowed { inner, .. } => {
+                        Operand::Copy(value.project(Projection::Deref { ty: inner }))
+                    }
+                    _ => Operand::Copy(value),
+                };
+                self.chain_arith(&dest, BinaryOp::Mul, operand, current, span);
+                self.chain_leave(current, depth, step_block, span);
+            }
+            Terminal::Reduce { .. } => {
+                let (closure, closure_ty) = predicate.expect("a reduce closure was evaluated");
+                let (item, next) =
+                    self.chain_argument_at(&value, closure_ty, true, 1, current, span);
+                current = next;
+                // The accumulator is moved into the call and the result moved
+                // back: `dest` is uninitialised for exactly the call, and
+                // drop elaboration sees the re-initialisation.
+                let acc_ty = self.place_ty(&dest);
+                let acc = if self.is_copy(acc_ty) {
+                    Operand::Copy(dest.clone())
+                } else {
+                    Operand::Move(dest.clone())
+                };
+                let folded = self.temp(acc_ty, span, current);
+                current = self.emit_call(
+                    Place::local(folded),
+                    Callee::Indirect(Operand::Copy(Place::local(closure))),
+                    vec![acc, item],
+                    current,
+                    span,
+                );
+                self.assign(
+                    current,
+                    dest.clone(),
+                    Rvalue::Use(Operand::Move(Place::local(folded))),
+                    span,
+                );
                 self.chain_leave(current, depth, step_block, span);
             }
             Terminal::First => {
@@ -7639,6 +7994,8 @@ impl Builder<'_, '_> {
             Terminal::Collect
             | Terminal::Count
             | Terminal::Sum
+            | Terminal::Product
+            | Terminal::Reduce { .. }
             | Terminal::Last
             | Terminal::Minimum(_)
             | Terminal::Maximum(_)
@@ -7797,12 +8154,24 @@ impl Builder<'_, '_> {
     /// `dest = dest + operand`, through a temporary, which is how `take`'s
     /// counter has always been stepped.
     fn chain_add(&mut self, dest: &Place, operand: Operand, block: BlockId, span: Span) {
+        self.chain_arith(dest, BinaryOp::Add, operand, block, span);
+    }
+
+    /// `dest = dest op operand`, through a temporary.
+    fn chain_arith(
+        &mut self,
+        dest: &Place,
+        op: BinaryOp,
+        operand: Operand,
+        block: BlockId,
+        span: Span,
+    ) {
         let ty = self.place_ty(dest);
         let stepped = self.temp(ty, span, block);
         self.assign(
             block,
             Place::local(stepped),
-            Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(dest.clone()), rhs: operand },
+            Rvalue::Binary { op, lhs: Operand::Copy(dest.clone()), rhs: operand },
             span,
         );
         self.assign(block, dest.clone(), Rvalue::Use(Operand::Copy(Place::local(stepped))), span);
@@ -7829,6 +8198,15 @@ impl Builder<'_, '_> {
     /// The zero `sum()` starts from, spelled for the total's type: a float
     /// literal for a float, so that nothing downstream has to reinterpret an
     /// integer's bits as one.
+    fn one_of(&self, ty: Ty) -> Operand {
+        if self.context.decls.prelude().is_float(self.context.types, ty) {
+            Operand::Const(Constant::Literal(Literal::Float { value: 1.0, suffix: None }))
+        } else {
+            Self::bits(1)
+        }
+    }
+
+    /// The zero `sum()` starts from. See [`Builder::one_of`] for `product()`'s.
     fn zero_of(&self, ty: Ty) -> Operand {
         if self.context.decls.prelude().is_float(self.context.types, ty) {
             Operand::Const(Constant::Literal(Literal::Float { value: 0.0, suffix: None }))
