@@ -3477,6 +3477,53 @@ impl<'a> BodyChecker<'a> {
         }
     }
 
+    /// Decision 2's default, applied *now* to a generic parameter whose only
+    /// evidence so far is an unsuffixed numeric literal.
+    ///
+    /// Asked by [`BodyChecker::instantiate_call`] for the one argument that
+    /// cannot wait, a closure, whose parameter types are the callee's declared
+    /// ones with the solved parameters substituted. Everything else leaves a
+    /// deferred parameter open so a destination can still claim it, and that
+    /// is unchanged: this runs only when a closure is about to be written
+    /// against it, and only for a class that has a default (an integer or a
+    /// float). `null`'s class has none and is left open.
+    fn settle_open_numerics(
+        &mut self,
+        generics: &HashSet<DefId>,
+        solved: &mut HashMap<DefId, Ty>,
+        deferred: &HashMap<DefId, InferVar>,
+    ) {
+        for (param, var) in deferred {
+            if solved.contains_key(param) || !generics.contains(param) {
+                continue;
+            }
+            if let InferTy::Known(ty) = self.infer.resolve(InferTy::Var(*var)) {
+                solved.insert(*param, ty);
+                continue;
+            }
+            let root = self.infer.find(*var);
+            let mut kind: Option<Numeric> = None;
+            for (other, found) in &self.numeric {
+                if self.infer.find(*other) == root {
+                    kind = Some(match kind {
+                        Some(existing) => widen_numeric(existing, *found),
+                        None => *found,
+                    });
+                }
+            }
+            let default = match kind {
+                Some(Numeric::Integer) => self.decls.prelude().default_int(self.types),
+                Some(Numeric::Float) => self.decls.prelude().default_float(self.types),
+                Some(Numeric::Null) | None => None,
+            };
+            if let Some(ty) = default {
+                if self.infer.bind(self.types, root, ty).is_ok() {
+                    solved.insert(*param, ty);
+                }
+            }
+        }
+    }
+
     /// Which parameter each argument fills. §6 does not check arity beyond the
     /// count; this is only the pairing.
     fn argument_order(
@@ -3542,13 +3589,49 @@ impl<'a> BodyChecker<'a> {
         // asked only when `root_param` finds no root-level match and the
         // parameter's declared type mentions one of `declared` somewhere
         // inside it; anything neither reaches is still §6's hole.
-        for (at, arg) in args.iter().enumerate() {
+        // **A closure is checked after every argument that is not one.** Its
+        // parameter types come from the callee's declared `(T) -> T`, and `T`
+        // is whatever the *other* arguments say: `apply(three, n giving n +
+        // 1)` solves `T` from `three` and only then knows what `n` is. In
+        // source order the closure was synthesised against the declared type
+        // with `T` still in it, so `n` was a `T`, the body was a `T`, and the
+        // closure's own type was `(T) -> T` — which `science-mir` withholds a
+        // body from (§8.6) and the backend then refused by name. A stable
+        // sort: arguments that are not closures keep their order, so nothing
+        // that checked before is synthesised in a different sequence.
+        let mut sequence: Vec<usize> = (0..args.len()).collect();
+        sequence.sort_by_key(|at| {
+            matches!(args[*at].value.kind, hir::ExprKind::Closure { .. })
+        });
+        for at in sequence {
+            let arg = &args[at];
             let Some(index) = order[at] else { continue };
             let Some((_, param_ty)) = params.get(index) else { continue };
             let (def, borrowed) = match self.root_param(*param_ty) {
                 Some(pair) => pair,
                 None => {
                     if self.mentions_generic(*param_ty, &type_params) {
+                        // The closure's expected type is the declared one with
+                        // what is solved *so far* put in. A parameter still
+                        // open only because its argument is an unsuffixed
+                        // literal (`let three be 3`) is given Decision 2's
+                        // default now: the closure is the one argument that
+                        // cannot be written until it is known, and the
+                        // alternative is a closure typed at the parameter
+                        // itself.
+                        let expected = if matches!(
+                            args[at].value.kind,
+                            hir::ExprKind::Closure { .. }
+                        ) {
+                            self.settle_open_numerics(&type_params, &mut solved, &deferred);
+                            let mut partial = Substitution::new();
+                            for (param, ty) in &solved {
+                                partial = partial.with_type(*param, *ty);
+                            }
+                            self.apply(&partial, *param_ty, arg.span)
+                        } else {
+                            *param_ty
+                        };
                         let resolved = match self.probe(&arg.value) {
                             Some(ty) => InferTy::Known(ty),
                             None if matches!(
@@ -3564,7 +3647,7 @@ impl<'a> BodyChecker<'a> {
                                     .copied()
                                 {
                                     Some(typed) => typed,
-                                    None => self.synth_against(&arg.value, *param_ty),
+                                    None => self.synth_against(&arg.value, expected),
                                 };
                                 presynthesised.insert(at, typed);
                                 typed.ty

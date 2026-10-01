@@ -3780,6 +3780,22 @@ impl<'a> Lowerer<'a> {
             // gave before generic aggregates had a layout at all.
             DefKind::Record => self.record_ty(def, &[], 0, &TyEnv::new()),
             DefKind::Choice => self.choice_ty(def, &[], 0, &TyEnv::new()),
+            // **The prelude's two error types are the other thing a box can
+            // hold.** `def f() -> Error?: let e be write_file(…); if e?: return
+            // e` boxes an `IoError` into `any Error`, and a descriptor needs a
+            // size and an alignment of it. They are neither a record nor a
+            // `choice` in the table (`science-resolve` declares them as
+            // builtins whose layout is the runtime's) and `cg_ty` already
+            // knows both by name, so the answer is the same one a local of the
+            // type gets.
+            _ if self.defs.get(def).is_builtin()
+                && matches!(self.defs.get(def).name.as_str(), "IoError" | "TextError") =>
+            {
+                match self.defs.get(def).name.as_str() {
+                    "IoError" => Ok(RtAggregate::IoError.cg_ty()),
+                    _ => Ok(RtAggregate::TextError.cg_ty()),
+                }
+            }
             _ => Err(Unlowered::new(format!(
                 "a box of `{}`, which is neither a record nor a `choice`: a descriptor needs a \
                  size and an alignment, and this crate lays out neither for it",
@@ -3813,7 +3829,32 @@ impl<'a> Lowerer<'a> {
         if let Some(existing) = self.vtables.iter().find(|v| v.symbol == symbol) {
             return Ok(existing.clone());
         }
-        let methods = self.vtable_method_symbols(interface, concrete)?;
+        let mut methods = self.vtable_method_symbols(interface, concrete)?;
+        // **A prelude type's method is a `science-rt` entry point and not a
+        // function this module defines.** `IoError implements Error`'s
+        // `message` has no Science body — `prelude_method` maps it to
+        // `science_io_error_message` — so a slot that named the mangled
+        // `_S7IoError7message` named nothing, and `define_vtable` said so. The
+        // slot takes the runtime symbol instead, declared here so the module
+        // has the function whose address the table holds (`intern_map_descriptor`'s
+        // lesson one table over).
+        //
+        // **That is sound because the two ABIs are the same one.** A slot is
+        // called as `(sret, self)` and returns a `String` through the `sret`
+        // pointer, and `science_io_error_message(*const IoError) -> String` is
+        // `RtRet::Aggregate(String)` in `RUNTIME`, which `runtime_signature`
+        // classifies through the same rule a Science function's `-> String`
+        // goes through. `tests/valid_programs.rs` runs the call.
+        if let Ok(slots) = self.vtable_slots(interface, concrete) {
+            if slots.len() == methods.len() {
+                for (slot, method) in slots.into_iter().zip(methods.iter_mut()) {
+                    if let Some(runtime) = self.prelude_method(slot, None) {
+                        self.declare(runtime)?;
+                        *method = runtime.to_string();
+                    }
+                }
+            }
+        }
         let descriptor = self.intern_descriptor(concrete, source)?;
         let vtable = Vtable { symbol, methods, descriptor };
         self.vtables.push(vtable.clone());
@@ -8248,6 +8289,18 @@ impl<'a> Lowerer<'a> {
                 | BinaryOp::Gt
                 | BinaryOp::Ge
         );
+        // **Two string literals name no operand type, and they are still a
+        // `String` comparison.** `"a" < "b"` has no place on either side, so
+        // `operand_ty` has nothing to read a type off, and the arm below that
+        // sends a `String` to `science_string_*` never ran: the refusal was
+        // *"a comparison of two constants"*, about a program that checks clean.
+        // A `Str` literal on either side is the whole of the evidence needed.
+        let is_str = |operand: &mir::Operand| {
+            matches!(operand, mir::Operand::Const(Constant::Literal(Literal::Str(_))))
+        };
+        if comparison && is_str(lhs) && is_str(rhs) {
+            return self.lower_string_comparison(ctx, op, lhs, rhs, dest, insts);
+        }
         let operand_ty = self
             .operand_ty(body, lhs)
             .or_else(|| self.operand_ty(body, rhs))
@@ -8292,18 +8345,34 @@ impl<'a> Lowerer<'a> {
         // below the linker, for a mistake two phases up. Decision 19 makes a
         // pointer a scalar, so nothing between here and LLVM would have
         // objected on its own.
-        if let TyKind::Borrowed { mutable, .. } = *self.types.kind(operand_ty) {
-            let written = if mutable { "mutable borrowed" } else { "borrowed" };
-            return Err(Unlowered::new(format!(
-                "`{}` applied to a `{written} {}`: an operator reads its operands and this one \
-                 is a reference. `science-types` inserts the dereferencing coercion at an \
-                 operand when the referent implements `Copy`, so this one's does not — a \
-                 bound on a type parameter is the case that cannot be seen — and the operand \
-                 reaches this crate as a pointer",
-                op.as_str(),
-                self.render_referent(operand_ty)
-            )));
+        // **A shared borrow of a scalar is read through, and only that.**
+        // `item > best` in a generic `largest[T: Ord](items: &Array[T])` has
+        // two `&T` operands, and `T: Ord` is a bound `Methods::declares`
+        // cannot see `Copy` through, so the coercion above was never inserted.
+        // Once monomorphised the comparison is of two `&Int`, and the referents
+        // are what compare, as they do for every other reference. An
+        // *exclusive* borrow is still refused, nothing licenses reading
+        // through one here, as is a borrow of a non-scalar and an arithmetic
+        // operator: the first would need `Ord`'s own method and not an
+        // instruction, and a reference has no `+`.
+        let mut through = false;
+        if let TyKind::Borrowed { mutable, inner } = *self.types.kind(operand_ty) {
+            let referent_scalar = !mutable && comparison && self.scalar_of(inner).is_ok();
+            if !referent_scalar {
+                let written = if mutable { "mutable borrowed" } else { "borrowed" };
+                return Err(Unlowered::new(format!(
+                    "`{}` applied to a `{written} {}`: an operator reads its operands and this \
+                     one is a reference. `science-types` inserts the dereferencing coercion at an \
+                     operand when the referent implements `Copy`, so this one's does not — a \
+                     bound on a type parameter is the case that cannot be seen — and the operand \
+                     reaches this crate as a pointer",
+                    op.as_str(),
+                    self.render_referent(operand_ty)
+                )));
+            }
+            through = true;
         }
+        let operand_ty = if through { self.referent(operand_ty) } else { operand_ty };
         let scalar = self.scalar_of(operand_ty)?;
         let operand_layout = layout_of(self.target, &self.cg_ty(operand_ty)?);
         let signed = match scalar {
@@ -8313,8 +8382,25 @@ impl<'a> Lowerer<'a> {
             _ => false,
         };
         let float = matches!(scalar, Scalar::Float(_));
-        let left = self.typed_operand(ctx, lhs, &operand_layout, insts)?;
-        let right = self.typed_operand(ctx, rhs, &operand_layout, insts)?;
+        let (left, right) = if through {
+            let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+            let mut read = |this: &mut Self, operand: &mir::Operand| {
+                let address = this.typed_operand(ctx, operand, &pointer, insts)?;
+                let dest = ctx.value();
+                insts.push(ExtInst::LoadAt {
+                    dest,
+                    address,
+                    layout: operand_layout.clone(),
+                });
+                Ok::<_, Unlowered>(Operand::Value(dest))
+            };
+            (read(self, lhs)?, read(self, rhs)?)
+        } else {
+            (
+                self.typed_operand(ctx, lhs, &operand_layout, insts)?,
+                self.typed_operand(ctx, rhs, &operand_layout, insts)?,
+            )
+        };
 
         // **`**` is a call, on both sides of the `float` split, and it has to
         // be decided before that split rather than inside either arm of it.**
@@ -10113,14 +10199,17 @@ impl<'a> Lowerer<'a> {
         // reason one level out: a `borrowed Doc` has the same `Ptr` layout and
         // handing its address to `science_print` reads a record's first three
         // words as a `{ ptr, len, cap }`.
+        //
+        // **A `(borrowed String)?` narrowed by `if s?:` is the same pointer**,
+        // Decision 19's niche being the null pointer, so `print(s)` after
+        // `let s be m.get(k)` takes this arm too. [`Lowerer::borrowed_referent`]
+        // answers for both spellings. It was `Borrowed` only, and the narrowed
+        // local fell through to *"`(&String)?` has no `display`"*.
         if let [operand @ (mir::Operand::Move(place) | mir::Operand::Copy(place))] = args {
             let borrowed_string = self
                 .operand_ty(body, operand)
-                .map(|ty| match self.types.kind(ty) {
-                    TyKind::Borrowed { inner, .. } => self.is_string(*inner),
-                    _ => false,
-                })
-                .unwrap_or(false);
+                .and_then(|ty| self.borrowed_referent(ty))
+                .is_some_and(|inner| self.is_string(inner));
             if borrowed_string {
                 let (address, layout) = self.place_address(ctx, place, insts)?;
                 let pointer = ctx.value();

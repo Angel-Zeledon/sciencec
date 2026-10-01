@@ -2211,10 +2211,37 @@ impl Resolver {
                         let res = self.reject_module_as_value(res, &path);
                         hir::ExprKind::Path { res, generics }
                     }
-                    None => hir::ExprKind::Index {
-                        base: Box::new(self.resolve_expr(base)),
-                        index: Box::new(self.resolve_expr(index)),
-                    },
+                    None => {
+                        // **A type name subscripted by something that is not a
+                        // type is a mistake with a name, and it used to be
+                        // silent.** `Array[x + 1].new()` stayed an index of the
+                        // *type*, typed at the error type with nothing said,
+                        // and reached the backend as `SC0400`. A type has no
+                        // elements to index and `type_named` has already
+                        // ruled out a local shadowing it, so no program that
+                        // means a subscript is told otherwise.
+                        if let ast::ExprKind::Path(path) = &base.kind {
+                            if path.segments.len() == 1
+                                && path.segments[0].generics.is_empty()
+                                && self.type_named(&path.segments[0].name.name).is_some()
+                            {
+                                self.error(
+                                    codes::WRONG_NAMESPACE,
+                                    format!(
+                                        "`{}` is a type, and the brackets after it hold type \
+                                         arguments",
+                                        path.dotted()
+                                    ),
+                                    expr.span,
+                                    "this is not a type",
+                                );
+                            }
+                        }
+                        hir::ExprKind::Index {
+                            base: Box::new(self.resolve_expr(base)),
+                            index: Box::new(self.resolve_expr(index)),
+                        }
+                    }
                 }
             }
             // `[a, b, c]` — the array literal of
@@ -2531,6 +2558,34 @@ impl Resolver {
                 let inner = self.expr_as_type_arg(expr)?;
                 Some(ast::Type {
                     kind: ast::TypeKind::Borrowed { mutable: *mutable, inner: Box::new(inner) },
+                    span: index.span,
+                })
+            }
+            // **A tuple type is a tuple expression of types, and a nullable
+            // is a presence test of one.** `Set[(Int, Int)].new()` and
+            // `Array[String?].new()` have no comma at depth one and no `any`,
+            // so the parser leaves them as an index, and this is where they
+            // are read back as the types they are. The same type annotation
+            // has always worked: only the expression spelling went through
+            // here and answered `None`, which left the whole instantiation an
+            // index of a type, typed at the error type, with no diagnostic.
+            //
+            // They cannot collide with a subscript for the reason the
+            // borrow cannot: the base has already been required to be a bare
+            // name that [`Self::type_named`] answers for, and `m[(i, j)]` or
+            // `flags[done?]` index a *value*.
+            ast::ExprKind::Tuple(elements) => {
+                let elements = elements
+                    .iter()
+                    .map(|element| self.expr_as_type_arg(element))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(ast::Type { kind: ast::TypeKind::Tuple(elements), span: index.span })
+            }
+            ast::ExprKind::Unit => Some(ast::Type { kind: ast::TypeKind::Unit, span: index.span }),
+            ast::ExprKind::Present(inner) => {
+                let inner = self.expr_as_type_arg(inner)?;
+                Some(ast::Type {
+                    kind: ast::TypeKind::Nullable(Box::new(inner)),
                     span: index.span,
                 })
             }

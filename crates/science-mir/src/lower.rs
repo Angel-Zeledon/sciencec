@@ -2722,10 +2722,64 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let mut operands = Vec::with_capacity(args.len());
         for arg in args {
             let (operand, next) = self.argument(*arg, block);
-            operands.push(if opaque { force_copy(operand) } else { operand });
             block = next;
+            let operand = self.pin_literal_argument(&callee, *arg, operand, block);
+            operands.push(if opaque { force_copy(operand) } else { operand });
         }
         self.emit_call(dest, callee, operands, block, span)
+    }
+
+    /// A literal passed to a **generic** parameter, given a local so that it
+    /// has a type.
+    ///
+    /// **The fact that was missing.** An `Operand::Const` carries no type —
+    /// *"the value a `1` denotes is a fact about its type, and the type is on
+    /// the statement beside it"* — and `science_codegen::mono`'s `solve_call`
+    /// solves a callee's type parameters by matching each declared parameter
+    /// against the type of the argument's *place*. A literal has no place, so
+    /// `run(3, 1)` where `run[T](x: T, k: Int)` left `T` with nothing to be
+    /// solved from but the destination, which is `Int` and says nothing about
+    /// `T`: the instance was never named, and the backend refused the generic
+    /// body with *"a value whose type is still a type parameter"*. It looked
+    /// like a closure's fault when the second argument was one, because that
+    /// is how it was found; `run(3, 1)` fails identically.
+    ///
+    /// **Only for a callee that has a parameter to solve, and only for a
+    /// scalar literal.** Every other call keeps the constant as it was, so no
+    /// body without a generic callee changes and `science-mir`'s snapshots
+    /// stay as they are. A string literal is not pinned: it is not `Copy`,
+    /// the temporary would own a `String`, and a drop that nothing asked for is
+    /// worse than a parameter left to the destination. The temporary is
+    /// `thir`'s own type for the argument, which is the checker's answer for
+    /// the literal after inference (`3` is `U8` where the parameter said so).
+    fn pin_literal_argument(
+        &mut self,
+        callee: &Callee,
+        arg: ExprId,
+        operand: Operand,
+        block: BlockId,
+    ) -> Operand {
+        let Operand::Const(Constant::Literal(
+            Literal::Int { .. } | Literal::Float { .. } | Literal::Bool(_) | Literal::Char(_),
+        )) = &operand
+        else {
+            return operand;
+        };
+        let Callee::Def { def, .. } = callee else { return operand };
+        let Some(signature) = self.context.decls.signature(*def) else { return operand };
+        let generic = !signature.generics.is_empty()
+            || signature
+                .owner
+                .and_then(|owner| self.context.decls.block_generics(owner))
+                .is_some_and(|generics| !generics.is_empty());
+        if !generic {
+            return operand;
+        }
+        let span = self.thir.expr(arg).span;
+        let ty = self.thir.ty(arg);
+        let temp = self.temp(ty, span, block);
+        self.assign(block, Place::local(temp), Rvalue::Use(operand), span);
+        self.read(Place::local(temp), ty)
     }
 
     /// Whether `print(x)` or `write(x)` has to render `x` before it can print
@@ -3038,8 +3092,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         for arg in args {
             let (operand, next) =
                 if unresolved { self.operand(*arg, block) } else { self.argument(*arg, block) };
-            operands.push(if unresolved { force_copy(operand) } else { operand });
             block = next;
+            let operand = self.pin_literal_argument(&callee, *arg, operand, block);
+            operands.push(if unresolved { force_copy(operand) } else { operand });
         }
         self.emit_call(dest, callee, operands, block, span)
     }

@@ -943,6 +943,39 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
     );
 }
 
+/// One argument that is a tuple or a nullable is an index here too, and for
+/// the same reason `Array[Doc]` is: no comma at depth one and no `any`, so
+/// nothing in the tokens says the brackets are not a subscript. The tuple's own
+/// comma is at depth two and the `?` is the presence test, so both parse
+/// cleanly as an `Index` over a `Tuple` and a `Present`, and `science-resolve`
+/// reads them back as the types they are (`science-types`'s
+/// `tests/instantiation.rs` pins that half). Neither may report anything here:
+/// `Set[(Int, Int)].new()` and `Array[String?].new()` are valid programs.
+#[test]
+fn a_tuple_or_a_nullable_argument_is_an_index_for_the_resolver_to_read() {
+    assert_shape(
+        "Set[(Int, Int)].new()",
+        "
+        Method `new`
+          receiver: Index
+            base: Path `Set`
+            index: Tuple
+              Path `Int`
+              Path `Int`
+        ",
+    );
+    assert_shape(
+        "Array[String?].new()",
+        "
+        Method `new`
+          receiver: Index
+            base: Path `Array`
+            index: Present
+              Path `String`
+        ",
+    );
+}
+
 /// The bare `of` form is the one §4.3 rules on: `.new()` could belong to
 /// `Doc` or to `Array of Doc`, and rather than make a space load-bearing
 /// Science reports the ambiguity (`SC0116`), says which reading it took, and
