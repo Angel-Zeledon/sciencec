@@ -1,0 +1,75 @@
+error[SC0274]: `.3f` needs a float, and this is `I64`
+  --> tests/ui/types/format_spec_mismatch.science:14:20
+   |
+14 |     print(f"count {count:.3f}")
+   |                    ^^^^^ this is `I64`
+   |                          --- `f` is a float code
+   |
+   = help: convert, if a decimal point is what you want: ` as F64`
+
+error[SC0274]: `x` needs an integer, and this is `F64`
+  --> tests/ui/types/format_spec_mismatch.science:15:14
+   |
+15 |     print(f"{ratio:x}")
+   |              ^^^^^ this is `F64`
+   |                    - `x` is an integer code
+
+error[SC0274]: a precision needs a float or a `String`, and this is `I64`
+  --> tests/ui/types/format_spec_mismatch.science:16:14
+   |
+16 |     print(f"{count:.2}")
+   |              ^^^^^ this is `I64`
+   |                    -- this spec asks for 2 places
+   |
+   = help: convert, if a decimal point is what you want: ` as F64`
+
+error[SC0274]: `e` needs a float, and this is `String`
+  --> tests/ui/types/format_spec_mismatch.science:17:14
+   |
+17 |     print(f"{name:e}")
+   |              ^^^^ this is `String`
+   |                   - `e` is a float code
+
+error[SC0274]: `.2f` needs a float, and this is `Station`
+  --> tests/ui/types/format_spec_mismatch.science:18:14
+   |
+18 |     print(f"{s:.2f}")
+   |              ^ this is `Station`
+   |                --- `f` is a float code
+
+error[SC0274]: `#` needs one of the codes `x` `X` `o` `b` `f` `e` `E` `g` `G`
+  --> tests/ui/types/format_spec_mismatch.science:19:14
+   |
+19 |     print(f"{count:#d}")
+   |              ^^^^^ this is `I64`
+   |                    -- `#` selects an alternate form, and this spec names no code that has one
+
+error[SC0274]: `#` needs one of the codes `x` `X` `o` `b` `f` `e` `E` `g` `G`
+  --> tests/ui/types/format_spec_mismatch.science:20:14
+   |
+20 |     print(f"{ratio:#%}")
+   |              ^^^^^ this is `F64`
+   |                    -- `#` selects an alternate form, and this spec names no code that has one
+
+error[SC0274]: grouping needs a number, and this is `String`
+  --> tests/ui/types/format_spec_mismatch.science:21:14
+   |
+21 |     print(f"{name:,}")
+   |              ^^^^ this is `String`
+   |                   - `,` and `_` group the digits of a number
+
+error[SC0274]: a sign needs a number, and this is `Bool`
+  --> tests/ui/types/format_spec_mismatch.science:22:14
+   |
+22 |     print(f"{flag:+}")
+   |              ^^^^ this is `Bool`
+   |                   - `+`, `-` and ` ` say how a number's sign is written
+
+error[SC0274]: `.2f` needs a float, and this is `I64`
+  --> tests/ui/types/format_spec_mismatch.science:23:14
+   |
+23 |     print(f"{1:.2f}")
+   |              ^ this is `I64`
+   |                --- `f` is a float code
+   |
+   = help: convert, if a decimal point is what you want: ` as F64`

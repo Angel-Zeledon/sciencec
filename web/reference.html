@@ -1589,21 +1589,29 @@ code       := 'f' | 'e' | 'E' | 'g' | 'G' | '%' | 'd' | 'x' | 'X' | 'o' | 'b' | 
   </p>
 
   <p class="note">
-    <strong>None of the mini-language is built.</strong>
-    <code>f"{value}"</code> is the whole of what this compiler reads, and any
-    spec at all &mdash; including the <code>!i</code> conversion &mdash; is
-    <code>SC0173</code>, which is the good failure: it names the feature as
-    unbuilt rather than accepting the spec and ignoring it.
+    <strong>The static mini-language is built.</strong> Fill, alignment,
+    sign, <code>#</code>, the <code>0</code> flag, width, grouping, precision
+    and every code above are read by the lexer, checked against the hole's
+    type, and rendered: <code>f"{x:>10.3f}"</code>,
+    <code>f"{n:+,}"</code>, <code>f"{mask:#_x}"</code> and
+    <code>f"{name:*^12}"</code> all print what Python would, except that
+    <code>NaN</code> and <code>inf</code> are spelled that way. A spec that is
+    not a sentence of the grammar is <code>SC0173</code>; one that does not
+    suit its hole's type is <code>SC0274</code>. Two parts are still
+    <code>SC0173</code> with a message naming them: the dynamic width and
+    precision of &sect;2.5 (<code>{x:>{w}}</code>), and the <code>!i</code>
+    conversion, because no <code>Inspect</code> is declared.
     <span class="cite wip">changing</span>
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0173]</span>: a format specification, which this compiler does not implement
- <span class="e-hi">--&gt;</span> report.science:2:12
-  |
-2 | print(f"{pi:.3}")
-  |            <span class="e-hi">^^^</span> no part of the format mini-language is built
-  |
-  = note: `f"{value}"` is the whole of what this compiler reads: an expression, rendered by its `Display`. The fill, alignment, sign, width, grouping, precision and type codes, and the `!i` conversion, are specified and unbuilt</code></pre>
+<pre class="err"><code><span class="e-code">error[SC0274]</span>: `.3f` needs a float, and this is `I64`
+  <span class="e-hi">--&gt;</span> report.science:14:20
+   |
+14 |     print(f"count {count:.3f}")
+   |                    <span class="e-hi">^^^^^</span> this is `I64`
+   |                          --- `f` is a float code
+   |
+   = help: convert, if a decimal point is what you want: ` as F64`</code></pre>
 
   <h3><code>Display</code>, <code>Inspect</code>, and what a hole requires</h3>
 

@@ -442,7 +442,7 @@ fn walk_expr(expr: &hir::Expr, out: &mut Vec<DefId>) {
         // about the operand and not about what the operand does.
         hir::ExprKind::FString(parts) => {
             for part in parts {
-                if let hir::FStringPart::Hole(expr) = part {
+                if let hir::FStringPart::Hole(expr, _) = part {
                     walk_expr(expr, out);
                 }
             }

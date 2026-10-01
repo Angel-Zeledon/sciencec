@@ -1,0 +1,14 @@
+# `strings-formatting-and-docs.md` §2.1 and §7's `SC0173`: a spec that is not
+# a sentence of the grammar, one member per line, so each message is pinned
+# byte for byte. Whether a well-formed spec suits its hole's type is
+# `SC0274`, in `tests/ui/types/format_spec_mismatch.science`.
+def report(x: F64, n: I64):
+    print(f"{x:.f}")
+    print(f"{x:n}")
+    print(f"{x:.2>}")
+    print(f"{x:.1%%}")
+    print(f"{n:>{n}}")
+    print(f"{x!i}")
+    print(f"{x!q}")
+    print(f"{n:99999}")
+    print(f"ok {x:>10.3f} {n:+,} {n:#x}")

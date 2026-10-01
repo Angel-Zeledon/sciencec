@@ -519,9 +519,9 @@ const CORPUS: &[(&str, &str)] = &[
     // `science_formatter_init` over the accumulator, and each `into.…` inside
     // the body is a `PRELUDE_METHODS` row — so one program declares four of
     // the seven `format.rs` entry points this list would otherwise have to
-    // excuse. The fifth and sixth are on `ALLOWLIST`; `science_formatter_spec`
-    // has no `PRELUDE_METHODS` row to reach it through, and
-    // `science_format_spec_default` is called from inside `science-rt`.
+    // excuse. `science_format_spec_default` is on `ALLOWLIST`, called from
+    // inside `science-rt`; `science_formatter_spec` used to be beside it and
+    // is reached by `format_specs` below.
     (
         "display_through_a_formatter",
         "type Doc:\n\
@@ -537,6 +537,30 @@ const CORPUS: &[(&str, &str)] = &[
          \n\
          def main():\n\
          \x20   print(Doc(n: 1, weight: 0.5))\n",
+    ),
+    // §2's format spec, which took `science_formatter_spec` off `ALLOWLIST`
+    // and brought three entry points with it. A spec'd hole is a `Formatter`
+    // built by `science_formatter_init_spec`, then the one entry point its
+    // type renders through — `number32` for an `F32`, `unsigned` for a `U64`
+    // — and a user `display` handed that `Formatter` reads it back with
+    // `into.spec()`. `tests/format_spec.rs` runs each of these and asserts
+    // its bytes; this program only has to declare them.
+    (
+        "format_specs",
+        "type Tag:\n\
+         \x20   name: String\n\
+         \n\
+         Tag implements Display:\n\
+         \x20   def display(self, into: &mut Formatter):\n\
+         \x20       let spec be into.spec()\n\
+         \x20       let width be spec.width\n\
+         \x20       if width?:\n\
+         \x20           into.text(self.name)\n\
+         \n\
+         def main():\n\
+         \x20   let f: F32 be 0.5\n\
+         \x20   let u: U64 be 7\n\
+         \x20   print(f\"{f:>6} {u:,} {Tag(name: \"t\"):>4}\")\n",
     ),
     // `strings-formatting-and-docs.md` §4.2's other three output functions,
     // which joined `RUNTIME` together with their callers: the prelude names
@@ -631,16 +655,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
          convention and are reachable below — so the prelude declaration is the only thing left; \
          `Lowerer::owned_nullable_method`'s own doc comment says the reasoning was re-read after \
          that convention landed and still stands",
-    ),
-    (
-        "science_formatter_spec",
-        "`Formatter.spec` is declared in `builtins.rs` and has no `PRELUDE_METHODS` row, which \
-         is that table's own documented arrangement — \"a row is added when a program that runs \
-         it is added with it\". §3.1 gives the method for \"an implementation that needs to \
-         branch on\" the spec, and nothing can branch on one while §2's mini-language has no \
-         lexer and every spec a program can build is the default. `into.spec()` refuses by name \
-         until then; the other four `Formatter` methods are reached by \
-         `display_through_a_formatter` in `CORPUS`",
     ),
     (
         "science_format_spec_default",

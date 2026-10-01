@@ -1,0 +1,24 @@
+# `strings-formatting-and-docs.md` §2.4: a spec that is a sentence of the
+# grammar and does not suit its hole's type is `SC0274`, one row of §2.4's
+# table per line. The spec the lexer cannot read at all is `SC0173`, in
+# `tests/ui/format_spec_errors.science`.
+
+type Station:
+    id: String
+
+Station implements Display:
+    def display(self, into: &mut Formatter):
+        into.text(self.id)
+
+def report(count: I64, ratio: F64, name: String, s: Station, flag: Bool):
+    print(f"count {count:.3f}")
+    print(f"{ratio:x}")
+    print(f"{count:.2}")
+    print(f"{name:e}")
+    print(f"{s:.2f}")
+    print(f"{count:#d}")
+    print(f"{ratio:#%}")
+    print(f"{name:,}")
+    print(f"{flag:+}")
+    print(f"{1:.2f}")
+    print(f"{count:>8,} {ratio:+.2e} {name:^9.3} {s:*<6} {flag:>5} {count:#x}")

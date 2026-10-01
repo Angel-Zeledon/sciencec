@@ -130,12 +130,25 @@ FString
     );
 }
 
-/// `SC0173` is the lexer's too, and the expression before the `:` still
-/// parses, so the tree is the one the corrected source would give.
+/// §2.1: a spec the lexer could read rides on the hole, after its
+/// expression, with the text after the `:` as written.
 #[test]
-fn a_format_specification_leaves_the_expression_parsed() {
+fn a_format_specification_is_carried_by_its_hole() {
     assert_eq!(
-        shape_of_expr_despite_lexical_errors(r#"f"{x:.3f}""#),
+        shape_of_expr(r#"f"{x:>10.3f}""#),
+        "\
+FString
+  hole: Path `x`
+  Spec \">10.3f\""
+    );
+}
+
+/// `SC0173` is the lexer's, and the expression before the `:` still parses,
+/// so the tree is the one the source without the spec would give.
+#[test]
+fn a_malformed_format_specification_leaves_the_expression_parsed() {
+    assert_eq!(
+        shape_of_expr_despite_lexical_errors(r#"f"{x:.f}""#),
         "\
 FString
   hole: Path `x`"

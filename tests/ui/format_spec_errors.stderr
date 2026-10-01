@@ -1,0 +1,61 @@
+error[SC0173]: a `.` with no precision after it
+ --> tests/ui/format_spec_errors.science:6:16
+  |
+6 |     print(f"{x:.f}")
+  |                ^ the digits after this `.` are missing
+  |
+  = note: the order is [[fill]align][sign][#][0][width][grouping][.precision][code], e.g. `*^12,.3f`
+
+error[SC0173]: `n` is not a format code
+ --> tests/ui/format_spec_errors.science:7:16
+  |
+7 |     print(f"{x:n}")
+  |                ^ unknown format code
+  |
+  = note: `n`, the locale-aware code, is deliberately absent (§2.6): the same program would print `3.14` on one machine and `3,14` on another
+
+error[SC0173]: `>` cannot appear here in a format specification
+ --> tests/ui/format_spec_errors.science:8:18
+  |
+8 |     print(f"{x:.2>}")
+  |                  ^ nothing of the spec can come here
+  |
+  = note: the order is [[fill]align][sign][#][0][width][grouping][.precision][code], e.g. `*^12,.3f`
+
+error[SC0173]: `%%` is not a format code
+ --> tests/ui/format_spec_errors.science:9:18
+  |
+9 |     print(f"{x:.1%%}")
+  |                  ^^ a percentage is one `%`
+  |
+  = help: write one `%`: `%`
+
+error[SC0173]: a width computed at run time, which this compiler does not implement
+  --> tests/ui/format_spec_errors.science:10:17
+   |
+10 |     print(f"{n:>{n}}")
+   |                 ^^^ §2.5's nested `{…}` is not built
+   |
+   = note: only a literal width and precision are read: write the number, or build the padding with an `if`
+
+error[SC0173]: the `!i` conversion, which this compiler does not implement
+  --> tests/ui/format_spec_errors.science:11:15
+   |
+11 |     print(f"{x!i}")
+   |               ^^ this conversion
+   |
+   = note: `!i` selects `Inspect` (§3.2), and no `Inspect` is declared yet: only `Display`, the default, renders a hole
+
+error[SC0173]: `!q` is not a conversion
+  --> tests/ui/format_spec_errors.science:12:15
+   |
+12 |     print(f"{x!q}")
+   |               ^^ this conversion
+   |
+   = note: the conversions are `!s`, which is `Display` and the default, and `!i`, which is `Inspect`
+
+error[SC0173]: a width of 99999 characters
+  --> tests/ui/format_spec_errors.science:13:16
+   |
+13 |     print(f"{n:99999}")
+   |                ^^^^^ a width is at most 10000

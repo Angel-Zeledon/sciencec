@@ -1834,10 +1834,20 @@ impl<'a> BodyChecker<'a> {
         for part in parts {
             match part {
                 hir::FStringPart::Text(text) => lowered.push(FStringPart::Text(text.clone())),
-                hir::FStringPart::Hole(expr) => {
+                hir::FStringPart::Hole(expr, spec) => {
                     let typed = self.synth(expr);
-                    self.requires_display(typed, expr.span);
-                    lowered.push(FStringPart::Hole(typed.id));
+                    let spec = match spec {
+                        Some(spec) if !spec.spec.is_empty() => {
+                            self.settle_hole(typed);
+                            self.requires_display(typed, expr.span);
+                            self.check_format_spec(typed, expr.span, spec)
+                        }
+                        _ => {
+                            self.requires_display(typed, expr.span);
+                            None
+                        }
+                    };
+                    lowered.push(FStringPart::Hole(typed.id, spec));
                 }
             }
         }
@@ -1846,6 +1856,169 @@ impl<'a> BodyChecker<'a> {
             None => InferTy::Known(Ty::ERROR),
         };
         self.push_typed(ExprKind::FString(lowered), ty, span)
+    }
+
+    /// A spec'd hole whose type is still an unsuffixed literal's variable,
+    /// settled to Decision 2's default *now* rather than at the end of the
+    /// body.
+    ///
+    /// **Why a spec needs this and a bare hole does not.** A bare hole asks
+    /// one question of its type — does it implement `Display` — and an open
+    /// literal is a *"cannot say"* that answers itself once the default runs.
+    /// A spec asks §2.4's questions, and `f"{1:.2f}"` has an answer: the
+    /// literal is an `Int`, and `.2f` needs a float. Leaving the variable open
+    /// would let the spec through unchecked and hand MIR an `Int` hole with a
+    /// float code on it. Settling early commits nothing the default would not
+    /// have committed at the end of the body.
+    fn settle_hole(&mut self, operand: Typed) {
+        if let InferTy::Var(var) = self.infer.resolve(operand.ty) {
+            let _ = self.settle_open(var);
+        }
+    }
+
+    /// `SC0274`: §2.4's table, one row at a time, against the hole's type.
+    ///
+    /// # The decision
+    ///
+    /// The type is sorted into four classes — a float (`F16 BF16 F32 F64`),
+    /// an integer (`I8`…`U64`), a `String`, or anything else that implements
+    /// `Display` — and each element of the spec is legal in the classes §2.4
+    /// names for it:
+    ///
+    /// | Element | Legal when |
+    /// |---|---|
+    /// | `f e E g G %` | a float |
+    /// | `d x X o b` | an integer |
+    /// | `.precision` | a float code, or no code on a float, or a `String` (truncation) |
+    /// | `#` | the code is `x X o b f e E g G` |
+    /// | `,` `_` | a float or an integer, and the code is not `s` |
+    /// | sign | a float or an integer |
+    /// | `s`, fill, align, width, `0` | anything `Display` |
+    ///
+    /// `None` when a row fails, so that the hole lowers as though no spec
+    /// had been written — a program with an error does not reach MIR, and a
+    /// spec that does reach it is one whose code suits its type.
+    ///
+    /// # The reason for the two rows §2.4 leaves implicit
+    ///
+    /// **A sign** is not in §2.4's table and is in this one, because a sign
+    /// on a `String` has nothing to attach to; Python refuses it for the same
+    /// reason. **Precision with no code on a float** is the `{x:.2}` the
+    /// note's own examples lean on, and `science-rt` renders it as fixed
+    /// point, so refusing it would refuse a spelling every example uses.
+    ///
+    /// # The cost
+    ///
+    /// **`DisplayNumber` is not a way in.** §3.3's marker interface would let
+    /// a user type take the float codes, and the prelude does not declare
+    /// it, so a numeric code on a user type is refused here with the type's
+    /// name. When it is declared, it is one more arm in the float class.
+    fn check_format_spec(
+        &mut self,
+        operand: Typed,
+        hole: Span,
+        written: &hir::HoleSpec,
+    ) -> Option<science_lexer::FormatSpec> {
+        use science_lexer::format_spec::FormatCode;
+        let spec = &written.spec;
+        let ty = self.known_or_error(operand.ty);
+        let ty = self.revealed(ty, hole);
+        let ty = self.without_borrows(ty);
+        if self.types.references_error(ty) {
+            return Some(spec.clone());
+        }
+        let prelude = self.decls.prelude();
+        let types = &*self.types;
+        let is = |name: &str| prelude.is(types, ty, name);
+        let class = if ["F16", "BF16", "F32", "F64", "Float"].iter().any(|n| is(n)) {
+            SpecClass::Float
+        } else if ["Int", "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"]
+            .iter()
+            .any(|n| is(n))
+        {
+            SpecClass::Integer
+        } else if is("String") {
+            SpecClass::Text
+        } else {
+            SpecClass::Other
+        };
+        let rendered = self.types.render(self.defs, ty);
+        let numeric = matches!(class, SpecClass::Float | SpecClass::Integer);
+        let code = spec.code;
+        let refusal = match code {
+            Some(code) if code.is_float() && class != SpecClass::Float => Some((
+                format!("`{}` needs a float, and this is `{rendered}`", spec.text),
+                format!("`{}` is a float code", code.letter()),
+                class == SpecClass::Integer,
+            )),
+            Some(code) if code.is_integer() && class != SpecClass::Integer => Some((
+                format!("`{}` needs an integer, and this is `{rendered}`", spec.text),
+                format!("`{}` is an integer code", code.letter()),
+                false,
+            )),
+            _ => None,
+        };
+        let refusal = refusal.or_else(|| {
+            let precision_fits = match class {
+                SpecClass::Float => code.is_none_or(|c| c.is_float()),
+                SpecClass::Text => matches!(code, None | Some(FormatCode::Str)),
+                SpecClass::Integer | SpecClass::Other => code.is_some_and(|c| c.is_float()),
+            };
+            if let Some(precision) = spec.precision.filter(|_| !precision_fits) {
+                return Some((
+                    format!("a precision needs a float or a `String`, and this is `{rendered}`"),
+                    format!("this spec asks for {precision} places"),
+                    class == SpecClass::Integer,
+                ));
+            }
+            if spec.alternate && !code.is_some_and(|c| c.takes_alternate()) {
+                return Some((
+                    "`#` needs one of the codes `x` `X` `o` `b` `f` `e` `E` `g` `G`".to_string(),
+                    "`#` selects an alternate form, and this spec names no code that has one"
+                        .to_string(),
+                    false,
+                ));
+            }
+            if spec.grouping.is_some() && (!numeric || code == Some(FormatCode::Str)) {
+                return Some((
+                    format!("grouping needs a number, and this is `{rendered}`"),
+                    "`,` and `_` group the digits of a number".to_string(),
+                    false,
+                ));
+            }
+            if spec.sign.is_some() && !numeric {
+                return Some((
+                    format!("a sign needs a number, and this is `{rendered}`"),
+                    "`+`, `-` and ` ` say how a number's sign is written".to_string(),
+                    false,
+                ));
+            }
+            None
+        });
+        let Some((message, spec_label, convert)) = refusal else {
+            return Some(spec.clone());
+        };
+        let mut diagnostic = Diagnostic::error(codes::FORMAT_SPEC_MISMATCH, message)
+            .with_label(Label::primary(hole, format!("this is `{rendered}`")))
+            .with_label(Label::secondary(written.span, spec_label));
+        if convert {
+            diagnostic = diagnostic.with_suggestion(science_diagnostics::Suggestion {
+                span: Span::new(hole.file, hole.end, hole.end),
+                replacement: " as F64".to_string(),
+                message: "convert, if a decimal point is what you want".to_string(),
+            });
+        }
+        self.diagnostics.push(diagnostic);
+        None
+    }
+
+    /// A type with every enclosing borrow removed, for a question that is
+    /// about the value and not about how it is held.
+    fn without_borrows(&self, ty: Ty) -> Ty {
+        match *self.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => self.without_borrows(inner),
+            _ => ty,
+        }
     }
 
     /// `SC0275`: the hole's type must implement `Display`.
@@ -8433,6 +8606,16 @@ fn output_argument_not_displayable(span: Span, ty: &str, name: &str) -> Diagnost
          until it is narrowed — `if x?: {name}(x)` — the same rule an f-string hole already \
          enforces"
     ))
+}
+
+/// The four classes [`BodyChecker::check_format_spec`] sorts a hole's type
+/// into, after §2.4's table.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpecClass {
+    Float,
+    Integer,
+    Text,
+    Other,
 }
 
 fn not_displayable(span: Span, ty: &str) -> Diagnostic {

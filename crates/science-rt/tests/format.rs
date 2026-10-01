@@ -198,10 +198,11 @@ fn an_empty_render_allocates_nothing() {
 
 // --- `Formatter`, `strings-formatting-and-docs.md` §3.1 -------------------
 //
-// Every spec below is built by hand: §2's mini-language has no lexer yet, so
-// there is no `f"{x:.2f}"` to write and let the compiler parse. What is under
-// test is the *rendering* — the thing a lexer will one day hand a `FormatSpec`
-// to — not the parsing, which does not exist.
+// Every spec below is built by hand. It used to be because §2's mini-language
+// had no lexer; it has one now, and the reason that remains is that what is
+// under test here is the *rendering*, at values a source program reaches only
+// awkwardly. The parsing is `science-lexer`'s `format_spec`, and the two meet
+// end to end in `science-codegen-llvm`'s `tests/format_spec.rs`.
 
 fn default_spec() -> ScienceFormatSpec {
     science_format_spec_default()
@@ -564,4 +565,145 @@ fn init_points_the_formatter_at_the_accumulator_with_the_default_spec() {
     free(value);
     assert_eq!(as_str(&out), "a vector");
     free(out);
+}
+
+// --- §2's spec, as a hole's `f"…"` hands it over ----------------------------
+//
+// The lexer now reads §2.1's grammar and `science-mir` passes each hole's
+// spec to `science_formatter_init_spec` as four scalars. These are that
+// boundary from this side: the packing decodes to the record, and the four
+// renderings the spec'd path added beyond the table above.
+
+/// Initialises a `Formatter` the way a spec'd hole does, renders through it,
+/// and hands back the text and the spec it carried.
+fn through_init_spec(
+    fill: char,
+    flags: i64,
+    width: i64,
+    precision: i64,
+    render: impl FnOnce(*mut ScienceFormatter),
+) -> (String, ScienceFormatSpec) {
+    let mut out = science_string_new();
+    let mut formatter = std::mem::MaybeUninit::<ScienceFormatter>::uninit();
+    unsafe {
+        science_formatter_init_spec(
+            formatter.as_mut_ptr(),
+            &mut out,
+            fill as u32,
+            flags,
+            width,
+            precision,
+        )
+    };
+    let mut formatter = unsafe { formatter.assume_init() };
+    render(&mut formatter);
+    let spec = unsafe { science_formatter_spec(&formatter) };
+    let text = as_str(&out).to_string();
+    free(out);
+    (text, spec)
+}
+
+/// Every field of the flags word decodes to the field `into.spec()` reads:
+/// `*^+#,.3f` at width 12, packed by hand from `spec_flags`.
+#[test]
+fn init_spec_decodes_every_field_of_the_flags_word() {
+    use spec_flags::*;
+    let flags = (ScienceAlign::CENTER.0 as i64 + 1) << ALIGN_SHIFT
+        | (ScienceSign::PLUS.0 as i64 + 1) << SIGN_SHIFT
+        | (ScienceCode::FIXED.0 as i64 + 1) << CODE_SHIFT
+        | ALTERNATE
+        | (ScienceGrouping::COMMA.0 as i64 + 1) << GROUPING_SHIFT;
+    let (text, spec) =
+        through_init_spec('*', flags, 12, 3, |f| unsafe { science_formatter_number(f, 1234.5) });
+    assert_eq!(text, "*+1,234.500*");
+    assert_eq!(spec.fill, '*' as u32);
+    assert_eq!(spec.align, ScienceNullableAlign::some(ScienceAlign::CENTER));
+    assert_eq!(spec.sign, ScienceNullableSign::some(ScienceSign::PLUS));
+    assert_eq!(spec.code, ScienceNullableCode::some(ScienceCode::FIXED));
+    assert!(spec.alternate);
+    assert_eq!(spec.grouping, ScienceNullableGrouping::some(ScienceGrouping::COMMA));
+    assert_eq!(spec.width, ScienceNullableInt::some(12));
+    assert_eq!(spec.precision, ScienceNullableInt::some(3));
+}
+
+/// A zero flags word and `-1` for both numbers is §2.3's default spec, the
+/// one `science_formatter_init` writes.
+#[test]
+fn init_spec_with_nothing_set_is_the_default_spec() {
+    let (text, spec) =
+        through_init_spec(' ', 0, -1, -1, |f| unsafe { science_formatter_integer(f, 7) });
+    assert_eq!(text, "7");
+    assert_eq!(spec.align, ScienceNullableAlign::null());
+    assert_eq!(spec.width, ScienceNullableInt::null());
+    assert_eq!(spec.precision, ScienceNullableInt::null());
+    assert_eq!(spec.code, ScienceNullableCode::null());
+}
+
+/// The `0` flag arrives as a `0` fill with no alignment, and it is the one
+/// spelling that pads after the sign and the prefix: `{-7:04}` is `-007` and
+/// `{255:#06x}` is `0x00ff`. A `0` fill *with* an alignment pads the whole
+/// rendering, which `integer_zero_padded_via_fill_and_right_alignment` above
+/// pins for a positive value; here is the negative one, `00-7`.
+#[test]
+fn the_zero_flag_pads_after_the_sign_and_the_prefix() {
+    use spec_flags::*;
+    let (text, _) =
+        through_init_spec('0', 0, 4, -1, |f| unsafe { science_formatter_integer(f, -7) });
+    assert_eq!(text, "-007");
+    let hex = (ScienceCode::HEX.0 as i64 + 1) << CODE_SHIFT | ALTERNATE;
+    let (text, _) =
+        through_init_spec('0', hex, 6, -1, |f| unsafe { science_formatter_integer(f, 255) });
+    assert_eq!(text, "0x00ff");
+    let (text, _) =
+        through_init_spec('0', 0, 8, 2, |f| unsafe { science_formatter_number(f, -3.5) });
+    assert_eq!(text, "-0003.50");
+    let right = (ScienceAlign::RIGHT.0 as i64 + 1) << ALIGN_SHIFT;
+    let (text, _) =
+        through_init_spec('0', right, 4, -1, |f| unsafe { science_formatter_integer(f, -7) });
+    assert_eq!(text, "00-7");
+}
+
+/// `U64` past `i64::MAX`, which an `I64` cast would print as `-1`.
+#[test]
+fn unsigned_renders_the_whole_u64_range() {
+    use spec_flags::*;
+    let comma = (ScienceGrouping::COMMA.0 as i64 + 1) << GROUPING_SHIFT;
+    let (text, _) = through_init_spec(' ', comma, -1, -1, |f| unsafe {
+        science_formatter_unsigned(f, u64::MAX)
+    });
+    assert_eq!(text, "18,446,744,073,709,551,615");
+}
+
+/// An `F32` at a width keeps its own shortest spelling, and at a precision
+/// renders the exact widened value.
+#[test]
+fn number32_keeps_the_f32_shortest_spelling() {
+    let (text, _) =
+        through_init_spec(' ', 0, 6, -1, |f| unsafe { science_formatter_number32(f, 0.1) });
+    assert_eq!(text, "   0.1");
+    let (text, _) =
+        through_init_spec(' ', 0, -1, 3, |f| unsafe { science_formatter_number32(f, 0.1) });
+    assert_eq!(text, "0.100");
+}
+
+/// A precision on text is truncation in characters (§2.4), before the pad.
+#[test]
+fn text_truncates_to_the_precision_in_characters() {
+    let value = s("αβγδ");
+    let (text, _) =
+        through_init_spec('·', 0, 4, 2, |f| unsafe { science_formatter_text(f, &value) });
+    free(value);
+    assert_eq!(text, "αβ··");
+}
+
+/// Grouping a non-decimal base is every four digits.
+#[test]
+fn grouping_a_non_decimal_base_is_by_four() {
+    use spec_flags::*;
+    let flags = (ScienceCode::HEX.0 as i64 + 1) << CODE_SHIFT
+        | (ScienceGrouping::UNDERSCORE.0 as i64 + 1) << GROUPING_SHIFT;
+    let (text, _) = through_init_spec(' ', flags, -1, -1, |f| unsafe {
+        science_formatter_integer(f, 0xffff_ffff)
+    });
+    assert_eq!(text, "ffff_ffff");
 }

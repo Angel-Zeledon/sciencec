@@ -1243,13 +1243,17 @@ pub struct Expr {
     pub span: Span,
 }
 
+pub use science_parser::ast::HoleSpec;
+
 /// One piece of an [`ExprKind::FString`], after resolution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     /// Literal text, escapes and doubled braces already resolved.
     Text(String),
-    /// `{ expression }`.
-    Hole(Expr),
+    /// `{ expression }`, and §2.1's spec after a `:` when one was written —
+    /// carried through resolution untouched, because nothing in a spec is a
+    /// name.
+    Hole(Expr, Option<HoleSpec>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

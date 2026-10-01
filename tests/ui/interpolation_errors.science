@@ -5,7 +5,7 @@
 def report(n: I64, name: String):
     print(f"{n")
     print(f"a}b")
-    print(f"{n:.3f}")
+    print(f"{n:.3F}")
     print(f"{}")
     print(f"{n # why}")
     print(rf"{n}")

@@ -248,13 +248,61 @@ fn an_unpaired_closing_brace_is_sc0171() {
 }
 
 #[test]
-fn a_format_specification_is_sc0173() {
-    assert_eq!(codes(r#"f"{x:.3f}""#), vec!["SC0173"]);
-    assert_eq!(codes(r#"f"{x!i}""#), vec!["SC0173"]);
-    // The expression before the `:` still lexes, so the hole is usable and the
-    // one diagnostic is about the part that is not built.
+fn a_format_specification_is_one_token_before_the_closing_brace() {
+    // §2.1: the spec is read by the lexer and travels as one token, between
+    // the hole's expression and its `}`.
+    let spec = science_lexer::format_spec::parse(".3f").unwrap();
     assert_eq!(
         parts(r#"f"{x:.3f}""#),
+        vec![
+            TokenKind::FStrStart,
+            TokenKind::InterpStart,
+            TokenKind::Ident("x".to_string()),
+            TokenKind::FormatSpec(Box::new(spec)),
+            TokenKind::InterpEnd,
+            TokenKind::FStrEnd,
+        ]
+    );
+    for ok in [
+        r#"f"{x:.2}""#,
+        r#"f"{n:>8}""#,
+        r#"f"{n:*^8}""#,
+        r#"f"{v:,}""#,
+        r#"f"{v:_d}""#,
+        r#"f"{n:#x}""#,
+        r#"f"{p:+.2e}""#,
+        r#"f"{r:.1%}""#,
+        r#"f"{i:04d}""#,
+        r#"f"{x:}""#,
+        r#"f"{x!s}""#,
+        r#"f"{x!s:>4}""#,
+        r#"f"{a:·<6} {b:>3}""#,
+    ] {
+        assert_eq!(codes(ok), Vec::<&str>::new(), "{ok}");
+    }
+}
+
+#[test]
+fn a_spec_outside_the_grammar_is_sc0173_and_leaves_no_token() {
+    for bad in [
+        r#"f"{x:.f}""#,
+        r#"f"{x:F}""#,
+        r#"f"{x:n}""#,
+        r#"f"{x:.2>}""#,
+        r#"f"{x:.2%%}""#,
+        r#"f"{x:>{w}}""#,
+        r#"f"{x:.{p}f}""#,
+        r#"f"{x!i}""#,
+        r#"f"{x!q}""#,
+        r#"f"{x!}""#,
+        r#"f"{x!s>4}""#,
+    ] {
+        assert_eq!(codes(bad), vec!["SC0173"], "{bad}");
+    }
+    // The expression before the `:` still lexes, so the hole is usable and the
+    // one diagnostic is about the spec.
+    assert_eq!(
+        parts(r#"f"{x:.f}""#),
         vec![
             TokenKind::FStrStart,
             TokenKind::InterpStart,
@@ -266,9 +314,18 @@ fn a_format_specification_is_sc0173() {
 }
 
 #[test]
+fn a_dynamic_width_does_not_close_the_hole_early() {
+    // §2.5's `{w}` is not built, but its `}` is not the hole's: one diagnostic,
+    // and the literal ends where it does.
+    assert_eq!(codes(r#"f"{x:>{w}} end""#), vec!["SC0173"]);
+    assert_eq!(parts(r#"f"{x:>{w}} end""#).last(), Some(&TokenKind::FStrEnd));
+}
+
+#[test]
 fn an_empty_interpolation_is_sc0174() {
     assert_eq!(codes(r#"f"{}""#), vec!["SC0174"]);
-    assert_eq!(codes(r#"f"{:.3f}""#), vec!["SC0173"]);
+    // §7's own example: `f"{:.3f}"` is empty, with or without a spec.
+    assert_eq!(codes(r#"f"{:.3f}""#), vec!["SC0174"]);
 }
 
 #[test]

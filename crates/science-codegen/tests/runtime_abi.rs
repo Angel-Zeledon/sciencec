@@ -422,7 +422,15 @@ fn nothing_outside_the_table_is_callable() {
     // `science_read_file`'s door. `io`'s `File.open`, `File.read` and
     // `Stdin.read` are Science calling `science-rt` through an `extern` block,
     // so they are not in this table, as `File.create` is not.
-    assert_eq!(RUNTIME.len(), 110);
+    //
+    // **One hundred and thirteen.** `science_formatter_init_spec`, `science_formatter_unsigned`
+    // and `science_formatter_number32` are §2's format spec applied to an
+    // `f"…"` hole: a `Formatter` built from the hole's spec, passed as four
+    // scalars because it is a constant, and the two renderings a widening
+    // cast would get wrong — a `U64` past `i64::MAX` and an `F32`'s shortest
+    // spelling. §2.2's table is a library, not an instruction sequence, which
+    // is the door `science_formatter_number` came through.
+    assert_eq!(RUNTIME.len(), 113);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

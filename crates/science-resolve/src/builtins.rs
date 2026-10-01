@@ -3650,13 +3650,17 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     }
     prelude.modules.push((ffi, ffi_names));
 
+    let mut choice_ids: Vec<(DefId, Vec<DefId>)> = Vec::with_capacity(CHOICES.len());
     for (name, variants) in CHOICES {
         let choice_id = declare(defs, DefKind::Choice, name, &mut prelude);
+        let mut variant_ids = Vec::with_capacity(variants.len());
         for (variant, arity) in *variants {
             let id = defs.alloc(DefKind::Variant, *variant, BUILTIN_SPAN, Some(choice_id));
             prelude.variants.push((variant.to_string(), id));
             prelude.variant_arity.push((id, *arity));
+            variant_ids.push(id);
         }
+        choice_ids.push((choice_id, variant_ids));
     }
 
     // Every name above exists before a single signature is written, which is
@@ -3682,6 +3686,27 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // `Code` and `Grouping` — named by [`CHOICES`], processed above — exist
     // for it to name.
     declarer.format_spec(format_spec_def);
+    // ...and the four `choice`s themselves get an item, so that
+    // `science-types`' declaration table has a payload list for each variant.
+    // Every variant is payload-free, so the list is empty, but **absent is
+    // not empty**: `science-codegen-llvm`'s `choice_ty` refuses a variant the
+    // table has no entry for — *"the variant `Align.Left`, which the
+    // declaration table has no lowered payload for"* — and that refusal is
+    // what `into.spec()` met the first time a program read a `FormatSpec`'s
+    // `align` off a hole's spec. The `DefId`s were allocated above; this
+    // allocates none, so no other id moves.
+    for (choice_id, variant_ids) in choice_ids {
+        declarer.item(hir::ItemKind::Choice(hir::Choice {
+            def: choice_id,
+            generics: Vec::new(),
+            where_clause: Vec::new(),
+            variants: variant_ids
+                .into_iter()
+                .map(|def| hir::Variant { def, payload: Vec::new(), span: BUILTIN_SPAN })
+                .collect(),
+            span: BUILTIN_SPAN,
+        }));
+    }
     declarer.entry(entry_def);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);

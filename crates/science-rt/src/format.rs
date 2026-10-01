@@ -56,14 +56,15 @@
 //! what that call needs is not an eighth push but a sink to write into —
 //! [`ScienceFormatter`], below.
 //!
-//! **None of the seven honours a format specification**, because there is no
-//! way to pass one: §2's mini-language is unimplemented and the lexer refuses
-//! every spec with `SC0173`. §2.3's defaults — which are what these implement
-//! — stay the no-spec case either way. The `Formatter` section *does* honour a
-//! spec, because §3.1 hands one to every `display` through `into.spec()` and a
-//! representation with nowhere to put it would have had to be replaced the day
-//! the lexer learned to parse one; what a Science program can build today is
-//! still only [`science_format_spec_default`].
+//! **None of the seven honours a format specification, and none needs to.**
+//! They are §2.3's defaults — the no-spec case. A hole that writes a spec
+//! (`f"{x:>10.3f}"`, §2.1) does not reach them: `science-mir` routes it
+//! through the `Formatter` section below, initialised with the hole's spec by
+//! [`science_formatter_init_spec`], so §2.2's table is rendered in one place.
+//! That section was written to honour a spec before any program could write
+//! one, because §3.1 hands one to every `display` through `into.spec()`; the
+//! lexer has since learned to read them, and the representation did not have
+//! to change.
 //!
 //! # §2's `sret` list does not move, and that is checked
 //!
@@ -325,15 +326,17 @@ pub unsafe extern "C" fn science_string_push_char(value: *mut ScienceString, sca
 // [`science_formatter_init`] and a call to the user's own `display`;
 // `science-codegen-llvm`'s `PRELUDE_METHODS` maps `Formatter.text`, `.raw`,
 // `.number` and `.integer` to the four entry points below.
-// `examples/06_traits.science` runs the path end to end. `Formatter.spec` is
-// declared and unwired — see [`science_formatter_spec`] — and the rendering
-// itself is still exercised directly from `tests/format.rs`, the same way the
-// seven push functions above are, because a Science program cannot yet build
-// a spec to drive it with.
+// `examples/06_traits.science` runs the path end to end.
 //
-// **§2's mini-language is still unparsed**, so every spec these tests build
-// is built by hand in Rust, standing in for what a lexer and `science-types`'
-// spec checker will one day produce. The rendering rules below are read out
+// **And now all of them are, with a spec.** The lexer reads §2.1's grammar,
+// `science-types` checks it against the hole's type (`SC0274`), and
+// `science-mir` builds a spec'd hole's `Formatter` with
+// [`science_formatter_init_spec`] and renders through `number`, `integer`,
+// `text` — or the two this section added for the types a widening cast
+// would get wrong, [`science_formatter_unsigned`] and
+// [`science_formatter_number32`] — or through the user's own `display`, which
+// reads the spec back with `into.spec()`. `science-codegen-llvm`'s
+// `tests/format_spec.rs` runs each of them. The rendering rules below are read out
 // of §2.2's table and §2.3's defaults; where a rule for an *explicit* code is
 // not written down — the default precision for `.e` with no digit after it,
 // say — it follows Python's, because §2.1 says this mini-language *is*
@@ -585,10 +588,9 @@ pub struct ScienceFormatSpec {
 /// "Defaults" section, as a value: fill is a space and nothing else is
 /// present.
 ///
-/// This is the only `FormatSpec` any Science program can produce today,
-/// because §2's mini-language has no lexer yet. It exists so the entry
-/// points below have something to be called with, ahead of the caller that
-/// will one day build a non-default one.
+/// What [`science_formatter_init`] writes, for a hole with no spec — a
+/// `print(v)` of a user type, or `f"{v}"`. A hole that writes a spec gets
+/// [`science_formatter_init_spec`]'s instead.
 #[no_mangle]
 pub extern "C" fn science_format_spec_default() -> ScienceFormatSpec {
     ScienceFormatSpec {
@@ -642,10 +644,12 @@ pub struct ScienceFormatter {
 /// that is already there, which is the crate documentation's §2 list growing
 /// for nothing.
 ///
-/// **The spec is [`science_format_spec_default`]'s and not a parameter**,
-/// because §2's mini-language has no lexer: there is no other spec a Science
-/// program can name today. When there is, it arrives as a second parameter
-/// here and nothing else about this function changes.
+/// **The spec is [`science_format_spec_default`]'s and not a parameter.**
+/// This used to say that a spec, when the lexer could read one, would arrive
+/// as a parameter here. It arrived as a sibling instead,
+/// [`science_formatter_init_spec`], so that the no-spec hole — every `print`
+/// of a user type — keeps its two-argument call and the spec'd one pays for
+/// four more scalars only where a spec was written.
 ///
 /// # Safety
 ///
@@ -695,10 +699,15 @@ fn pad(text: String, spec: &ScienceFormatSpec, default_align: ScienceAlign) -> S
 /// ASCII decimal digits only — §2.2: *"`,` gives `1,234,567`… `_` gives
 /// `1_234_567`."*
 fn group(digits: &str, sep: char) -> String {
+    group_by(digits, sep, 3)
+}
+
+/// [`group`] at any stride: three for decimal, four for the other bases.
+fn group_by(digits: &str, sep: char, stride: usize) -> String {
     let len = digits.len();
-    let mut out = String::with_capacity(len + len / 3);
+    let mut out = String::with_capacity(len + len / stride);
     for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i) % stride == 0 {
             out.push(sep);
         }
         out.push(ch);
@@ -747,13 +756,25 @@ fn sign_str(negative: bool, sign: Option<ScienceSign>) -> &'static str {
     }
 }
 
-/// `f`, `x`/`X`, `o`, `b` and the no-code default for an integer — §2.2's
-/// table, minus the width/alignment/sign this function's caller applies
-/// afterwards. `magnitude` is already non-negative; the sign is
-/// [`render_integer`]'s to add.
+/// `d`, `x`/`X`, `o`, `b` and the no-code default for a signed integer —
+/// §2.2's table — with the sign, grouping, width and alignment applied.
 fn render_integer(value: i64, spec: &ScienceFormatSpec) -> String {
-    let negative = value < 0;
-    let magnitude = value.unsigned_abs();
+    render_magnitude(value < 0, value.unsigned_abs(), spec)
+}
+
+/// [`render_integer`] for a value already split into a sign and a
+/// magnitude, which is what lets a `U64` above `i64::MAX` share it:
+/// [`science_formatter_unsigned`] passes `negative: false` and the whole
+/// value.
+///
+/// **Grouping a non-decimal base is by four digits, not three.** §2.2 gives
+/// `,` and `_` for *"`1,234,567`"* and says nothing about `x`/`o`/`b`, and
+/// §2.4 makes grouping legal whenever *"the code is numeric"* — which those
+/// three are. Python groups them by four with `_` (`0xffff_ffff`), because a
+/// hex digit is half a byte and four of them are a 16-bit word; three would
+/// be a grouping no reader of a mask has ever wanted. `,` gets the same
+/// four, rather than Python's refusal, because §2.4 does not refuse it.
+fn render_magnitude(negative: bool, magnitude: u64, spec: &ScienceFormatSpec) -> String {
     let code = spec.code.get();
     let (mut digits, prefix) = match code {
         Some(ScienceCode::HEX) => (format!("{magnitude:x}"), "0x"),
@@ -763,13 +784,39 @@ fn render_integer(value: i64, spec: &ScienceFormatSpec) -> String {
         _ => (format!("{magnitude}"), ""),
     };
     // §2.2's alternate-form prefixes are for the three non-decimal codes
-    // only; grouping is decimal's, in the same table.
-    if matches!(code, None | Some(ScienceCode::DECIMAL)) {
+    // only.
+    if matches!(code, None | Some(ScienceCode::DECIMAL) | Some(ScienceCode::STR)) {
         digits = apply_grouping(&digits, spec.grouping.get());
+    } else if let Some(grouping) = spec.grouping.get() {
+        let sep = if grouping == ScienceGrouping::UNDERSCORE { '_' } else { ',' };
+        digits = group_by(&digits, sep, 4);
     }
     let prefix = if spec.alternate { prefix } else { "" };
     let sign = sign_str(negative, spec.sign.get());
-    pad(format!("{sign}{prefix}{digits}"), spec, ScienceAlign::RIGHT)
+    pad_number(&format!("{sign}{prefix}"), &digits, spec)
+}
+
+/// The `0` flag's padding: §2.3's *"`0` before the width means zero-fill"*,
+/// placed **after** the sign and any `0x` prefix, so `{-7:04}` is `-007` and
+/// `{255:#06x}` is `0x00ff`. Anything else is [`pad`] over the whole
+/// rendering, aligned right by default.
+///
+/// **How a `0` flag is told from a `0` fill.** §3.1's `FormatSpec` has no
+/// field for the flag, so the compiler spells it as `fill: '0'` with
+/// `align` left null — a combination §2.1's grammar cannot produce any other
+/// way, because a written fill always comes with a written alignment. So
+/// `{-7:0>4}` (fill `0`, align `>`) pads the whole string to `00-7`, as
+/// Python does, and only the flag is sign-aware.
+fn pad_number(lead: &str, body: &str, spec: &ScienceFormatSpec) -> String {
+    let zero_flag = spec.fill == '0' as u32 && spec.align.get().is_none();
+    match spec.width.get() {
+        Some(width) if zero_flag => {
+            let len = (lead.chars().count() + body.chars().count()) as i64;
+            let gap = (width - len).max(0) as usize;
+            format!("{lead}{}{body}", "0".repeat(gap))
+        }
+        _ => pad(format!("{lead}{body}"), spec, ScienceAlign::RIGHT),
+    }
 }
 
 /// Trims trailing zeros after a decimal point, and the point itself if
@@ -856,6 +903,14 @@ fn render_general(magnitude: f64, sig: i64, upper: bool, alternate: bool) -> Str
 /// where it would only ever touch a single mantissa digit and is never
 /// requested in practice), then width and alignment.
 fn render_f64(value: f64, spec: &ScienceFormatSpec) -> String {
+    render_float(value, spec, |magnitude| format!("{magnitude:?}"))
+}
+
+/// [`render_f64`] with the no-code, no-precision spelling supplied by the
+/// caller — `f64`'s shortest round-trip, or `f32`'s. Every explicit code and
+/// every precision renders through `f64` either way, because widening an
+/// `f32` is exact and `.3f` of the wide value is `.3f` of the narrow one.
+fn render_float(value: f64, spec: &ScienceFormatSpec, shortest: impl Fn(f64) -> String) -> String {
     let negative = value.is_sign_negative();
     // §2.3: *"`NaN`, `inf`, `-inf`, spelled that way, honouring width and
     // alignment and ignoring precision."* Neither carries a sign the way an
@@ -877,8 +932,14 @@ fn render_f64(value: f64, spec: &ScienceFormatSpec) -> String {
         None => match precision {
             Some(p) => apply_grouping(&render_fixed(magnitude, p, spec.alternate), spec.grouping.get()),
             // §2.3's own default: the shortest decimal string that
-            // round-trips, always carrying a point.
-            None => apply_grouping(&format!("{magnitude:?}"), spec.grouping.get()),
+            // round-trips, always carrying a point. Rust spells a very large
+            // or very small one with an exponent (`1e20`), and grouping the
+            // digits of a mantissa is not grouping a number, so that spelling
+            // is left ungrouped.
+            None => {
+                let text = shortest(magnitude);
+                if text.contains('e') { text } else { apply_grouping(&text, spec.grouping.get()) }
+            }
         },
         Some(ScienceCode::FIXED) => {
             apply_grouping(&render_fixed(magnitude, precision.unwrap_or(6), spec.alternate), spec.grouping.get())
@@ -900,15 +961,16 @@ fn render_f64(value: f64, spec: &ScienceFormatSpec) -> String {
             );
             format!("{grouped}%")
         }
-        // A code this predicate does not recognise for a float — `d`, `x`,
-        // `X`, `o`, `b`, `s` — is `science-types`' `SC0274` to refuse before
-        // this is ever called; this crate does not re-check the table and
-        // falls back to the no-code rendering rather than panicking on a
+        // `s` on a float is §2.2's *"anything `Display`"*: the default
+        // rendering. A code this predicate does not recognise for a float —
+        // `d`, `x`, `X`, `o`, `b` — is `science-types`' `SC0274` to refuse
+        // before this is ever called; this crate does not re-check the table
+        // and falls back to the no-code rendering rather than panicking on a
         // program that should not have compiled.
-        _ => format!("{magnitude:?}"),
+        _ => shortest(magnitude),
     };
     let sign = sign_str(negative, spec.sign.get());
-    pad(format!("{sign}{body}"), spec, ScienceAlign::RIGHT)
+    pad_number(sign, &body, spec)
 }
 
 /// `Formatter.text`: append `value`, honouring fill, alignment and width from
@@ -927,7 +989,13 @@ pub unsafe extern "C" fn science_formatter_text(
 ) {
     // SAFETY: the caller guarantees a live `Formatter` and a live `value`.
     let spec = unsafe { (*formatter).spec };
-    let text = unsafe { (*value).as_str() }.to_string();
+    let text = unsafe { (*value).as_str() };
+    // §2.4: a precision on a `String` is truncation, in characters — the
+    // same unit the width is counted in.
+    let text = match spec.precision.get() {
+        Some(p) => text.chars().take(p.max(0) as usize).collect(),
+        None => text.to_string(),
+    };
     let padded = pad(text, &spec, ScienceAlign::LEFT);
     // SAFETY: the caller guarantees `formatter.sink` is a live `ScienceString`.
     let mut sink = Sink(unsafe { &mut *((*formatter).sink) });
@@ -987,6 +1055,145 @@ pub unsafe extern "C" fn science_formatter_integer(formatter: *mut ScienceFormat
     let _ = sink.write_str(&text);
 }
 
+/// `Formatter.integer` for a `U64`: [`science_formatter_integer`] over a
+/// value an `i64` cannot hold.
+///
+/// **An entry point of its own, and not a cast to `I64`**, because the cast
+/// is wrong for exactly the values grouping exists for: `u64::MAX` is
+/// `18,446,744,073,709,551,615`, and through an `i64` it is `-1`. `U8`,
+/// `U16` and `U32` do not need it — every value they hold is an `i64` — and
+/// `science-mir` widens them to `I64` for [`science_formatter_integer`].
+///
+/// Not a Science method. §3.1's `Formatter.integer` takes an `I64` and
+/// nothing here changes that: this is reached only from a spec'd `f"…"`
+/// hole of type `U64`, which `science-mir` lowers to it directly.
+///
+/// # Safety
+///
+/// Same as [`science_formatter_number`].
+#[no_mangle]
+pub unsafe extern "C" fn science_formatter_unsigned(formatter: *mut ScienceFormatter, value: u64) {
+    // SAFETY: the caller guarantees a live `Formatter`.
+    let spec = unsafe { (*formatter).spec };
+    let text = render_magnitude(false, value, &spec);
+    // SAFETY: the caller guarantees `formatter.sink` is a live `ScienceString`.
+    let mut sink = Sink(unsafe { &mut *((*formatter).sink) });
+    let _ = sink.write_str(&text);
+}
+
+/// `Formatter.number` for an `F32`, whose shortest round-trip spelling is
+/// not its `f64` widening's.
+///
+/// **The one case it exists for** is a spec with a width and no precision —
+/// `f"{x:>10}"` on an `F32` — where §2.3's default applies, and the default
+/// is *"the shortest decimal string that round-trips"* **for the value's own
+/// type**: `0.1f32` is `0.1`, and widened it is `0.10000000149011612`. Every
+/// other spec renders the widened value, which is exact.
+///
+/// # Safety
+///
+/// Same as [`science_formatter_number`].
+#[no_mangle]
+pub unsafe extern "C" fn science_formatter_number32(formatter: *mut ScienceFormatter, value: f32) {
+    // SAFETY: the caller guarantees a live `Formatter`.
+    let spec = unsafe { (*formatter).spec };
+    let text = render_float(f64::from(value), &spec, |magnitude| format!("{:?}", magnitude as f32));
+    // SAFETY: the caller guarantees `formatter.sink` is a live `ScienceString`.
+    let mut sink = Sink(unsafe { &mut *((*formatter).sink) });
+    let _ = sink.write_str(&text);
+}
+
+/// The bits of [`science_formatter_init_spec`]'s `flags` word. Each field is
+/// zero when the spec left it out, and otherwise its runtime tag plus one.
+pub mod spec_flags {
+    /// `align`: bits 0–1, [`super::ScienceAlign`]'s tag plus one.
+    pub const ALIGN_SHIFT: u32 = 0;
+    /// `sign`: bits 2–3, [`super::ScienceSign`]'s tag plus one.
+    pub const SIGN_SHIFT: u32 = 2;
+    /// `code`: bits 4–7, [`super::ScienceCode`]'s tag plus one.
+    pub const CODE_SHIFT: u32 = 4;
+    /// `alternate`: bit 8.
+    pub const ALTERNATE: i64 = 1 << 8;
+    /// `grouping`: bits 9–10, [`super::ScienceGrouping`]'s tag plus one.
+    pub const GROUPING_SHIFT: u32 = 9;
+}
+
+/// Writes a [`ScienceFormatter`] over `sink` with the spec a hole wrote —
+/// [`science_formatter_init`] for `f"{x:>10.3f}"`.
+///
+/// # The decision
+///
+/// **The spec crosses as four scalars, not as a `FormatSpec`.** `fill` is
+/// the fill character; `flags` packs the four nullable `choice` fields and
+/// `alternate` per [`spec_flags`]; `width` and `precision` are the numbers,
+/// or `-1` for absent.
+///
+/// # The reason
+///
+/// A hole's spec is a compile-time constant, and the cheapest constant a
+/// code generator can pass is an integer in a register. Passing a
+/// [`ScienceFormatSpec`] instead would mean `science-mir` building a
+/// forty-byte aggregate of four nullable `choice` values field by field —
+/// MIR for a record no program wrote, for a value that never changes — or
+/// a private global the MIR has no operand to name. Four integers are four
+/// `Constant::Count`s.
+///
+/// # The cost
+///
+/// **The packing is a second spelling of the record**, and it is this
+/// crate's alone: [`spec_flags`] is the one table both sides read, and
+/// `tests/format.rs` round-trips it against the record. And §2.5's dynamic
+/// width, when it is built, arrives as a run-time `width` here rather than
+/// a constant — which is the other reason the number is its own parameter
+/// and not a bit field.
+///
+/// The `0` flag is not a parameter: the compiler passes it as `fill: '0'`
+/// with no alignment, which [`pad_number`] reads as the flag.
+///
+/// # Safety
+///
+/// Same as [`science_formatter_init`].
+#[no_mangle]
+pub unsafe extern "C" fn science_formatter_init_spec(
+    formatter: *mut ScienceFormatter,
+    sink: *mut ScienceString,
+    fill: u32,
+    flags: i64,
+    width: i64,
+    precision: i64,
+) {
+    let field = |shift: u32, mask: i64| ((flags >> shift) & mask) as u8;
+    let align = match field(spec_flags::ALIGN_SHIFT, 0b11) {
+        0 => ScienceNullableAlign::null(),
+        tag => ScienceNullableAlign::some(ScienceAlign(tag - 1)),
+    };
+    let sign = match field(spec_flags::SIGN_SHIFT, 0b11) {
+        0 => ScienceNullableSign::null(),
+        tag => ScienceNullableSign::some(ScienceSign(tag - 1)),
+    };
+    let code = match field(spec_flags::CODE_SHIFT, 0b1111) {
+        0 => ScienceNullableCode::null(),
+        tag => ScienceNullableCode::some(ScienceCode(tag - 1)),
+    };
+    let grouping = match field(spec_flags::GROUPING_SHIFT, 0b11) {
+        0 => ScienceNullableGrouping::null(),
+        tag => ScienceNullableGrouping::some(ScienceGrouping(tag - 1)),
+    };
+    let number = |n: i64| if n < 0 { ScienceNullableInt::null() } else { ScienceNullableInt::some(n) };
+    let spec = ScienceFormatSpec {
+        fill: if char::from_u32(fill).is_some() { fill } else { ' ' as u32 },
+        align,
+        sign,
+        width: number(width),
+        precision: number(precision),
+        code,
+        alternate: flags & spec_flags::ALTERNATE != 0,
+        grouping,
+    };
+    // SAFETY: the caller guarantees writable, aligned storage.
+    unsafe { formatter.write(ScienceFormatter { sink, spec }) };
+}
+
 /// `Formatter.spec`: the parsed spec, for an implementation that needs to
 /// branch on it — §3.3's `Quantity`, choosing `.number()`'s rendering by
 /// what `into.spec()` says, is the worked example.
@@ -998,16 +1205,13 @@ pub unsafe extern "C" fn science_formatter_integer(formatter: *mut ScienceFormat
 /// this and [`science_format_spec_default`] are the two entries that took
 /// that list from ten `sret` returns to twelve.
 ///
-/// **No Science program reaches it yet, and that is a wiring gap rather than
-/// a design one.** `science-resolve` declares `Formatter has: def spec(self)
-/// -> FormatSpec`, but `science-codegen-llvm`'s `PRELUDE_METHODS` has no row
-/// for it, so `into.spec()` refuses by name — that table's own documented
-/// failure mode, *"a prelude method added to `builtins.rs` is not added here,
-/// and the symptom is a refusal rather than a wrong answer"*. The four
-/// methods a `display` can actually call today are `text`, `raw`, `number`
-/// and `integer`, which is enough for every rendering that does not branch on
-/// the spec — and since the lexer refuses every spec with `SC0173`, nothing
-/// can branch on one yet anyway.
+/// **Reached by `into.spec()`**, through `science-codegen-llvm`'s
+/// `PRELUDE_METHODS`. It used to have no row there, by that table's own rule
+/// that a row arrives with a program that runs it, and nothing could branch
+/// on a spec while the lexer refused every one. A hole's spec now reaches
+/// `display` through [`science_formatter_init_spec`], and
+/// `tests/format_spec.rs`'s `a_user_display_reads_the_holes_spec` reads its
+/// width and fill back through this.
 ///
 /// # Safety
 ///

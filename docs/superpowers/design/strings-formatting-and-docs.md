@@ -403,6 +403,26 @@ The rules:
 | `#` | the code is `x X o b f e g` |
 | `,` `_` | the code is numeric |
 
+> **AMENDMENT: what the implementation read into this table, stated.** The
+> lexer parses §2.1 (`science-lexer`'s `format_spec`), `science-types`'
+> `check_format_spec` applies the rows above, and `science-mir` renders a
+> spec'd hole through a `Formatter` built with the spec. Four readings the
+> table does not spell out:
+>
+> - **A sign needs a number.** It is not a row here; a sign on a `String`
+>   has nothing to attach to, and Python refuses it too.
+> - **`#` takes `E` and `G`** as well as the listed `e` and `g` — the same
+>   rendering in the other case. It does not take `%` or `d`.
+> - **Grouping a non-decimal base is by four digits** (`0xffff_ffff`), not
+>   three: §2.2 is silent and Python groups `x`/`o`/`b` by four.
+> - **The `0` flag is sign-aware**: `{-7:04}` is `-007`, not §2.3's literal
+>   *"sets alignment to right"*, which would give `00-7`. `{-7:0>4}` — a `0`
+>   *fill* with an explicit alignment — is still `00-7`, as in Python.
+>
+> **Not built:** §2.5's dynamic width and precision, and `!i` (no `Inspect`
+> is declared). Both are `SC0173` with a message naming them. `DisplayNumber`
+> is not declared either, so a numeric code on a user type is `SC0274`.
+
 Everything else is `SC0274`, and each case has a specific fix rather than a
 generic complaint:
 

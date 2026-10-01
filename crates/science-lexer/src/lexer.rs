@@ -17,6 +17,7 @@
 
 use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
 
+use crate::format_spec::FormatSpec;
 use crate::token::{DocComment, IntBase, NumSuffix, Token, TokenKind};
 
 // --- Lexical error codes (SC0001-SC0099) ---------------------------------
@@ -68,8 +69,8 @@ const E_NOT_EQ_SYMBOL: Code = Code(17);
 const E_UNTERMINATED_INTERP: Code = Code(170);
 /// A `}` inside an `f"…"` with no opener. §1.3.
 const E_UNPAIRED_BRACE: Code = Code(171);
-/// A format specification, which §2 specifies and this compiler does not
-/// implement. See [`Lexer::interpolation`].
+/// A format specification that is not a sentence of §2.1's grammar, or one
+/// of the two parts of it that are not built. See [`Lexer::format_spec`].
 const E_FORMAT_SPEC: Code = Code(173);
 /// `f"{}"` — an interpolation with nothing in it. §2.6.
 const E_EMPTY_INTERP: Code = Code(174);
@@ -928,15 +929,23 @@ impl<'a> Lexer<'a> {
     /// reporting the same mistake a second time: `SC0170` already names both
     /// the `{` and the place the literal ran out.
     ///
-    /// **The format specification is refused, not parsed.** §2 specifies a
-    /// mini-language after a `:` -- fill, alignment, sign, width, grouping,
-    /// precision and a type code -- and §2.4 makes it checkable against the
-    /// argument's static type. None of it is implemented. A `:` or a `!` at the
-    /// hole's own bracket depth is therefore `SC0173`, which says so and names
-    /// the one form that does work. Accepting a spec and ignoring it would
-    /// print a number to seventeen digits where the author asked for three,
-    /// which is §0's whole complaint; parsing the grammar and ignoring it
-    /// would be worse, because it would look supported.
+    /// **The format specification is parsed here and checked later.** A `:`
+    /// or a `!` at the hole's own bracket depth ends the expression; the
+    /// characters from there to the `}` are read by
+    /// [`crate::format_spec::parse`] and, when they are a sentence of §2.1's
+    /// grammar, emitted as one [`TokenKind::FormatSpec`] just before the
+    /// [`TokenKind::InterpEnd`]. A spec that is not a sentence is `SC0173`,
+    /// naming the character and, for a code at edit distance one, the fix.
+    /// Whether the spec suits the hole's *type* is `SC0274` and is
+    /// `science-types`' question, because the type is not known here.
+    ///
+    /// **This used to be a refusal, and the refusal's argument still holds
+    /// for what is left of it.** *"Accepting a spec and ignoring it would
+    /// print a number to seventeen digits where the author asked for
+    /// three."* Every part of a spec this accepts is applied by the
+    /// renderer; the two parts that are not built — §2.5's dynamic width and
+    /// precision, and the `!i` conversion, which needs §3.2's undeclared
+    /// `Inspect` — are still `SC0173`, each with a message naming it.
     ///
     /// **What the `:` costs, stated.** A `:` at the hole's depth ends the
     /// expression, so `f"{if flag: "yes" else: "no"}"` reads as the expression
@@ -956,6 +965,7 @@ impl<'a> Lexer<'a> {
         let before = self.tokens.len();
         let mut closed = false;
         let mut spec: Option<usize> = None;
+        let mut spec_nesting = 0usize;
 
         loop {
             match self.peek() {
@@ -975,7 +985,7 @@ impl<'a> Lexer<'a> {
                     );
                     break;
                 }
-                Some('}') if self.depth == outer + 1 => {
+                Some('}') if self.depth == outer + 1 && spec_nesting == 0 => {
                     closed = true;
                     break;
                 }
@@ -1034,6 +1044,17 @@ impl<'a> Lexer<'a> {
                     spec = Some(self.pos);
                     self.bump();
                 }
+                // §2.5's nested `{w}` inside a spec: not built, but its braces
+                // are counted so that its `}` does not end the hole and the
+                // refusal can name the whole construct.
+                Some('{') if spec.is_some() => {
+                    spec_nesting += 1;
+                    self.bump();
+                }
+                Some('}') if spec_nesting > 0 => {
+                    spec_nesting -= 1;
+                    self.bump();
+                }
                 Some(c) => {
                     if spec.is_some() {
                         // Inside a specification nothing is tokenized: it is
@@ -1053,23 +1074,7 @@ impl<'a> Lexer<'a> {
         }
         self.depth = outer;
 
-        if let Some(at) = spec {
-            self.diags.push(
-                Diagnostic::error(
-                    E_FORMAT_SPEC,
-                    "a format specification, which this compiler does not implement",
-                )
-                .with_label(Label::primary(
-                    self.span(at, end),
-                    "no part of the format mini-language is built",
-                ))
-                .with_note(
-                    "`f\"{value}\"` is the whole of what this compiler reads: an expression, \
-                     rendered by its `Display`. The fill, alignment, sign, width, grouping, \
-                     precision and type codes, and the `!i` conversion, are specified and unbuilt",
-                ),
-            );
-        } else if !interior {
+        if !interior {
             self.diags.push(
                 Diagnostic::error(E_EMPTY_INTERP, "an interpolation with nothing in it")
                     .with_label(Label::primary(self.span(brace, self.pos), "name the value"))
@@ -1078,10 +1083,100 @@ impl<'a> Lexer<'a> {
                          argument list to refer to",
                     ),
             );
+        } else if let Some(at) = spec {
+            if let Some(parsed) = self.format_spec(at, end) {
+                self.emit(TokenKind::FormatSpec(Box::new(parsed)), at, end);
+            }
         }
 
         self.emit(TokenKind::InterpEnd, end, self.pos);
         closed
+    }
+
+    /// The spec of one hole, from its `:` or `!` at `at` to the `}` at `end`.
+    ///
+    /// `None` when it was reported. A conversion comes first when there is
+    /// one: `!s` is §2.1's default and is read as nothing, `!i` selects
+    /// `Inspect`, which no prelude declares.
+    fn format_spec(&mut self, at: usize, end: usize) -> Option<FormatSpec> {
+        let mut body = at + 1;
+        if self.src[at..].starts_with('!') {
+            let conversion = self.src[body..end].chars().next();
+            match conversion {
+                Some('s') => body += 1,
+                Some(c) => {
+                    let width = c.len_utf8();
+                    let (message, note) = if c == 'i' {
+                        (
+                            "the `!i` conversion, which this compiler does not implement"
+                                .to_string(),
+                            "`!i` selects `Inspect` (§3.2), and no `Inspect` is declared yet: \
+                             only `Display`, the default, renders a hole",
+                        )
+                    } else {
+                        (
+                            format!("`!{}` is not a conversion", c.escape_debug()),
+                            "the conversions are `!s`, which is `Display` and the default, \
+                             and `!i`, which is `Inspect`",
+                        )
+                    };
+                    self.diags.push(
+                        Diagnostic::error(E_FORMAT_SPEC, message)
+                            .with_label(Label::primary(
+                                self.span(at, body + width),
+                                "this conversion",
+                            ))
+                            .with_note(note),
+                    );
+                    return None;
+                }
+                None => {
+                    self.diags.push(
+                        Diagnostic::error(E_FORMAT_SPEC, "a `!` with no conversion after it")
+                            .with_label(Label::primary(self.span(at, body), "this `!`"))
+                            .with_note(
+                                "the conversions are `!s` and `!i`; a format specification \
+                                 follows a `:`",
+                            ),
+                    );
+                    return None;
+                }
+            }
+            if body == end {
+                return Some(empty_spec());
+            }
+            if !self.src[body..].starts_with(':') {
+                let c = self.src[body..].chars().next().unwrap_or(' ');
+                self.diags.push(
+                    Diagnostic::error(
+                        E_FORMAT_SPEC,
+                        format!("`{}` after a conversion", c.escape_debug()),
+                    )
+                    .with_label(Label::primary(
+                        self.span(body, body + c.len_utf8()),
+                        "a specification after a conversion starts with `:`",
+                    )),
+                );
+                return None;
+            }
+            body += 1;
+        }
+        match crate::format_spec::parse(&self.src[body..end]) {
+            Ok(spec) => Some(spec),
+            Err(error) => {
+                let span = self.span(body + error.start, body + error.end.max(error.start));
+                let mut diag = Diagnostic::error(E_FORMAT_SPEC, error.message)
+                    .with_label(Label::primary(span, error.label));
+                if let Some(note) = error.note {
+                    diag = diag.with_note(note);
+                }
+                if let Some((replacement, message)) = error.fix {
+                    diag = diag.with_suggestion(Suggestion { span, replacement, message });
+                }
+                self.diags.push(diag);
+                None
+            }
+        }
     }
 
     /// Whether a `"` at the cursor has a partner before the line ends.
@@ -1540,4 +1635,9 @@ fn quoted(c: char) -> String {
     } else {
         format!("`{c}`")
     }
+}
+
+/// `f"{x!s}"` and `f"{x:}"`: a spec with nothing in it.
+fn empty_spec() -> FormatSpec {
+    crate::format_spec::parse("").expect("the empty spec is a sentence of the grammar")
 }

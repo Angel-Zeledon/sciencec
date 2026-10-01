@@ -143,6 +143,13 @@ pub enum TokenKind {
     InterpStart,
     /// The `}` that closes one.
     InterpEnd,
+    /// A hole's format specification, `strings-formatting-and-docs.md` §2.1:
+    /// everything from the `:` (or the `!` of a conversion) to the `}`,
+    /// already parsed. It sits between the hole's expression tokens and its
+    /// [`TokenKind::InterpEnd`], and only when the spec is a sentence of the
+    /// grammar — a malformed one is `SC0173` and leaves no token, so the hole
+    /// renders as though nothing had been written after the expression.
+    FormatSpec(Box<crate::FormatSpec>),
     /// The closing `"` of an `f"…"`.
     FStrEnd,
 

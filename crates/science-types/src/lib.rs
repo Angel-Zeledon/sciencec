@@ -706,6 +706,25 @@ pub mod codes {
     /// and is untouched.
     pub const RANGE_INDEX_NEEDS_SLICE: Code = Code(538);
 
+    /// A format spec that does not suit its hole's type — §2.4's table, and
+    /// §7's `SC0274` row: *"a float code on an integer, an integer code on a
+    /// float, a precision on a non-float non-`String`, a numeric code on a
+    /// type that does not implement `DisplayNumber`"*.
+    ///
+    /// **In the types band and not beside `SC0173`**, for §7's reason: the
+    /// spec is a well-formed sentence of §2.1's grammar and the question is
+    /// whether the *argument* fits it, which needs the argument's type. The
+    /// lexer has already refused every spec that is not a sentence.
+    ///
+    /// **The fix is offered only where it is a fix.** A float code or a
+    /// precision on an integer gets `as F64`, inserted after the hole —
+    /// §2.4's own first help. Every other case names what the element needs
+    /// and leaves the edit to the author, because dropping a spec element is
+    /// a choice between two meanings that the compiler cannot make.
+    ///
+    /// `check`'s `check_format_spec` is the one place it is emitted.
+    pub const FORMAT_SPEC_MISMATCH: Code = Code(274);
+
     /// A value interpolated into an `f"…"` that does not implement `Display`.
     ///
     /// **From `strings-formatting-and-docs.md`'s block, not from this crate's
@@ -715,13 +734,10 @@ pub mod codes {
     /// checking — the spec is syntactically well-formed and the question is
     /// whether the *argument* fits it"*. This is the second of the pair.
     ///
-    /// **`SC0274` is deliberately not defined**, and the reason is the same
-    /// discipline `SC0521` and `SC0522` get above. `SC0274` is the format spec
-    /// failing to match its argument's type — *"a float code on an integer, an
-    /// integer code on a float, a precision on a non-float non-`String`"* —
-    /// and there are no format specs: the lexer refuses every one with
-    /// `SC0173`. A code whose condition cannot arise is a code whose message
-    /// is written against a guess.
+    /// **`SC0274`, the first of the pair, is [`FORMAT_SPEC_MISMATCH`] above**,
+    /// defined the day the lexer stopped refusing every spec with `SC0173`.
+    /// It used to be deliberately undefined, because a code whose condition
+    /// cannot arise is a code whose message is written against a guess.
     ///
     /// **§7's row has three clauses and this code now carries two of them.**
     /// The row also names *"`print` given more than one argument"* and *"a

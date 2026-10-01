@@ -234,7 +234,7 @@ impl Walker<'_> {
             // ordinary names.
             ExprKind::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Hole(hole) = part {
+                    if let FStringPart::Hole(hole, _) = part {
                         self.bind_expr(*hole);
                     }
                 }
@@ -445,7 +445,7 @@ impl Walker<'_> {
             // understand a different problem.
             ExprKind::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Hole(hole) = part {
+                    if let FStringPart::Hole(hole, _) = part {
                         self.expr(*hole, Ctx::Read);
                     }
                 }

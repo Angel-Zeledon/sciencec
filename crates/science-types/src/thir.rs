@@ -194,7 +194,10 @@ pub enum FStringPart {
     /// `{ expression }`. §1.6: an interpolation *borrows* its operand, so the
     /// expression here is the operand itself and the borrow is the ordinary
     /// auto-borrow the lowering applies.
-    Hole(ExprId),
+    ///
+    /// The second field is §2.1's spec, already checked against the hole's
+    /// type (`SC0274`), so a consumer may trust that its code suits the type.
+    Hole(ExprId, Option<science_lexer::FormatSpec>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

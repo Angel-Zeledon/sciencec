@@ -67,8 +67,12 @@ pub fn glued(prev: &K, next: &K, prev_unary: bool) -> bool {
     // is a different program. So the f-string tokens are listed as glued rather
     // than left to the default, and this comment is why the usual "a missing
     // entry is only ugly" reasoning does not cover them.
-    if matches!(next, K::FStrText(_) | K::InterpStart | K::InterpEnd | K::FStrEnd)
-        || matches!(prev, K::FStrStart | K::FStrText(_) | K::InterpStart)
+    // A hole's spec is glued on both sides for the same reason: `{x :>8}`
+    // is a different expression boundary and `{x:>8 }` a different width.
+    if matches!(
+        next,
+        K::FStrText(_) | K::InterpStart | K::InterpEnd | K::FStrEnd | K::FormatSpec(_)
+    ) || matches!(prev, K::FStrStart | K::FStrText(_) | K::InterpStart | K::FormatSpec(_))
     {
         return true;
     }

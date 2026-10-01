@@ -608,7 +608,12 @@ impl DumpIn for Expr {
                 for part in parts {
                     match part {
                         FStringPart::Text(text) => w.leaf(&format!("Text {text:?}"), self.span),
-                        FStringPart::Hole(expr) => w.child("hole", &Node(defs, expr)),
+                        FStringPart::Hole(expr, spec) => {
+                            w.child("hole", &Node(defs, expr));
+                            if let Some(spec) = spec {
+                                w.leaf(&format!("Spec {:?}", spec.spec.text), spec.span);
+                            }
+                        }
                     }
                 }
             }),

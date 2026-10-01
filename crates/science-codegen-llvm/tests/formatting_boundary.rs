@@ -169,6 +169,12 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// builder's pushes for the two error types, return `()` like every other
 /// `science_string_push_*`. The table grew and the derived set did not.
 ///
+/// **Still sixteen and eighteen, with ninety rows.** §2's format spec added
+/// `science_formatter_init_spec`, `science_formatter_unsigned` and
+/// `science_formatter_number32`, and all three return `()`: the spec goes in
+/// as four scalars and comes back out only through `science_formatter_spec`,
+/// which was already counted.
+///
 /// **And sixteen — or eighteen, with eighty-seven rows.** `science_string_from_utf8`, §6.9's
 /// `String.from_bytes`, returns `(String, TextError?)`: thirty-two bytes,
 /// `science_read_file`'s case, a hidden pointer on every convention.
@@ -207,7 +213,7 @@ fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_ti
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 110, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 113, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

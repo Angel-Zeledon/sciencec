@@ -4688,8 +4688,24 @@ impl<'t> Parser<'t> {
                     } else {
                         self.parse_expr()
                     };
+                    // §2.1's spec, which the lexer has already read: one
+                    // token, between the expression and the `}`.
+                    let spec = match self.peek() {
+                        TokenKind::FormatSpec(spec) => {
+                            let spec = (**spec).clone();
+                            // The token runs from the `:` (or a conversion's
+                            // `!`) to the `}`; the spec's own span is the text
+                            // after the `:`, which is what `SC0274` points at.
+                            let token = self.span();
+                            let len = spec.text.len() as u32;
+                            let span = Span::new(token.file, token.end - len, token.end);
+                            self.advance();
+                            Some(HoleSpec { spec, span })
+                        }
+                        _ => None,
+                    };
                     self.expect(&TokenKind::InterpEnd, "the `}` of an interpolation");
-                    parts.push(FStringPart::Hole(expr));
+                    parts.push(FStringPart::Hole(expr, spec));
                 }
                 TokenKind::FStrEnd => {
                     self.advance();
@@ -6031,6 +6047,7 @@ fn describe(kind: &TokenKind) -> String {
         FStrStart | FStrText(_) | FStrEnd => "an interpolating string literal".to_string(),
         InterpStart => "the `{` of an interpolation".to_string(),
         InterpEnd => "the `}` of an interpolation".to_string(),
+        FormatSpec(_) => "a format specification".to_string(),
         Char(_) => "a character literal".to_string(),
         Ident(name) => format!("`{name}`"),
         Unknown(c) => format!("`{c}`"),

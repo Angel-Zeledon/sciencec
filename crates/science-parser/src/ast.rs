@@ -1109,7 +1109,22 @@ pub enum FStringPart {
     /// makes the interpolation *borrow* it rather than move it — a fact this
     /// node records by holding the expression and letting the later phases
     /// apply the ordinary auto-borrow.
-    Hole(Expr),
+    ///
+    /// The second field is §2.1's spec, `{ expression : spec }`, when one was
+    /// written and the lexer could read it. A field of the hole and not a
+    /// third variant, so that every consumer that walks a hole's expression
+    /// is made to see that a hole may carry one — `if let Hole(e)` over a
+    /// third variant would skip a spec'd hole's expression in silence.
+    Hole(Expr, Option<HoleSpec>),
+}
+
+/// A hole's format specification and where it was written: the text after
+/// the `:`, up to and not including the `}`. `science-types` checks it against the hole's
+/// type (`SC0274`) and points at this span when it does not fit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoleSpec {
+    pub spec: science_lexer::FormatSpec,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

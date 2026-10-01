@@ -10199,17 +10199,16 @@ impl<'a> Lowerer<'a> {
             ("Formatter", "raw", "science_formatter_raw"),
             ("Formatter", "number", "science_formatter_number"),
             ("Formatter", "integer", "science_formatter_integer"),
-            // **`spec` is the fifth and is deliberately not a row.** It
-            // returns a `FormatSpec` by value — the `sret` convention, which
-            // `science_string_new` above shows this path does carry — but
-            // §3.1's reason for the method is *"an implementation that needs
-            // to branch on it"*, and nothing can branch on a spec while §2's
-            // mini-language has no lexer and the only spec any program can
-            // build is the default one. The rule this table states is *"a row
-            // is added when a program that runs it is added with it"*, so the
-            // row waits for the program. Until then `into.spec()` refuses by
-            // name, which is this table's documented failure mode and not a
-            // wrong answer.
+            // **`spec` is the fifth, and it became a row with the program that
+            // runs it.** It used to wait, for this table's own rule — *"a row
+            // is added when a program that runs it is added with it"* — because
+            // nothing could branch on a spec while the lexer refused every one.
+            // A hole's spec now reaches `display` through
+            // `science_formatter_init_spec`, and `tests/format_spec.rs`'s
+            // `a_user_display_reads_the_holes_spec` branches on it. It returns
+            // a `FormatSpec` by value, the `sret` convention `science_string_new`
+            // above shows this path carries.
+            ("Formatter", "spec", "science_formatter_spec"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;

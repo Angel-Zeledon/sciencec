@@ -620,6 +620,15 @@ const PUSH_TEXT_ERROR: &str = "science_string_push_text_error";
 /// decision and its own doc comment's reason; what it buys *here* is that the
 /// `Formatter` is an ordinary local this file can borrow twice.
 const FORMATTER_INIT: &str = "science_formatter_init";
+/// §2.1's spec, applied: a hole that writes one renders through a
+/// `Formatter` built with it, and then through the one `Formatter` entry
+/// point its type has. See [`Builder::render_with_spec`].
+const FORMATTER_INIT_SPEC: &str = "science_formatter_init_spec";
+const FORMATTER_TEXT: &str = "science_formatter_text";
+const FORMATTER_NUMBER: &str = "science_formatter_number";
+const FORMATTER_NUMBER32: &str = "science_formatter_number32";
+const FORMATTER_INTEGER: &str = "science_formatter_integer";
+const FORMATTER_UNSIGNED: &str = "science_formatter_unsigned";
 
 /// How one interpolation hole reaches its entry point.
 ///
@@ -644,6 +653,52 @@ enum Push {
     /// the callee is [`Unresolved::Display`]; `Builder::lower_fstring`'s
     /// *"a hole whose type has no entry point"* is why.
     Missing,
+}
+
+/// A hole's spec as `science_formatter_init_spec`'s four scalars: fill,
+/// flags, width, precision. `science-rt`'s `spec_flags` is the other half of
+/// this table, and each field is its runtime tag plus one, zero for absent.
+///
+/// **The `0` flag becomes a fill**, because §3.1's `FormatSpec` has no field
+/// for it: `fill: '0'` with the alignment left as written. When no alignment
+/// was written either, that combination is one §2.1's grammar cannot produce
+/// any other way, and `science-rt` reads it as the sign-aware flag — `{-7:04}`
+/// is `-007`, where `{-7:0>4}` is `00-7`.
+///
+/// An absent width or precision is `-1`, which a `Constant::Count` spells as
+/// `u64::MAX`: the backend materialises a count at the parameter's own width,
+/// and at `i64` those are the same bits.
+fn spec_operands(spec: &science_lexer::FormatSpec) -> Vec<Operand> {
+    use science_lexer::format_spec::{Align, Grouping, Sign};
+    let fill = match (spec.fill, spec.zero) {
+        (Some(fill), _) => fill,
+        (None, true) => '0',
+        (None, false) => ' ',
+    };
+    let align = match spec.align {
+        None => 0,
+        Some(Align::Left) => 1,
+        Some(Align::Right) => 2,
+        Some(Align::Center) => 3,
+    };
+    let sign = match spec.sign {
+        None => 0,
+        Some(Sign::Plus) => 1,
+        Some(Sign::Minus) => 2,
+        Some(Sign::Space) => 3,
+    };
+    let code = spec.code.map_or(0, |code| u64::from(code.index()) + 1);
+    let grouping = match spec.grouping {
+        None => 0,
+        Some(Grouping::Comma) => 1,
+        Some(Grouping::Underscore) => 2,
+    };
+    let flags = align | sign << 2 | code << 4 | u64::from(spec.alternate) << 8 | grouping << 9;
+    let number = |n: Option<u32>| n.map_or(u64::MAX, u64::from);
+    [u64::from(u32::from(fill)), flags, number(spec.width), number(spec.precision)]
+        .into_iter()
+        .map(|n| Operand::Const(Constant::Count(n)))
+        .collect()
 }
 
 /// Everything the lowering reads that is not the body itself.
@@ -2799,7 +2854,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             );
         };
         let rendered = self.temp(string, span, block);
-        let parts = [thir::FStringPart::Hole(arg)];
+        let parts = [thir::FStringPart::Hole(arg, None)];
         let block = self.lower_fstring(Place::local(rendered), &parts, block, span);
         self.emit_call(
             dest,
@@ -3175,7 +3230,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                         span,
                     );
                 }
-                thir::FStringPart::Hole(hole) => {
+                thir::FStringPart::Hole(hole, Some(spec)) => {
+                    block = self.render_with_spec(&dest, &discard, *hole, spec, block, span);
+                }
+                thir::FStringPart::Hole(hole, None) => {
                     let hole = *hole;
                     let hole_ty = self.thir.ty(hole);
                     let push = self.push_of(hole_ty);
@@ -3405,6 +3463,175 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             block,
             span,
         )
+    }
+
+    /// One hole with §2.1's spec: a `Formatter` initialised with the spec over
+    /// the accumulator, then the one `Formatter` entry point the hole's type
+    /// renders through.
+    ///
+    /// ```text
+    /// _f = Formatter
+    /// science_formatter_init_spec(&mut _f, &mut accumulator, fill, flags, width, precision)
+    /// science_formatter_number(&mut _f, x)          // an F64
+    /// ```
+    ///
+    /// # The decision
+    ///
+    /// **Every spec'd hole goes through the `Formatter`, and no
+    /// `science_string_push_*` takes a spec.** The `Formatter` entry points
+    /// already render §2.2's whole table — `science-rt` built them for §3.1's
+    /// `display` — so the spec'd path is the unspec'd `display` path with a
+    /// non-default spec, and the table lives in one place. The types split
+    /// four ways:
+    ///
+    /// | Hole | Entry point |
+    /// |---|---|
+    /// | `F64`, `Float` | `science_formatter_number` |
+    /// | `F32` | `science_formatter_number32` |
+    /// | `I8`…`I64`, `Int` | `science_formatter_integer`, widened to `I64` |
+    /// | `U8`…`U64` | `science_formatter_unsigned`, widened to `U64` |
+    /// | `String` | `science_formatter_text`, by borrow |
+    /// | `Bool`, `Char`, `IoError`, `TextError` | rendered by their own push into a temporary `String`, then `science_formatter_text` |
+    /// | a type with a `display` | that `display`, handed the spec'd `Formatter` — §3.1's `into.spec()` |
+    ///
+    /// # The reason for the temporary
+    ///
+    /// A `Bool`, a `Char` and the two error types take only fill, alignment
+    /// and width — §2.4's *"anything `Display`"* row — and padding is a
+    /// question about the rendered text, not the value. Rendering into a
+    /// scratch `String` with the push that already exists and padding that
+    /// costs one allocation per spec'd hole of those four types and **no new
+    /// entry point**; the alternative is four `science_formatter_*` twins of
+    /// four pushes, each differing from its twin by one call to `pad`.
+    ///
+    /// # The cost
+    ///
+    /// **A user `display` is trusted with the spec.** §3.3 says so in as many
+    /// words — *"`DisplayNumber` says the numeric codes are meaningful; it
+    /// does not prove the implementation honours them"* — and the same holds
+    /// for width: `into.text` pads, `into.raw` does not, and a `display` that
+    /// writes two `text` calls pads each. That is §3.1's contract and not a
+    /// gap here.
+    fn render_with_spec(
+        &mut self,
+        dest: &Place,
+        discard: &Place,
+        hole: ExprId,
+        spec: &science_lexer::FormatSpec,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let hole_ty = self.thir.ty(hole);
+        let push = self.push_of(hole_ty);
+        let display = if push == Push::Missing { self.display_of(hole_ty) } else { None };
+        let Some(formatter_ty) = self.context.decls.prelude().ty(self.context.types, "Formatter")
+        else {
+            // No prelude, no `Formatter`: the hand-built tables of this
+            // crate's own tests, none of which writes a spec. The refusal is
+            // the one an unrenderable hole gets, for `render_through_display`'s
+            // reason.
+            let (value, block) = self.borrow_hole(hole, block, span);
+            return self.emit_call(
+                discard.clone(),
+                Callee::Unresolved(Unresolved::Display),
+                vec![value],
+                block,
+                span,
+            );
+        };
+        let formatter = Place::local(self.temp(formatter_ty, span, block));
+        let (accumulator, block) = self.accumulator_ref(dest, block, span);
+        let (sink, block) = self.exclusive_ref(&formatter, block, span);
+        let mut args = vec![sink, accumulator];
+        args.extend(spec_operands(spec));
+        let block =
+            self.emit_call(discard.clone(), Callee::Runtime(FORMATTER_INIT_SPEC), args, block, span);
+
+        if let Some(display) = display {
+            let (value, block) = self.borrow_hole(hole, block, span);
+            let (into, block) = self.exclusive_ref(&formatter, block, span);
+            return self.emit_call(
+                discard.clone(),
+                Callee::Def { def: display, self_ty: None },
+                vec![value, into],
+                block,
+                span,
+            );
+        }
+
+        let (symbol, value, block) = match push {
+            Push::Value { symbol, widen } if symbol != PUSH_BOOL && symbol != PUSH_CHAR => {
+                let entry = match symbol {
+                    PUSH_I64 => FORMATTER_INTEGER,
+                    PUSH_U64 => FORMATTER_UNSIGNED,
+                    PUSH_F32 => FORMATTER_NUMBER32,
+                    _ => FORMATTER_NUMBER,
+                };
+                let (value, block) = self.value_hole(hole, block);
+                let (value, block) = match widen {
+                    Some(wide) => self.widen_hole(value, hole_ty, wide, block, span),
+                    None => (value, block),
+                };
+                (Callee::Runtime(entry), value, block)
+            }
+            Push::Pointer(PUSH_STR) => {
+                let (value, block) = self.borrow_hole(hole, block, span);
+                (Callee::Runtime(FORMATTER_TEXT), value, block)
+            }
+            Push::Value { symbol, .. } | Push::Pointer(symbol) => {
+                let Some(string) = self.context.decls.prelude().ty(self.context.types, "String")
+                else {
+                    let (value, block) = self.borrow_hole(hole, block, span);
+                    return self.emit_call(
+                        discard.clone(),
+                        Callee::Unresolved(Unresolved::Display),
+                        vec![value],
+                        block,
+                        span,
+                    );
+                };
+                let text = Place::local(self.temp(string, span, block));
+                let capacity = self.hole_estimate(hole_ty);
+                let block = self.emit_call(
+                    text.clone(),
+                    Callee::Runtime(STRING_WITH_CAPACITY),
+                    vec![Operand::Const(Constant::Count(capacity))],
+                    block,
+                    span,
+                );
+                let (scratch, block) = self.exclusive_ref(&text, block, span);
+                let (value, block) = match push {
+                    Push::Pointer(_) => self.borrow_hole(hole, block, span),
+                    _ => self.value_hole(hole, block),
+                };
+                let block = self.emit_call(
+                    discard.clone(),
+                    Callee::Runtime(symbol),
+                    vec![scratch, value],
+                    block,
+                    span,
+                );
+                let (rendered, block) = self.shared_ref(&text, block, span);
+                (Callee::Runtime(FORMATTER_TEXT), rendered, block)
+            }
+            Push::Missing => {
+                let (value, block) = self.borrow_hole(hole, block, span);
+                (Callee::Unresolved(Unresolved::Display), value, block)
+            }
+        };
+        let (into, block) = self.exclusive_ref(&formatter, block, span);
+        self.emit_call(discard.clone(), symbol, vec![into, value], block, span)
+    }
+
+    /// `borrowed T` into a fresh temporary — [`Builder::exclusive_ref`]'s
+    /// shared twin, for the scratch `String` [`Builder::render_with_spec`]
+    /// hands to `science_formatter_text`.
+    fn shared_ref(&mut self, place: &Place, block: BlockId, span: Span) -> (Operand, BlockId) {
+        let ty = self.place_ty(place);
+        let borrowed = self.context.types.borrowed(false, ty);
+        let temp = self.temp(borrowed, span, block);
+        let block = self.borrow_place(Place::local(temp), false, place.clone(), block, span, true);
+        (Operand::Move(Place::local(temp)), block)
     }
 
     /// §2.4's bounds check, emitted as statements before the place that needs
@@ -4724,9 +4951,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// f-string all follow without a line of their own, where composing
     /// `message()`, `push_str` and a free here would have been three calls and
     /// an allocation per hole. *Cost:* two symbols in `RUNTIME` and its count
-    /// tests. A format specification (`{err:>20}`) needs nothing: the lexer
-    /// refuses every one, for every type, so the error holes are in the same
-    /// position as a `String` hole.
+    /// tests. A format specification (`{err:>20}`) needs nothing more:
+    /// [`Builder::render_with_spec`] renders the error into a scratch `String`
+    /// with this same push and pads that, which is the one place width and
+    /// alignment are applied to a `Bool`, a `Char` and both error types.
     ///
     /// **The six narrow integer widths reach one of them through a cast**, and
     /// this entry used to say they could not. `science_string_push_i64`'s own
@@ -4883,9 +5111,14 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         for part in parts {
             total += match part {
                 thir::FStringPart::Text(text) => text.len() as u64,
-                thir::FStringPart::Hole(hole) => {
+                // A width is a floor on what the hole writes, so a spec'd hole
+                // is the larger of the two. Precision is not: `.2` on a
+                // `String` shortens it and `.9` on a float lengthens it, and
+                // neither is worth a branch in an estimate.
+                thir::FStringPart::Hole(hole, spec) => {
                     let ty = self.thir.ty(*hole);
-                    self.hole_estimate(ty)
+                    let width = spec.as_ref().and_then(|s| s.width).map_or(0, u64::from);
+                    self.hole_estimate(ty).max(width)
                 }
             };
         }

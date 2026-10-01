@@ -924,6 +924,22 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_formatter_integer", params: &[P, N], ret: RtRet::Void },
     RuntimeFn { symbol: "science_formatter_spec", params: &[P], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
     RuntimeFn { symbol: "science_format_spec_default", params: &[], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
+    // **Eighty-eight to ninety: §2.1's format spec, applied.** A hole that
+    // writes a spec is rendered through a `Formatter` initialised with it:
+    // `init_spec` takes the spec as four scalars — fill, a flags word, width,
+    // precision — because a compile-time constant crosses most cheaply in
+    // registers and MIR has no operand for a forty-byte record nobody wrote.
+    // `unsigned` and `number32` are `integer` and `number` for the two types
+    // a widening cast would get wrong: a `U64` above `i64::MAX`, and an `F32`
+    // whose shortest round-trip spelling is not its `f64`'s. All three return
+    // `()`, so the `sret` list does not move.
+    RuntimeFn {
+        symbol: "science_formatter_init_spec",
+        params: &[P, P, RtParam::Char, N, N, N],
+        ret: RtRet::Void,
+    },
+    RuntimeFn { symbol: "science_formatter_unsigned", params: &[P, RtParam::U64], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_number32", params: &[P, RtParam::F32], ret: RtRet::Void },
     // --- text.rs ---
     //
     // **Seventy-three to seventy-five: `stdlib-core.md` §6.9's `parse_int` and
@@ -1372,9 +1388,17 @@ mod tests {
     /// `Stdin.read` are *not* here: they are called by Science source through
     /// an `extern` block, and `science-codegen-llvm`'s `tests/symbols.rs`
     /// exempts them by name.
+    ///
+    /// **One hundred and thirteen**: `science_formatter_init_spec`, `science_formatter_unsigned`
+    /// and `science_formatter_number32`, `strings-formatting-and-docs.md` §2's
+    /// format spec. A spec'd hole renders through a `Formatter` built with the
+    /// hole's spec, and §2.2's table — grouping, significant figures, the
+    /// alternate forms — is a library, not an instruction sequence, so
+    /// Decision 14 is met where `science_formatter_number` already met it.
+    /// None returns an aggregate, so the `sret` list below did not move.
     #[test]
-    fn there_are_one_hundred_and_ten_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 110, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_thirteen_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 113, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

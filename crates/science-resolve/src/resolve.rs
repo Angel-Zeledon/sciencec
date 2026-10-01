@@ -2122,8 +2122,8 @@ impl Resolver {
                     .iter()
                     .map(|part| match part {
                         ast::FStringPart::Text(text) => hir::FStringPart::Text(text.clone()),
-                        ast::FStringPart::Hole(expr) => {
-                            hir::FStringPart::Hole(self.resolve_expr(expr))
+                        ast::FStringPart::Hole(expr, spec) => {
+                            hir::FStringPart::Hole(self.resolve_expr(expr), spec.clone())
                         }
                     })
                     .collect(),
