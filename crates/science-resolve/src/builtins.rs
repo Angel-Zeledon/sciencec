@@ -206,6 +206,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "Unique",
     "Windows",
     "Batches",
+    "Flatten",
     // @LIB-END
 ];
 
@@ -1137,6 +1138,17 @@ macro_rules! chain_links {
             // can file (a number, `Bool`, `Char` or `String`, through one
             // borrow), and the fused loop keeps the seen keys in a `Set`.
             // **`unique(by: key)` is not declared**: one name, one shape.
+            // `flatten()`: the items are arrays (or borrows of arrays) and the
+            // chain yields their elements. The declaration names the item
+            // unchanged; `science-types`' `chain_item_shape` replaces it with
+            // the element, as it does for `keep_some()`.
+            Method {
+                name: "flatten",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Flatten", &[$this, $item])),
+            },
             // `batches(n)`: disjoint runs of `n` items as arrays; the last is
             // shorter when the chain does not divide. A size below one is a
             // batch of one.
@@ -2836,6 +2848,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Unique"),
     chain_adapter!("Windows"),
     chain_adapter!("Batches"),
+    chain_adapter!("Flatten"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2928,6 +2941,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("Unique"),
     chain_iterate!("Windows"),
     chain_iterate!("Batches"),
+    chain_iterate!("Flatten"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3296,6 +3310,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Unique", CHAIN_UNWRITTEN),
     ("Windows", CHAIN_UNWRITTEN),
     ("Batches", CHAIN_UNWRITTEN),
+    ("Flatten", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3357,7 +3372,6 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 const CHAIN_UNWRITTEN: &[&str] = &[
     // Transforming.
     "expand",
-    "flatten",
     "owned",
     // Filtering and selecting.
     "keep_ok",
@@ -3511,6 +3525,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "Unique",
     "Windows",
     "Batches",
+    "Flatten",
     // @CHAIN-END
 ];
 

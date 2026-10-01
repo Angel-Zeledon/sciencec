@@ -6688,6 +6688,10 @@ enum Step {
     /// shorter when the chain does not divide. **A barrier in the pass that
     /// reads it**: see [`Builder::lower_chain_over`].
     Batches(ExprId),
+    /// `flatten()` — each item is an array, or a borrow of one, and the chain
+    /// yields their elements in turn. **A barrier**: see
+    /// [`Builder::lower_chain_over`].
+    Flatten,
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6892,6 +6896,7 @@ impl Builder<'_, '_> {
                 ("unique", _) => Step::Unique,
                 ("windows", Some(arg)) => Step::Windows(*arg),
                 ("batches", Some(arg)) => Step::Batches(*arg),
+                ("flatten", _) => Step::Flatten,
                 ("accumulate", Some(initial)) if args.len() == 2 => {
                     Step::Accumulate(*initial, args[1])
                 }
@@ -7036,7 +7041,7 @@ impl Builder<'_, '_> {
         // buffer (`Source::Drain`) the length is known, so a `batches` at the
         // head of *that* pass is read in place, not split off again.
         let barrier = steps.iter().enumerate().position(|(index, (step, _))| match step {
-            Step::Sorted(_) | Step::Reverse => true,
+            Step::Sorted(_) | Step::Reverse | Step::Flatten => true,
             Step::Batches(_) => !(kind == Source::Drain && index == 0),
             _ => false,
         });
@@ -7133,6 +7138,36 @@ impl Builder<'_, '_> {
                     block = self.chain_reverse_buffer(&buffer, block, span);
                 }
             }
+            Step::Flatten => {
+                // The items before it, collected: arrays (owned) or borrows
+                // of arrays, whichever the chain's item was.
+                let (element, borrowed) = match *self.context.types.kind(item_ty) {
+                    TyKind::Borrowed { inner, .. } => (inner, true),
+                    _ => (item_ty, false),
+                };
+                let array_ty = self.array_of(element);
+                let outer_item = if borrowed {
+                    self.context.types.borrowed(false, array_ty)
+                } else {
+                    array_ty
+                };
+                let outer_ty = self.array_of(outer_item);
+                let outer = Place::local(self.temp(outer_ty, span, block));
+                block = self.chain_pass(
+                    outer.clone(),
+                    Terminal::Collect,
+                    None,
+                    kind,
+                    source,
+                    &steps[..at],
+                    block,
+                    span,
+                );
+                block = self.chain_flatten(&outer, &buffer, element, borrowed, block, span);
+                if !finishing {
+                    block = self.chain_reverse_buffer(&buffer, block, span);
+                }
+            }
             Step::Batches(_) => {
                 block = self.chain_pass(
                     buffer.clone(),
@@ -7153,6 +7188,183 @@ impl Builder<'_, '_> {
             return block;
         }
         self.lower_chain_over(dest, terminal, Source::Drain, &buffer, rest, block, span)
+    }
+
+    /// Open a loop over `0..length`: the cursor, the head, the body's first
+    /// block and the block after the loop.
+    fn chain_open_count(
+        &mut self,
+        length: Local,
+        block: BlockId,
+        span: Span,
+    ) -> (Local, BlockId, BlockId, BlockId) {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            unreachable!("the prelude declares `Int`")
+        };
+        let cursor = self.temp(int_ty, span, block);
+        self.assign(block, Place::local(cursor), Rvalue::Use(Self::bits(0)), span);
+        let (head, body, exit) = (self.new_block(), self.new_block(), self.new_block());
+        self.terminate(block, TerminatorKind::Goto { target: head }, span);
+        let more = self.temp(self.bool_ty, span, head);
+        self.assign(
+            head,
+            Place::local(more),
+            Rvalue::Binary {
+                op: BinaryOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(length)),
+            },
+            span,
+        );
+        self.terminate(
+            head,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: body,
+                else_block: exit,
+            },
+            span,
+        );
+        (cursor, head, body, exit)
+    }
+
+    /// Close a loop [`Builder::chain_open_count`] opened: step the cursor and
+    /// go round.
+    fn chain_close_count(&mut self, cursor: Local, head: BlockId, end: BlockId, span: Span) {
+        self.chain_add(&Place::local(cursor), Self::bits(1), end, span);
+        self.terminate(end, TerminatorKind::Goto { target: head }, span);
+    }
+
+    /// `flat` filled with the elements of every array in `outer`, in order.
+    ///
+    /// `borrowed` says what `outer` holds: borrows of arrays, whose elements
+    /// are then borrowed one by one by index, or the arrays themselves, owned,
+    /// which are popped (the buffer was collected in arrival order, so this
+    /// reverses it first) and moved onto `flat` whole with `extend`.
+    fn chain_flatten(
+        &mut self,
+        outer: &Place,
+        flat: &Place,
+        element: Ty,
+        borrowed: bool,
+        mut block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+        let outer_ty = self.place_ty(outer);
+        let array_ty = self.array_of(element);
+        block = self.emit_call(
+            flat.clone(),
+            Callee::Runtime(ARRAY_WITH_CAPACITY),
+            vec![Operand::Const(Constant::Count(0))],
+            block,
+            span,
+        );
+        if !borrowed {
+            block = self.chain_reverse_buffer(outer, block, span);
+        }
+        let shared_ty = self.context.types.borrowed(false, outer_ty);
+        let shared = self.temp(shared_ty, span, block);
+        block = self.borrow_place(Place::local(shared), false, outer.clone(), block, span, false);
+        let length = self.temp(int_ty, span, block);
+        block = self.emit_call(
+            Place::local(length),
+            Callee::Runtime(ARRAY_LEN),
+            vec![Operand::Copy(Place::local(shared))],
+            block,
+            span,
+        );
+        let (cursor, head, mut body, exit) = self.chain_open_count(length, block, span);
+        if borrowed {
+            let outer_item = self.element_ty(outer);
+            let at = self.temp(int_ty, span, body);
+            self.assign(
+                body,
+                Place::local(at),
+                Rvalue::Use(Operand::Copy(Place::local(cursor))),
+                span,
+            );
+            let through = Place::local(shared)
+                .project(Projection::Deref { ty: outer_ty })
+                .project(Projection::Index { index: at, ty: outer_item });
+            let inner = self.temp(outer_item, span, body);
+            self.assign(body, Place::local(inner), Rvalue::Use(Operand::Copy(through)), span);
+            let inner_length = self.temp(int_ty, span, body);
+            body = self.emit_call(
+                Place::local(inner_length),
+                Callee::Runtime(ARRAY_LEN),
+                vec![Operand::Copy(Place::local(inner))],
+                body,
+                span,
+            );
+            let (inner_cursor, inner_head, mut inner_body, inner_exit) =
+                self.chain_open_count(inner_length, body, span);
+            let inner_at = self.temp(int_ty, span, inner_body);
+            self.assign(
+                inner_body,
+                Place::local(inner_at),
+                Rvalue::Use(Operand::Copy(Place::local(inner_cursor))),
+                span,
+            );
+            let element_place = Place::local(inner)
+                .project(Projection::Deref { ty: array_ty })
+                .project(Projection::Index { index: inner_at, ty: element });
+            let item_ty = self.context.types.borrowed(false, element);
+            let item = self.temp(item_ty, span, inner_body);
+            inner_body = self.borrow_place(
+                Place::local(item),
+                false,
+                element_place,
+                inner_body,
+                span,
+                false,
+            );
+            let (flat_ref, next) = self.exclusive_ref(flat, inner_body, span);
+            let discard = Place::local(self.temp(Ty::UNIT, span, next));
+            inner_body = self.emit_call(
+                discard,
+                Callee::Runtime(ARRAY_PUSH),
+                vec![flat_ref, Operand::Move(Place::local(item))],
+                next,
+                span,
+            );
+            self.chain_close_count(inner_cursor, inner_head, inner_body, span);
+            self.chain_close_count(cursor, head, inner_exit, span);
+        } else {
+            let slot_ty = self.context.types.nullable(array_ty);
+            let slot = self.temp(slot_ty, span, body);
+            let (outer_ref, next) = self.exclusive_ref(outer, body, span);
+            let callee = match self.array_method(outer_ty, "pop") {
+                Some(def) => Callee::Def { def, self_ty: None },
+                None => Callee::Unresolved(Unresolved::Chain),
+            };
+            body = self.emit_call(Place::local(slot), callee, vec![outer_ref], next, span);
+            let taken = self.temp(array_ty, span, body);
+            let read = self.read(Place::local(slot), slot_ty);
+            self.assign(
+                body,
+                Place::local(taken),
+                Rvalue::Narrow { operand: read, ty: array_ty },
+                span,
+            );
+            let (flat_ref, next) = self.exclusive_ref(flat, body, span);
+            let callee = match self.array_method(array_ty, "extend") {
+                Some(def) => Callee::Def { def, self_ty: None },
+                None => Callee::Unresolved(Unresolved::Chain),
+            };
+            let discard = Place::local(self.temp(Ty::UNIT, span, next));
+            body = self.emit_call(
+                discard,
+                callee,
+                vec![flat_ref, Operand::Move(Place::local(taken))],
+                next,
+                span,
+            );
+            self.chain_close_count(cursor, head, body, span);
+        }
+        exit
     }
 
     /// `science_array_reverse(&mut buffer)`: the buffer turned round in place.
@@ -7524,7 +7736,7 @@ impl Builder<'_, '_> {
                     self.chain_assign_bool(&Place::local(skipping), true, block, span);
                     limits.push(Some((skipping, skipping)));
                 }
-                Step::KeepSome | Step::Reverse => {
+                Step::KeepSome | Step::Reverse | Step::Flatten => {
                     closures.push(None);
                     limits.push(None);
                 }
@@ -8524,7 +8736,9 @@ impl Builder<'_, '_> {
                         current = over;
                     }
                 }
-                Step::Sorted(_) | Step::Reverse => unreachable!("a barrier is split off before the pass"),
+                Step::Sorted(_) | Step::Reverse | Step::Flatten => {
+                    unreachable!("a barrier is split off before the pass")
+                }
             }
         }
 

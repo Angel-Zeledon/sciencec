@@ -5203,6 +5203,13 @@ impl<'a> Lowerer<'a> {
         &mut self,
         ty: Ty,
     ) -> Result<Option<(&'static str, Option<String>)>, Unlowered> {
+        // A borrow owns nothing. `array_element` and its siblings look
+        // *through* a borrow (they answer for runtime calls made on one), so
+        // without this an `Array[&Array[Int]]` — what `groups.iterate()
+        // .collect()` builds — would free every array it merely points at.
+        if matches!(self.types.kind(ty), TyKind::Borrowed { .. }) {
+            return Ok(None);
+        }
         if self.is_string(ty) {
             return Ok(Some(("science_string_free", None)));
         }

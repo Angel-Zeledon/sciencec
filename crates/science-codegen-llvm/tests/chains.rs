@@ -1446,6 +1446,71 @@ fn batches_cut_the_chain_into_disjoint_arrays() {
     );
 }
 
+// --- flatten ----------------------------------------------------------------
+
+/// **`flatten()` yields the elements of each array item in turn**: borrowed
+/// when the items are borrows of arrays (`arrays.iterate()`), owned when they
+/// are the arrays themselves (a `map` that builds one). Empty arrays
+/// contribute nothing, and the links after it see the elements — a `take`, a
+/// `sum`, a `batches`, a `reverse`, a `for`.
+#[test]
+fn flatten_yields_the_elements_of_each_array_in_turn() {
+    assert_eq!(
+        prints(
+            "flatten",
+            r#"def main():
+    let groups: Array[Array[Int]] be [[1, 2], [3], [], [4, 5, 6]]
+    let flat be groups.iterate().flatten().collect()
+    print(f"{flat.length()}")
+    for x in flat:
+        print(f"{x}")
+    print(groups.iterate().flatten().sum())
+    print(groups.iterate().flatten().take(3).count())
+    let words be ["ab", "c"]
+    let parts be words.iterate().map(w giving [f"{w}1", f"{w}2"]).flatten().collect()
+    print(f"{parts.length()} {parts[0]} {parts[3]}")
+    print(groups.iterate().flatten().batches(2).count())
+    let backwards be groups.iterate().flatten().reverse().collect()
+    print(f"{backwards[0]} {backwards[5]}")
+    let nested: Array[Array[Int]] be [[1], [2, 3]]
+    for pair in nested.iterate().map(each.clone()).flatten().batches(2):
+        print(f"{pair.length()}")
+"#,
+        ),
+        "6\n1\n2\n3\n4\n5\n6\n21\n3\n4 ab1 c2\n3\n6 1\n2\n1\n"
+    );
+}
+
+/// **Flattened owned items are released exactly once**, whether they reached
+/// the end of the chain or a `take` stopped it short.
+#[test]
+fn flatten_of_owned_items_release_every_one() {
+    assert_eq!(
+        prints(
+            "flatten-owned",
+            r#"type Tracer:
+    tag: Int
+
+Tracer implements Drop:
+    def drop(mutable self):
+        print(f"dropped {self.tag}")
+
+def pair(n: Int) -> Array[Tracer]:
+    [Tracer(tag: n), Tracer(tag: n + 10)]
+
+def main():
+    let xs be [1, 2]
+    let n be xs.iterate().map(x giving pair(x)).flatten().count()
+    print(f"count {n}")
+    let t be xs.iterate().map(x giving pair(x)).flatten().take(1).count()
+    print(f"take {t}")
+"#,
+        ),
+        "dropped 1\ndropped 11\ndropped 2\ndropped 12\ncount 4\n\
+         dropped 1\ndropped 11\ndropped 12\ndropped 2\ntake 1\n"
+    );
+}
+
 /// **A batch owns the items it holds, and the ones a `take` never reached are
 /// released with the buffer**: each `Tracer` is dropped exactly once, whether
 /// it was handed on in a batch or left behind.

@@ -5403,6 +5403,48 @@ impl<'a> BodyChecker<'a> {
             }
             return ret;
         }
+        if on_a_chain && name == "flatten" {
+            // The item must be an array, owned or through one shared borrow;
+            // the chain then yields the elements, owned or borrowed to match.
+            let TyKind::Named { def: adapter, args } = self.types.kind(ret).clone() else {
+                return ret;
+            };
+            let (Some(source), Some(item)) =
+                (args.first().cloned(), args.get(1).and_then(|arg| arg.as_type()))
+            else {
+                return ret;
+            };
+            if self.types.references_error(item) {
+                return ret;
+            }
+            let array = self.decls.prelude().get("Array");
+            let element_of = |types: &Types, ty: Ty| -> Option<Ty> {
+                match types.kind(ty) {
+                    TyKind::Named { def, args } if Some(*def) == array => {
+                        args.first().and_then(|arg| arg.as_type())
+                    }
+                    _ => None,
+                }
+            };
+            let flat = match self.types.kind(item).clone() {
+                TyKind::Borrowed { mutable: false, inner } => element_of(self.types, inner)
+                    .map(|element| self.types.borrowed(false, element)),
+                _ => element_of(self.types, item),
+            };
+            return match flat {
+                Some(flat) => self.types.named(adapter, vec![source, GenericArg::Type(flat)]),
+                None => {
+                    let rendered = self.types.render(self.defs, item);
+                    self.diagnostics.push(wrong_item_shape(
+                        span,
+                        "flatten",
+                        &rendered,
+                        "items that are arrays, `Array[T]` or `&Array[T]`",
+                    ));
+                    Ty::ERROR
+                }
+            };
+        }
         if on_a_chain && name == "unique" {
             // The fused loop files a copy of each item's key in a `Set`, so
             // the item (through one borrow) must be a key a `Set` admits that

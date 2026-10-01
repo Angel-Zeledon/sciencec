@@ -445,6 +445,22 @@ def runs(xs: &Array[Int]) -> Array[Array[&Int]]:
     );
     windows.assert_clean();
     assert_eq!(terminal_type(&windows, "runs", "collect"), "Array[Array[&I64]]");
+    let flat = check(
+        "\
+def through_borrows(xs: &Array[Array[Int]]) -> Array[&Int]:
+    xs.iterate().flatten().collect()
+
+def owned(xs: &Array[Int]) -> Array[Int]:
+    xs.iterate().map(x giving [x + 0, x + 0]).flatten().collect()
+
+def refused(xs: &Array[Int]) -> Int:
+    xs.iterate().flatten().count()
+",
+    );
+    assert_eq!(flat.codes(), vec![549], "{:?}", flat.messages());
+    assert!(flat.messages()[0].contains("`flatten()`"), "{:?}", flat.messages());
+    assert_eq!(terminal_type(&flat, "through_borrows", "collect"), "Array[&I64]");
+    assert_eq!(terminal_type(&flat, "owned", "collect"), "Array[I64]");
     let refused = check(
         "\
 def f(xs: &Array[F64]) -> Int:

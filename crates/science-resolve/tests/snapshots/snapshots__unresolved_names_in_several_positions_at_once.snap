@@ -2,10 +2,10 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #2705 @0..33
-  Fn `f` #2706 @0..33
+Module `main` #2840 @0..33
+  Fn `f` #2841 @0..33
     params
-      Param `a` #2707 @12..21
+      Param `a` #2842 @12..21
         type: Path -> <error> @12..19
     ret: Path -> <error> @22..33
     body: Block @0..9
