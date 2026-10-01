@@ -1,0 +1,35 @@
+error[SC0548]: `Sample` cannot be a key of a `Map`
+  --> tests/ui/types/unhashable_key.science:32:28
+   |
+32 |     let mutable samples be Map[Sample, Int].new()
+   |                            ^^^^^^^^^^^^^^^^^^^^^^ this `Map` is keyed by `Sample`
+   |
+   = note: `Sample`'s field `at` is `(I64, Point)`, and element 1 of `(I64, Point)` is `Point`, and `Point`'s field `x` is `F64`: `F64` is a float, and `NaN is NaN` is false while `0.0 is -0.0` is true, so `is` on a float is not an equivalence a table can file keys by
+   = note: a key is an integer, `Bool`, `Char` or `String`, or a tuple, record, `choice` or `T?` built only from those; it is hashed and compared field by field
+
+error[SC0548]: `F64` cannot be an element of a `Set`
+  --> tests/ui/types/unhashable_key.science:34:21
+   |
+34 |     let readings be Set[F64].new()
+   |                     ^^^^^^^^^^^^^^ this `Set` holds `F64`
+   |
+   = note: `F64` is a float, and `NaN is NaN` is false while `0.0 is -0.0` is true, so `is` on a float is not an equivalence a table can file keys by
+   = note: a key is an integer, `Bool`, `Char` or `String`, or a tuple, record, `choice` or `T?` built only from those; it is hashed and compared field by field
+
+error[SC0548]: `Name` cannot be a key of a `Map`
+  --> tests/ui/types/unhashable_key.science:35:18
+   |
+35 |     let names be Map[Name, Int].new()
+   |                  ^^^^^^^^^^^^^^^^^^^^ this `Map` is keyed by `Name`
+   |
+   = note: `Name` implements `Eq` by hand, so `is` on it is that `eq`, and a hash read off its fields would put two values your `eq` calls equal in two different buckets; a hand-written `Hash` is not supported yet
+   = note: a key is an integer, `Bool`, `Char` or `String`, or a tuple, record, `choice` or `T?` built only from those; it is hashed and compared field by field
+
+error[SC0548]: `Array[I64]` cannot be an element of a `Set`
+  --> tests/ui/types/unhashable_key.science:36:18
+   |
+36 |     let lists be Set[Array[Int]].new()
+   |                  ^^^^^^^^^^^^^^^^^^^^^ this `Set` holds `Array[I64]`
+   |
+   = note: `Array[I64]` is a container or a handle, and a key that can change after it is filed is a key the table loses
+   = note: a key is an integer, `Bool`, `Char` or `String`, or a tuple, record, `choice` or `T?` built only from those; it is hashed and compared field by field

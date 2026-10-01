@@ -469,6 +469,9 @@ pub fn check_crate(
                     diagnostics,
                 );
                 crate::unchecked::report(&body, krate, decls, types, diagnostics);
+                // After the writeback, for `keys`' §3: a `Map.new()`'s key is
+                // often fixed only by a later `insert`.
+                crate::keys::report(&body, krate, decls, types, aliases, diagnostics);
                 crate::exhaustive::report(
                     &body,
                     krate,

@@ -195,8 +195,8 @@ fn a_for_walks_a_container_narrowed_out_of_map_get() {
     );
 }
 
-/// A key with no pair is refused, and the refusal says why rather than
-/// defaulting.
+/// A key with no hash is refused, **by the front end**, and the refusal says
+/// why rather than defaulting.
 ///
 /// **The tempting default is wrong exactly where it would be reached.** Hashing
 /// the key's bytes and comparing the key's bytes looks universal; a record with
@@ -204,24 +204,41 @@ fn a_for_walks_a_container_narrowed_out_of_map_get() {
 /// equal can hash differently, and the table then loses entries as a function
 /// of what the allocator last left in the padding. That is a bug which
 /// reproduces on one machine and not the next. A diagnostic costs a sentence.
+///
+/// # What changed
+///
+/// This used to be `Map[Doc, Int]` with `Doc` one `Int`, refused by the
+/// backend as `SC0400` after `sciencec check` had called the program clean. A
+/// record of hashable fields is a key now —
+/// `a_record_key_with_padding_is_found_through_any_path` below — so the
+/// refusal moves to the keys that really have no hash, and to the phase that
+/// can say so before a build: `SC0548`, from `science-types`' `keys` pass,
+/// naming the key, the field that makes it unhashable, and why.
 #[test]
 fn a_key_with_no_hash_is_refused_by_name() {
-    let lowered = lower(
-        "type Doc:\n    id: Int\n\nlet m be Map[Doc, Int].new()\nprint(f\"{m.length()}\")\n",
+    let errors = harness::check_errors(
+        "type Doc:\n    id: Int\n    score: F64\n\n\
+         type Name:\n    text: String\n\n\
+         Name implements Eq:\n    def eq(self, other: &Name) -> Bool:\n        \
+         self.text.length() is other.text.length()\n\n\
+         def main():\n    let m be Map[Doc, Int].new()\n    let s be Set[Name].new()\n    \
+         let a be Set[Array[Int]].new()\n    print(f\"{m.length()} {s.length()} {a.length()}\")\n",
     );
-    let dir = scratch("maps", "refused");
-    let diagnostics = lowered
-        .try_build(&dir.join("out"), OptLevel::O2)
-        .map(|_| ())
-        .expect_err("a `Map` keyed by a record is not lowered");
-    let first = diagnostics.first().expect("a diagnostic");
-    assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
-    assert!(
-        first.message.contains("`Doc`") && first.message.contains("hash_fn"),
-        "the refusal must name the key and what is missing, and it said: {}",
-        first.message
+    assert_eq!(
+        errors.iter().map(|(code, _)| *code).collect::<Vec<_>>(),
+        [548, 548, 548],
+        "one `SC0548` per unhashable key and nothing else: {errors:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let all: String = errors.iter().map(|(_, message)| format!("{message}\n")).collect();
+    for named in [
+        "`Doc` cannot be a key of a `Map`",
+        "`Doc`'s field `score` is `F64`: `F64` is a float",
+        "`Name` cannot be an element of a `Set`",
+        "`Name` implements `Eq` by hand",
+        "`Array[I64]` cannot be an element of a `Set`",
+    ] {
+        assert!(all.contains(named), "the refusal must name `{named}`, and it said:\n{all}");
+    }
 }
 
 /// A `Map` whose **value owns memory**, which was the whole feature being
@@ -547,6 +564,326 @@ def main():
     // `v3` and `v5`, plus `again` and `over`: 55. The set: the 50 key bytes
     // less `k7`: 48.
     assert_eq!(ran.stdout, "153\n", "stderr: {}", ran.stderr);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+
+    let leaks = std::path::Path::new("/usr/bin/leaks");
+    if cfg!(target_os = "macos") && leaks.is_file() {
+        let report = std::process::Command::new(leaks)
+            .arg("--atExit")
+            .arg("--")
+            .arg(&built.executable)
+            .output()
+            .expect("`leaks` runs");
+        let text = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            text.contains(" 0 leaks for 0 total leaked bytes"),
+            "`leaks --atExit` found something:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- Keys built from fields ---------------------------------------------------
+//
+// A key that is not `String` or an eight-byte integer is hashed and compared by
+// glue `science-codegen-llvm`'s `Lowerer::intern_key_glue` emits per key type,
+// walking its parts the way drop glue does: an integer, `Bool` or `Char` loaded
+// at its own width, a `String` through the runtime's pair, an aggregate through
+// its own glue, and a `choice` or `T?` by its discriminant and then the active
+// variant's payload. `science-types`' `keys` module is the front half — what a
+// key may be, and `SC0548` for what it may not.
+
+/// **A record with padding, found through any path.** `Padded` is a `U8` and
+/// an `Int`, so seven bytes between them take no part in its value. The keys
+/// are filed from literals on the stack; the probes come back out of an array
+/// whose buffer was allocated after an array of `-1`s, and through a function
+/// that rebuilds the record field by field — paths along which nothing
+/// arranges for the pad bytes to agree with the stack's.
+///
+/// A byte-wise hash would find these keys or not as a function of what those
+/// seven bytes held. The glue never reads them: its hash loads one byte at
+/// offset 0 and eight at offset 8, and its equality compares the same two.
+#[test]
+fn a_record_key_with_padding_is_found_through_any_path() {
+    let source = "\
+type Padded:
+    tag: U8
+    id: Int
+
+def rebuilt(values: &Array[Padded], at: Int) -> Padded:
+    let found be values.get(at)
+    if found?:
+        return Padded(tag: found.tag, id: found.id)
+    Padded(tag: 0, id: 0)
+
+def main():
+    let mutable filler be Array[Int].new()
+    for i in 0..64:
+        filler.push(-1)
+    let mutable m be Map[Padded, String].new()
+    m.insert(Padded(tag: 7, id: 1000), \"seven\")
+    m.insert(Padded(tag: 8, id: 1000), \"eight\")
+    m.insert(Padded(tag: 7, id: 1001), \"other\")
+    let mutable heap be Array[Padded].new()
+    for i in 0..32:
+        heap.push(Padded(tag: (i % 3 + 6) as U8, id: 1000))
+    let mutable hits be 0
+    for i in 0..32:
+        if m.contains(rebuilt(heap, i)):
+            hits be hits + 1
+    for p in heap:
+        if m.contains(p):
+            hits be hits + 1
+    print(hits)
+    print(m.contains(Padded(tag: 9, id: 1000)))
+    print(m.insert(Padded(tag: 8, id: 1000), \"EIGHT\")?)
+    for e in m:
+        print(f\"{e.key.tag} {e.key.id} {e.value}\")
+";
+    // Tags cycle 6, 7, 8: of 32, eleven are 6 (absent), eleven 7 and ten 8.
+    // Each path finds the twenty-one present: 42.
+    assert_eq!(
+        prints("padded-record", source),
+        "42\nfalse\ntrue\n7 1000 seven\n8 1000 EIGHT\n7 1001 other\n"
+    );
+}
+
+/// Tuples as keys: order matters, `(1, 2)` is not `(2, 1)`, and a tuple of
+/// mixed widths and an owned `String` is one key.
+#[test]
+fn a_tuple_key_hashes_its_elements_in_order() {
+    let source = "\
+def main():
+    let mutable grid be Map[(Int, Int), String].new()
+    for x in 0..4:
+        for y in 0..4:
+            grid.insert((x, y), f\"{x}{y}\")
+    print(grid.length())
+    print(grid.contains((1, 2)))
+    print(grid.contains((2, 1)))
+    print(grid.contains((4, 0)))
+    let mutable mixed be Map[(U8, String, Bool), Int].new()
+    mixed.insert((1, \"a\", true), 1)
+    mixed.insert((1, \"a\", false), 2)
+    mixed.insert((2, \"a\", true), 3)
+    mixed.insert((1, \"b\", true), 4)
+    mixed.insert((1, \"a\", true), 5)
+    print(mixed.length())
+    for e in mixed:
+        print(e.value)
+";
+    assert_eq!(
+        prints("tuple-keys", source),
+        "16\ntrue\ntrue\nfalse\n4\n5\n2\n3\n4\n"
+    );
+}
+
+/// `choice` keys: a discriminant first, then the active variant's payload,
+/// including a `String` and a payload of two fields. Two variants holding the
+/// same number are different keys, and a payload-free variant is equal only
+/// to itself.
+#[test]
+fn a_choice_key_compares_its_tag_and_then_its_payload() {
+    let source = "\
+choice Shape:
+    Circle(Int)
+    Square(Int)
+    Named(String, U8)
+    Empty
+
+def main():
+    let mutable counts be Map[Shape, Int].new()
+    counts.insert(Shape.Circle(3), 1)
+    counts.insert(Shape.Square(3), 2)
+    counts.insert(Shape.Named(\"disc\", 3), 3)
+    counts.insert(Shape.Named(\"disc\", 4), 4)
+    counts.insert(Shape.Named(\"ring\", 3), 5)
+    counts.insert(Shape.Empty, 6)
+    counts.insert(Shape.Circle(3), 7)
+    counts.insert(Shape.Empty, 8)
+    print(counts.length())
+    print(counts.contains(Shape.Named(\"disc\", 3)))
+    print(counts.contains(Shape.Named(\"disc\", 5)))
+    print(counts.contains(Shape.Square(4)))
+    for e in counts:
+        print(e.value)
+";
+    assert_eq!(
+        prints("choice-keys", source),
+        "6\ntrue\nfalse\nfalse\n7\n2\n3\n4\n5\n8\n"
+    );
+}
+
+/// Keys nested three deep — a record holding a tuple holding a `choice`
+/// holding a record — and a `T?` inside a tuple, where `null` and `0` are two
+/// keys and `null` is equal to `null`.
+#[test]
+fn a_nested_key_reaches_every_level() {
+    let source = "\
+type Cell:
+    row: I32
+    column: I32
+
+choice Slot:
+    At(Cell)
+    Nowhere
+
+type Entry:
+    sheet: String
+    place: (Slot, U16)
+
+def main():
+    let mutable m be Map[Entry, Int].new()
+    m.insert(Entry(sheet: \"a\", place: (Slot.At(Cell(row: 1, column: 2)), 0)), 1)
+    m.insert(Entry(sheet: \"a\", place: (Slot.At(Cell(row: 2, column: 1)), 0)), 2)
+    m.insert(Entry(sheet: \"a\", place: (Slot.Nowhere, 0)), 3)
+    m.insert(Entry(sheet: \"b\", place: (Slot.At(Cell(row: 1, column: 2)), 0)), 4)
+    m.insert(Entry(sheet: \"a\", place: (Slot.At(Cell(row: 1, column: 2)), 1)), 5)
+    print(m.length())
+    print(m.contains(Entry(sheet: \"a\", place: (Slot.At(Cell(row: 2, column: 1)), 0))))
+    print(m.contains(Entry(sheet: \"a\", place: (Slot.At(Cell(row: -2, column: 1)), 0))))
+    print(m.contains(Entry(sheet: \"a\", place: (Slot.Nowhere, 0))))
+    print(m.contains(Entry(sheet: \"a\", place: (Slot.Nowhere, 1))))
+    let mutable maybe be Map[(String, Int?), Int].new()
+    maybe.insert((\"x\", null), 1)
+    maybe.insert((\"x\", 0), 2)
+    maybe.insert((\"x\", null), 3)
+    print(maybe.length())
+    for e in maybe:
+        print(e.value)
+";
+    assert_eq!(
+        prints("nested-keys", source),
+        "5\ntrue\nfalse\ntrue\nfalse\n2\n3\n2\n"
+    );
+}
+
+/// Integers narrower than eight bytes, `Bool` and `Char`, which had no pair:
+/// a `ScienceHashFn` is handed a pointer and no size, so the runtime's
+/// eight-byte `science_int_hash` would read past a one-byte slot. Their glue
+/// loads each at its own width. Negative keys of a signed width are included
+/// because a sign extension and a zero extension disagree about them.
+#[test]
+fn narrow_integers_bools_and_chars_are_keys() {
+    let source = "\
+def main():
+    let mutable bytes be Map[U8, Int].new()
+    for i in 0..300:
+        bytes.insert((i % 256) as U8, i)
+    print(bytes.length())
+    print(bytes.contains(255))
+    let mutable signed be Set[I32].new()
+    for i in -5..5:
+        signed.insert(i as I32)
+    print(signed.length())
+    print(signed.contains(-5))
+    print(signed.contains(5))
+    let mutable small be Set[I16].new()
+    small.insert(-1)
+    small.insert(1)
+    small.insert(-1)
+    print(small.length())
+    let mutable flags be Map[Bool, String].new()
+    flags.insert(true, \"yes\")
+    flags.insert(false, \"no\")
+    flags.insert(true, \"again\")
+    print(flags.length())
+    let mutable letters be Map[Char, Int].new()
+    for c in \"hello\".chars():
+        letters.insert(c, 1)
+    print(letters.length())
+    print(letters.contains('l'))
+    print(letters.contains('z'))
+";
+    assert_eq!(
+        prints("narrow-keys", source),
+        "256\ntrue\n10\ntrue\nfalse\n2\n2\n4\ntrue\nfalse\n"
+    );
+}
+
+/// A `Set` of records: `insert` answers whether the value was new, a removed
+/// value can be inserted again and goes last, and the walk is in insertion
+/// order.
+#[test]
+fn a_set_of_records_removes_and_reinserts() {
+    let source = "\
+type Point:
+    x: Int
+    y: Int
+
+def main():
+    let mutable seen be Set[Point].new()
+    print(seen.insert(Point(x: 1, y: 2)))
+    print(seen.insert(Point(x: 2, y: 1)))
+    print(seen.insert(Point(x: 1, y: 2)))
+    print(seen.insert(Point(x: 0, y: 0)))
+    print(seen.remove(Point(x: 1, y: 2)))
+    print(seen.remove(Point(x: 1, y: 2)))
+    print(seen.contains(Point(x: 1, y: 2)))
+    print(seen.insert(Point(x: 1, y: 2)))
+    for p in seen:
+        print(f\"{p.x},{p.y}\")
+";
+    assert_eq!(
+        prints("set-of-records", source),
+        "true\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\n2,1\n0,0\n1,2\n"
+    );
+}
+
+/// **No leak, with a constant live set, for keys that own memory.** Each of
+/// two thousand rounds builds a map keyed by a record holding a `String` and a
+/// `choice` holding another, overwrites a key (which releases the displaced
+/// *value* and the *probe* key, and keeps the filed one), removes and
+/// reinserts one, fills a `Set` of tuples holding `String`s, and drops it all.
+/// A record key's release is its drop glue, reached through the key
+/// descriptor's `drop_fn` — the hash glue owns nothing and must not change
+/// that.
+///
+/// **The tuple set is named through an alias, `Set[Pair]`, and not written
+/// `Set[(String, String)]`**, because in expression position that spelling is
+/// an index whose subscript is a tuple, and the checker reads a tuple
+/// subscript as the argument *list* — `Set` given two arguments — and leaves
+/// the type as `TyKind::Error` with no diagnostic. That is a front-end gap of
+/// its own, older than tuple keys; the annotation `let s: Set[(Int, Int)]`,
+/// in type position, is read correctly.
+#[test]
+fn record_keys_that_own_strings_leak_nothing() {
+    let source = "\
+choice Tag:
+    Label(String)
+    Plain
+
+type Pair is (String, String)
+
+type Key:
+    name: String
+    tag: Tag
+    n: U8
+
+def main():
+    let mutable last be 0
+    for round in 0..2000:
+        let mutable m be Map[Key, String].new()
+        for i in 0..16:
+            m.insert(Key(name: f\"k{i}\", tag: Tag.Label(f\"t{i % 3}\"), n: (i % 4) as U8), f\"v{i}\")
+        m.insert(Key(name: \"k1\", tag: Tag.Label(\"t1\"), n: 1), \"over\")
+        let gone be m.remove(Key(name: \"k2\", tag: Tag.Label(\"t2\"), n: 2))
+        m.insert(Key(name: \"k2\", tag: Tag.Plain, n: 2), \"plain\")
+        let mutable pairs be Set[Pair].new()
+        for e in m:
+            pairs.insert((e.key.name.clone(), e.value.clone()))
+        pairs.insert((\"k1\", \"over\"))
+        last be m.length() * 100 + pairs.length()
+    print(last)
+";
+    let dir = scratch("maps", "key_leaks");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "key_leaks"), OptLevel::O2);
+    let ran = run(&built);
+    // Sixteen keys, one overwritten in place, one removed and filed again
+    // under a different tag: sixteen. Sixteen distinct pairs, the last insert
+    // a duplicate.
+    assert_eq!(ran.stdout, "1616\n", "stderr: {}", ran.stderr);
     assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
 
     let leaks = std::path::Path::new("/usr/bin/leaks");

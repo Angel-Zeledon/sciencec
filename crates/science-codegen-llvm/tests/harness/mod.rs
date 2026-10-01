@@ -57,6 +57,34 @@ pub struct Lowered {
 /// fixture that stops before the backend is a test that is not testing the
 /// backend, and the code is what says which phase refused it.
 pub fn lower(source: &str) -> Lowered {
+    let Checked { krate, types, aliases, decls, thir, diagnostics } = check(source);
+    assert!(!diagnostics.has_errors(), "the fixture must check: {:?}", codes(&diagnostics));
+    lower_checked(krate, types, aliases, decls, thir)
+}
+
+/// The type checker's diagnostics for a fixture that lexes, parses and
+/// resolves, each as its code and its message followed by its notes — for a
+/// test whose assertion **is** a front-end refusal, which [`lower`] would turn
+/// into a panic.
+pub fn check_errors(source: &str) -> Vec<(u16, String)> {
+    check(source)
+        .diagnostics
+        .iter()
+        .map(|d| (d.code.0, format!("{}\n{}", d.message, d.notes.join("\n"))))
+        .collect()
+}
+
+/// The front half's output, before anything is asserted about it.
+struct Checked {
+    krate: hir::Crate,
+    types: Types,
+    aliases: Aliases,
+    decls: Declarations,
+    thir: Vec<thir::Body>,
+    diagnostics: Diagnostics,
+}
+
+fn check(source: &str) -> Checked {
     let file = FileId(0);
     let (tokens, lexed) = science_lexer::lex(file, source);
     assert!(!lexed.has_errors(), "the fixture must lex: {:?}", codes(&lexed));
@@ -90,10 +118,20 @@ pub fn lower(source: &str) -> Lowered {
     let mut types = Types::new();
     let mut diagnostics = Diagnostics::new();
     let mut aliases = Aliases::of(&krate, &mut types, &order, &mut diagnostics);
-    let mut decls = Declarations::of(&krate, &mut types, &order, &mut diagnostics);
+    let decls = Declarations::of(&krate, &mut types, &order, &mut diagnostics);
     let thir: Vec<thir::Body> =
         check_crate(&krate, &decls, &mut types, &mut aliases, &order, &mut diagnostics);
-    assert!(!diagnostics.has_errors(), "the fixture must check: {:?}", codes(&diagnostics));
+    Checked { krate, types, aliases, decls, thir, diagnostics }
+}
+
+/// [`lower`]'s second half: MIR, aliases revealed, and Decision 42's walk.
+fn lower_checked(
+    krate: hir::Crate,
+    mut types: Types,
+    mut aliases: Aliases,
+    mut decls: Declarations,
+    thir: Vec<thir::Body>,
+) -> Lowered {
     // **Aliases are revealed here for the reason `sciencec`'s driver reveals
     // them there, and the two orders are the same one.**
     //

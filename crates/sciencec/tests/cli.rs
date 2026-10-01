@@ -2216,6 +2216,62 @@ fn no_noalias_suppresses_the_attribute_and_emit_llvm_ir_is_how_you_see_it() {
     assert_eq!(String::from_utf8_lossy(&program.stdout).replace("\r\n", "\n"), "1\n");
 }
 
+/// **A padded key's hash and equality never read its padding**, read off the
+/// module rather than inferred from a program's output.
+///
+/// `Padded` is a `U8` and an `Int`: one byte at offset 0, seven bytes of
+/// padding, eight at offset 8. `collections-and-chains.md` §5.2's AMENDMENT
+/// 8a hashes and compares a key field by field, and the execution test in
+/// `science-codegen-llvm`'s `tests/maps.rs` shows two equal values meeting
+/// through different paths — but whether their pad bytes happened to differ
+/// there is the allocator's business, so it is this test that pins the
+/// mechanism: every load in the emitted `hash_fn` and `eq_fn` is a one-byte
+/// load of the base address or an eight-byte load at offset 8, and nothing
+/// compares memory in bulk.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_padded_keys_glue_loads_its_fields_and_never_its_padding() {
+    let source = "type Padded:\n    tag: U8\n    id: Int\n\n\
+                  def main():\n    let mutable seen be Set[Padded].new()\n    \
+                  seen.insert(Padded(tag: 7, id: 1000))\n    \
+                  print(seen.contains(Padded(tag: 7, id: 1000)))\n";
+    let file = scratch("padded_key_glue.science", source.as_bytes());
+    let ir_file = Path::new(&file).with_extension("ll");
+    let run = sciencec(&["build", "--emit=llvm-ir", &file]);
+    run.succeeded().silent_stderr();
+    let ir = std::fs::read_to_string(&ir_file).expect("`--emit=llvm-ir` writes the module");
+    for glue in ["_S6Padded.hash", "_S6Padded.eq"] {
+        let body = function_body(&ir, glue);
+        let loads: Vec<&str> = body.lines().filter(|line| line.contains(" = load ")).collect();
+        assert!(!loads.is_empty(), "`{glue}` loads nothing:\n{body}");
+        for load in &loads {
+            assert!(
+                load.contains("load i8, ptr %0") || load.contains("load i8, ptr %1")
+                    || load.contains("load i64"),
+                "`{glue}` loads something that is neither field:\n{load}\n\n{body}"
+            );
+        }
+        for line in body.lines().filter(|line| line.contains("getelementptr")) {
+            assert!(line.ends_with("i64 8"), "`{glue}` addresses past the fields:\n{body}");
+        }
+        for bulk in ["memcmp", "bcmp", "load i128", "load {", "load ["] {
+            assert!(!body.contains(bulk), "`{glue}` reads the key in bulk (`{bulk}`):\n{body}");
+        }
+    }
+}
+
+/// Every line of the function `needle` defines, from its `define` to its
+/// closing brace.
+#[cfg(feature = "llvm")]
+#[track_caller]
+fn function_body(ir: &str, needle: &str) -> String {
+    let start = ir
+        .lines()
+        .position(|line| line.starts_with("define") && line.contains(needle))
+        .unwrap_or_else(|| panic!("no `define` of `{needle}` in:\n{ir}"));
+    ir.lines().skip(start).take_while(|line| *line != "}").collect::<Vec<_>>().join("\n")
+}
+
 /// The one `define` line naming `needle`.
 ///
 /// Matched on `define` rather than on the symbol alone: the same symbol appears

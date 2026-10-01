@@ -849,8 +849,19 @@ pub unsafe extern "C" fn science_set_remove(
 // keys only.** A `ScienceHashFn` receives a `*const u8` and no size, so it
 // cannot ask how wide its key is; reading eight bytes out of a one-byte slot is
 // not a worse hash, it is a read past the end of the key array. A `Map of (U8,
-// _)` therefore still has no pair, and adding one means adding a symbol per
+// _)` therefore has no pair *here*, and adding one would mean a symbol per
 // width rather than widening this one.
+//
+// **What became of that, and of the argument above.** Keys that are records,
+// tuples and `choice`s need a hash per key *type*, walking that type's fields
+// at that type's offsets — a function only the compiler can write, since this
+// crate stores erased bytes. So `science-codegen-llvm` now emits a
+// `hash_fn`/`eq_fn` pair per such key type (`Lowerer::intern_key_glue`), and a
+// `U8` key is that walk over one field, loaded at its own width. The symbols
+// per width were never added. The two places key support now lives agree by
+// construction about every leaf this crate has an opinion on: the emitted glue
+// hashes a `String` field by calling `science_string_hash` at its address, and
+// an `Int` field by its bits, which is this pair's answer.
 
 /// `Hash` for an eight-byte integer key — `Int`, and any other 64-bit integer.
 ///

@@ -1092,16 +1092,23 @@ pub const EMITTED_FN_SIGNATURES: &[(&str, &str)] = &[
 /// `science_int_hash`/`science_int_eq`, which `map.rs` did not have until now
 /// and whose absence is documented there.
 ///
-/// Everything else is `None`, and a `None` is a **refusal, not a default**. The
-/// tempting default — compare the bytes, hash the bytes — is wrong for exactly
-/// the types where it would be reached: a record with padding has bytes that do
-/// not participate in equality, and two equal values that differ in a pad byte
+/// Everything else is `None`, and a `None` is **not a default**: it means *"the
+/// runtime has no pair for this, so the backend writes one"*. The tempting
+/// default — compare the bytes, hash the bytes — is wrong for exactly the types
+/// where it would be reached: a record with padding has bytes that do not
+/// participate in equality, and two equal values that differ in a pad byte
 /// would hash differently, which is the one property
 /// [`ScienceHashFn`](science_rt::ScienceHashFn) requires and the one whose
 /// violation the table cannot detect. A `Map` keyed by such a type would lose
-/// entries at run time, silently, as a function of allocator contents. Refusing
-/// at compile time costs a diagnostic and a key type; defaulting costs a bug
-/// nobody can reproduce.
+/// entries at run time, silently, as a function of allocator contents.
+///
+/// So for a narrower integer, a `Bool`, a `Char`, a tuple, a record, a
+/// `choice` or a `T?`, `science-codegen-llvm`'s `Lowerer::intern_key_glue`
+/// emits a pair that walks the key's fields as drop glue does, and calls back
+/// into this function's two pairs for every `String` and eight-byte integer
+/// it meets — `collections-and-chains.md` §5.2's AMENDMENT 8a. A key that is
+/// none of those (a float, a container) is refused before it gets here, by
+/// `science-types` as `SC0548`.
 ///
 /// The caller declares both symbols with [`runtime_fn`], takes their addresses,
 /// and stores them into the `hash_fn` and `eq_fn` fields of
@@ -1465,8 +1472,9 @@ mod tests {
         }
     }
 
-    /// The supported set is exactly `String` and the eight-byte integers, and
-    /// everything else is a refusal.
+    /// The runtime's set is exactly `String` and the eight-byte integers, and
+    /// everything else is `None` — which the backend answers with emitted,
+    /// field-walking glue, never with a byte-wise pair.
     ///
     /// The negative half is the half worth having. `map_key_support` documents
     /// why a byte-comparing default would be wrong — padding bytes do not

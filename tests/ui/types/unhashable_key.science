@@ -1,0 +1,38 @@
+# UI test: a `Map` or `Set` whose key cannot be hashed (SC0548).
+#
+# `collections-and-chains.md` §5.2's AMENDMENT 8a: a key is hashed and compared
+# field by field, so a record of integers and strings is a key and these four
+# are not — a float buried two levels down, a float on its own, a record whose
+# `is` is a hand-written `eq` a structural hash would disagree with, and a
+# container. Before this code existed the first three checked clean and the
+# backend refused the build as `SC0400`, after `sciencec check` had exited 0.
+#
+# The `Cell` map is here to be accepted: a record of two integers is the key
+# the refusals are measured against.
+
+type Point:
+    x: F64
+    y: F64
+
+type Sample:
+    at: (Int, Point)
+
+type Name:
+    text: String
+
+Name implements Eq:
+    def eq(self, other: &Name) -> Bool:
+        self.text.length() is other.text.length()
+
+type Cell:
+    row: Int
+    column: Int
+
+def main():
+    let mutable samples be Map[Sample, Int].new()
+    samples.insert(Sample(at: (1, Point(x: 1.0, y: 2.0))), 3)
+    let readings be Set[F64].new()
+    let names be Map[Name, Int].new()
+    let lists be Set[Array[Int]].new()
+    let cells be Map[Cell, String].new()
+    print(f"{samples.length()} {readings.length()} {names.length()} {lists.length()} {cells.length()}")

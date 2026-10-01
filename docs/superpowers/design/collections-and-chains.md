@@ -771,6 +771,51 @@ list. `Map`, `Set`, `unique`, `group(by:)` and `tally(by:)` all require it, and
 §5.4 as written lists no way to hash anything, which is a genuine hole in the F0
 spec rather than an addition this note is asking for.
 
+> **AMENDMENT 8a: a key is hashed by its structure, and `Hash` the interface
+> waits for the case structure cannot answer.** The compiler took the half of
+> this amendment a program needs first — keys that are records, tuples and
+> `choice`s — without the interface, and the order is deliberate.
+>
+> **Decision.** A key may be an integer of any width, `Bool`, `Char`,
+> `String`, or a tuple, record, `choice` or `T?` built only from those. Its
+> hash is a fold over its parts, each hashed by its own type, and its equality
+> is the conjunction of its parts' equalities; codegen emits the pair per key
+> type the way it emits drop glue. Three kinds of key are refused, at the front
+> end, as `SC0548`:
+>
+> - **A float, at any width**, alone or inside an aggregate. `NaN is NaN` is
+>   false and `0.0 is -0.0` is true, so `is` on a float is not an equivalence,
+>   and a table needs `eq` to be one: a `NaN` key inserted twice is two
+>   entries that no probe finds. §5.1 keeps `F32` out of `Ord` for the same
+>   kind of reason. The bucket a float key means — `(x * 1000.0).round() as
+>   Int` — is the program's decision to write, not the table's.
+> - **A type that writes `implements Eq:` by hand.** `is` on it is that `eq`,
+>   and a structural hash agrees with an `eq` only when the `eq` is structural.
+>   Using the hand-written `eq` with a structural hash is wrong silently the
+>   first time the `eq` ignores a field; refusing is wrong loudly.
+> - **A container, a handle, a borrow, `any I` or a function** — anything
+>   whose value can change after it is filed, or whose equality is not known
+>   where the key is.
+>
+> **Reason.** Every key a program in this audience reaches for first —
+> `(Int, Int)` for a grid cell, a `Point`, an enum of states — is structural,
+> and for those the only correct hash is the structural one. Deriving it costs
+> no syntax, and it is the one place a derived implementation cannot disagree
+> with anything, because a record without a hand-written `Eq` has no `is` to
+> disagree with. A byte-wise hash would have been the same amount of code and
+> wrong for every record with padding: seven of a `{U8, Int}`'s sixteen bytes
+> take no part in its value, and a byte-wise table loses entries as a function
+> of what the allocator last left there.
+>
+> **Cost.** Two, and both are this amendment's remainder rather than its
+> refusal. A type whose equality is *not* structural — case-folded names,
+> unordered pairs — cannot be a key until `Hash` exists as written above, with
+> a `Hasher` to feed, so that the author who wrote `eq` can write the hash
+> that agrees with it. And a key that is a generic body's type parameter is not
+> checked by the front end, because there is no `K: Hash` bound to hold it to:
+> `def count of K(xs: Array of K) -> Map of (K, Int)` instantiated at `F64`
+> is refused by the backend, by name, and not before.
+
 ### 5.3 Refused, with reasons
 
 - **A deque.** A pipeline moves forward. The one place a ring buffer is needed is

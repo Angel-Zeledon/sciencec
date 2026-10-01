@@ -1616,7 +1616,9 @@ const BLOCKS: &[Block] = &[
             // prelude's interfaces, so writing the bound would name something
             // that does not resolve; and a bound that cannot be checked at a
             // call is a bound that costs a diagnostic and buys nothing. Named
-            // in the report as the one clause of §3.6 dropped.
+            // in the report as the one clause of §3.6 dropped. The key is held
+            // to it structurally instead, by `science-types`' `keys` pass
+            // (`SC0548`), over the type the map ends up with.
             Method {
                 name: "insert",
                 generics: &[],
@@ -1684,8 +1686,9 @@ const BLOCKS: &[Block] = &[
     // [`UNWRITTEN`]. `has` is spelled `contains` per `stdlib-core.md` §3.4.
     //
     // `T: Eq + Hash` is dropped for `Map.insert`'s reason: `Hash` is not a
-    // prelude interface. What stands in for it is `map_key_support` in
-    // `science-codegen`, which refuses an element type with no hash pair.
+    // prelude interface. What stands in for it is `science-types`' `keys`
+    // pass, which refuses an element that cannot be hashed structurally as
+    // `SC0548` — `collections-and-chains.md` §5.2's AMENDMENT 8a.
     Block {
         ty: "Set",
         generics: &["T"],

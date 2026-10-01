@@ -238,6 +238,7 @@ pub mod exhaustive;
 pub mod fold;
 pub mod infer;
 pub mod items;
+pub mod keys;
 pub mod lowering;
 pub mod matching;
 pub mod methods;
@@ -1119,6 +1120,21 @@ pub mod codes {
     /// type the author never wrote an annotation for.
     pub const NOT_SUMMABLE: Code = Code(547);
 
+    // --- a `Map` or `Set` key, `SC0548` -----------------------------------
+
+    /// A `Map` or `Set` whose key type cannot be hashed: a float, a type that
+    /// implements `Eq` by hand, a container, a borrow — or an aggregate that
+    /// holds one.
+    ///
+    /// **Not [`UNSATISFIED_BOUND`]**, because there is no bound to name:
+    /// `Map.insert`'s `where K: Eq + Hash` cannot be written while `Hash` is
+    /// not a prelude interface (`collections-and-chains.md` §5.2's AMENDMENT
+    /// 8), and a sentence about a bound the author cannot see would send them
+    /// looking for it. [`crate::keys`] says what a key is and why each refusal
+    /// is one; before it, the refusal was the backend's `SC0400`, after the
+    /// front half had called the program clean.
+    pub const UNHASHABLE_KEY: Code = Code(548);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1160,6 +1176,7 @@ pub mod codes {
 
         MUTABLE_THROUGH_BOX,
         NOT_SUMMABLE,
+        UNHASHABLE_KEY,
     ];
 
     #[cfg(test)]

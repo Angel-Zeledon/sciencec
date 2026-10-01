@@ -352,6 +352,29 @@ const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::
 /// writes.
 const MAX_TYPE_DEPTH: u32 = 32;
 
+/// One part of a `Map` key, as [`Lowerer::intern_key_glue`] hashes and
+/// compares it.
+#[derive(Debug, Clone)]
+enum KeyPart {
+    /// An integer, a `Bool` or a `Char`: loaded at its own layout, compared
+    /// with one `icmp`, and widened to a word to be hashed.
+    Scalar(Layout),
+    /// A `String`, through `science_string_hash` and `science_string_eq`.
+    String,
+    /// An aggregate with emitted glue of its own.
+    Glue { hash: String, eq: String },
+}
+
+/// A key type's parts, by where they sit.
+enum KeyShape {
+    /// Every part always present: a tuple, a record, or a scalar alone at
+    /// offset 0. `(offset, part)` in declaration order.
+    Fields(Vec<(u64, KeyPart)>),
+    /// Decision 18's tagged union — a `choice` or a `T?` — as the tag's width
+    /// and, per variant, its discriminant and its payload's parts.
+    Tagged { tag: IntTy, arms: Vec<(u64, Vec<(u64, KeyPart)>)> },
+}
+
 /// Why a program could not be lowered.
 ///
 /// One variant, carrying the construct's name, because every refusal is the
@@ -2993,10 +3016,9 @@ impl<'a> Lowerer<'a> {
     ///
     /// Two nested `ScienceTypeInfo`s, built by the same
     /// [`Lowerer::intern_element_descriptor`] an array's element goes through,
-    /// plus the key's `hash_fn` and `eq_fn` read from
-    /// [`science_codegen::runtime::map_key_support`].
+    /// plus the key's `hash_fn` and `eq_fn` from [`Lowerer::map_key_pair`].
     ///
-    /// # The reason the pair is asked for rather than derived
+    /// # The reason the pair is never byte-wise
     ///
     /// **The tempting default is wrong exactly where it would be reached.**
     /// Hashing the key's bytes and comparing the key's bytes looks like it
@@ -3004,36 +3026,11 @@ impl<'a> Lowerer<'a> {
     /// bytes that take no part in equality, so two values that *are* equal can
     /// hash differently. A table cannot detect that — it loses entries as a
     /// function of what the allocator last left in the padding, which is a bug
-    /// that reproduces on one machine and not the next. Refusing costs a
-    /// diagnostic; defaulting costs that.
-    ///
-    /// So `map_key_support` names a pair for `String` and for the eight-byte
-    /// integers and refuses everything else, and this turns that refusal into
-    /// a sentence naming the key type.
-    ///
-    /// # The cost
-    ///
-    /// A `Map` keyed by `U8` or by a record is refused today although both are
-    /// perfectly sensible keys. Each integer width needs its own symbol pair,
-    /// because a `ScienceHashFn` is handed a `*const u8` and no size and so
-    /// cannot ask how wide its key is — an eight-byte read from a one-byte
-    /// slot reads past the key array.
+    /// that reproduces on one machine and not the next. The pair this asks for
+    /// is either the runtime's own or glue that walks the key's fields the way
+    /// drop glue does, and neither reads a byte that is not part of a field.
     fn intern_map_descriptor(&mut self, key: Ty, value: Ty) -> Result<String, Unlowered> {
-        let key_cg = self.cg_ty(key)?;
-        let Some((hash, eq)) = science_codegen::runtime::map_key_support(&key_cg) else {
-            return Err(Unlowered::new(format!(
-                "a `Map` keyed by `{}`, for which no `hash_fn`/`eq_fn` pair exists: \
-                 `runtime::map_key_support` names one for `String` and for the eight-byte \
-                 integers and refuses the rest, because a byte-wise default hashes a record's \
-                 padding and would lose entries as a function of what the allocator left there",
-                self.types.render(self.defs, key)
-            )));
-        };
-        // Declared so the module has a `declare` for each: a `ScienceMapInfo`
-        // holding the address of a symbol nothing declared is a global that
-        // fails to link, which is `define_vtable`'s lesson one descriptor over.
-        self.declare(hash)?;
-        self.declare(eq)?;
+        let (hash, eq) = self.map_key_pair(key)?;
         let key_symbol = self.intern_element_descriptor(key)?;
         let value_symbol = self.intern_element_descriptor(value)?;
         let key_info = self
@@ -3056,10 +3053,722 @@ impl<'a> Lowerer<'a> {
         let info = science_codegen::descriptor::MapInfo {
             key: key_info,
             value: value_info,
-            hash_fn: hash.to_string(),
-            eq_fn: eq.to_string(),
+            hash_fn: hash,
+            eq_fn: eq,
         };
         Ok(self.descriptors.intern_map(&MonoKey::plain(&[rendered.as_str()]), info))
+    }
+
+    /// The `hash_fn` and `eq_fn` a `Map` or `Set` keyed by `key` is built
+    /// with, declared or defined in this module.
+    ///
+    /// # The decision
+    ///
+    /// **The runtime's pair where one exists, and emitted glue everywhere
+    /// else.** `String` and the eight-byte integers keep
+    /// [`science_codegen::runtime::map_key_support`]'s symbols — a lookup, a
+    /// declaration, an address, exactly as before. Every other key the front
+    /// end admits — a narrower integer, `Bool`, `Char`, a tuple, a record, a
+    /// `choice` and a `T?` of any of those — gets two functions from
+    /// [`Lowerer::intern_key_glue`], the way every owning type gets drop glue.
+    ///
+    /// # The reason
+    ///
+    /// `science-rt`'s `map.rs` argued for one mechanism — *"look the symbol
+    /// pair up by key type"* — and against codegen emitting the pair, and it
+    /// was right for the one question it was answering: a load and a compare
+    /// for `Int` is not worth a second place for key support to live. A record
+    /// is a different question. Its hash is a walk over its fields with each
+    /// field's own hash, which depends on the record's layout and its field
+    /// types, and a runtime that stores erased bytes knows neither — a symbol
+    /// per key type is a symbol per *program*, which only the compiler can
+    /// write. And once the walk exists, a `U8` key is the walk over one field,
+    /// so the per-width symbol pairs `map.rs` said would be needed are not.
+    ///
+    /// # The cost
+    ///
+    /// Key support now lives in two places, which is the disagreement `map.rs`
+    /// warned about. It is bounded by construction: the glue never hashes a
+    /// `String` itself — it calls `science_string_hash` and
+    /// `science_string_eq` at that field's address — so the two places agree
+    /// about every leaf the runtime has an opinion on.
+    fn map_key_pair(&mut self, key: Ty) -> Result<(String, String), Unlowered> {
+        let key_cg = self.cg_ty(key)?;
+        if matches!(key_cg, CgTy::Float(_)) {
+            return Err(self.unhashable_key(
+                key,
+                "it is a float, and `NaN is NaN` is false, so `is` on it is not an equivalence",
+            ));
+        }
+        if let Some((hash, eq)) = science_codegen::runtime::map_key_support(&key_cg) {
+            // Declared so the module has a `declare` for each: a
+            // `ScienceMapInfo` holding the address of a symbol nothing
+            // declared is a global that fails to link, which is
+            // `define_vtable`'s lesson one descriptor over.
+            self.declare(hash)?;
+            self.declare(eq)?;
+            return Ok((hash.to_string(), eq.to_string()));
+        }
+        self.intern_key_glue(key, 0)
+    }
+
+    /// What hashing and comparing one key part takes: a leaf this crate loads
+    /// itself, a `String` the runtime hashes, or a type with glue of its own.
+    fn key_part(&mut self, ty: Ty, depth: u32) -> Result<KeyPart, Unlowered> {
+        match self.cg_ty(ty)? {
+            CgTy::Struct { name, .. } if name == "ScienceString" => Ok(KeyPart::String),
+            cg @ (CgTy::Int(_) | CgTy::Bool | CgTy::Char) => {
+                Ok(KeyPart::Scalar(layout_of(self.target, &cg)))
+            }
+            CgTy::Struct { .. } | CgTy::Choice { .. } | CgTy::Nullable(_) => {
+                let (hash, eq) = self.intern_key_glue(ty, depth + 1)?;
+                Ok(KeyPart::Glue { hash, eq })
+            }
+            CgTy::Float(_) => Err(self.unhashable_key(
+                ty,
+                "it holds a float, and `NaN is NaN` is false, so `is` on it is not an equivalence",
+            )),
+            _ => Err(self.unhashable_key(
+                ty,
+                "it is neither an integer, `Bool`, `Char`, `String` nor an aggregate of those",
+            )),
+        }
+    }
+
+    /// The refusal for a key type no glue can be built for, naming it.
+    fn unhashable_key(&self, ty: Ty, why: &str) -> Unlowered {
+        Unlowered::new(format!(
+            "a `Map` or `Set` key of type `{}`, which has no `hash_fn`/`eq_fn` pair because {why}; \
+             the front end refuses such a key as `SC0548` wherever it can see the key's type, \
+             and a generic body's type parameter, instantiated here, is the place it cannot",
+            self.types.render(self.defs, ty)
+        ))
+    }
+
+    /// A key type's emitted `hash_fn` and `eq_fn`, interned by symbol the way
+    /// [`Lowerer::intern_drop_glue`] interns drop glue.
+    ///
+    /// # The decision
+    ///
+    /// **The hash is a fold over the key's parts, and the equality is the
+    /// conjunction of the parts' equalities**, with a part being a tuple
+    /// element, a record field, or the discriminant and then the active
+    /// variant's payload of a `choice` or a `T?`. Each part is hashed and
+    /// compared by its own type — an integer loaded at its own width, a
+    /// `String` through the runtime, an aggregate through its own glue — and
+    /// **never as bytes**, so a pad byte is never read and two equal values
+    /// built through different paths find each other whatever the allocator
+    /// left between their fields.
+    ///
+    /// The fold is FxHash's step, `acc = (acc.rotate_left(5) ^ part) *
+    /// 0x517cc1b727220a95`, emitted inline. A table already puts every hash
+    /// through splitmix64 before the low bits select a slot (`map.rs`), so the
+    /// fold needs to separate `(1, 2)` from `(2, 1)` and nothing more.
+    ///
+    /// # The reason the fold is inline and not a runtime call
+    ///
+    /// `codegen-and-linking.md` Decision 14: *"no entry point is added to
+    /// `science-rt` to make codegen simpler"*, and a rotate, a xor and a
+    /// multiply are the handful of instructions that sentence is about.
+    ///
+    /// # The cost
+    ///
+    /// `stdlib-core.md` §3.5 makes the hash *"runtime state"* that may change
+    /// in a patch release of `science-rt`. The leaves still are; the fold is
+    /// not — changing it means rebuilding with a new `sciencec`, not relinking
+    /// against a new runtime. Nothing observes the hash (§3.5's own argument:
+    /// iteration is in insertion order), so the difference is one of where a
+    /// future change is made, not of what any program prints.
+    fn intern_key_glue(&mut self, ty: Ty, depth: u32) -> Result<(String, String), Unlowered> {
+        if depth > MAX_TYPE_DEPTH {
+            return Err(Unlowered::new(
+                "a key type nested past this crate's depth bound while building its hash glue",
+            ));
+        }
+        // The instantiated name for a record or `choice`, the rendering for
+        // everything else — `intern_drop_glue`'s symbol rule, for its reason:
+        // `Pair[U8, Int]` and `Pair[String, Int]` hash differently.
+        let named = match self.types.kind(ty) {
+            TyKind::Named { def, args } => Some((*def, args.clone())),
+            _ => None,
+        };
+        let name = match &named {
+            Some((def, args)) => self.aggregate_members(*def, args)?.0,
+            None => self.types.render(self.defs, ty),
+        };
+        let base = mangle(&MonoKey::plain(&[name.as_str()]));
+        let (hash, eq) = (format!("{base}.hash"), format!("{base}.eq"));
+        if self.glue.contains(&hash) {
+            return Ok((hash, eq));
+        }
+        self.glue.insert(hash.clone());
+        self.glue.insert(eq.clone());
+
+        let layout = self.layout_of_ty(ty)?;
+        let shape = match (self.cg_ty(ty)?, &named) {
+            (CgTy::Int(_) | CgTy::Bool | CgTy::Char, _) => {
+                KeyShape::Fields(vec![(0, KeyPart::Scalar(layout.clone()))])
+            }
+            (CgTy::Nullable(_), _) => {
+                let TyKind::Nullable(payload) = *self.types.kind(ty) else {
+                    return Err(self.unhashable_key(ty, "its `T?` layout has another type"));
+                };
+                let Repr::Tagged { tag, payload_offset, variants } = &layout.repr else {
+                    return Err(self.unhashable_key(ty, "it is a niched `T?`"));
+                };
+                let part = self.key_part(payload, depth)?;
+                let tag = *tag;
+                let arms = variants
+                    .iter()
+                    .map(|place| match place.payload {
+                        Some(_) => (place.discriminant, vec![(*payload_offset, part.clone())]),
+                        None => (place.discriminant, Vec::new()),
+                    })
+                    .collect();
+                KeyShape::Tagged { tag, arms }
+            }
+            (_, Some((def, args))) if self.defs.get(*def).kind == DefKind::Record => {
+                self.refuse_user_eq_key(*def, ty)?;
+                let fields = self.record_field_types(*def, args)?;
+                let Repr::Aggregate { fields: places } = &layout.repr else {
+                    return Err(self.unhashable_key(ty, "its layout is not an aggregate"));
+                };
+                let places = places.clone();
+                let mut parts = Vec::with_capacity(fields.len());
+                for (field, place) in fields.iter().zip(places.iter()) {
+                    parts.push((place.offset, self.key_part(*field, depth)?));
+                }
+                KeyShape::Fields(parts)
+            }
+            (_, Some((def, args))) if self.defs.get(*def).kind == DefKind::Choice => {
+                self.refuse_user_eq_key(*def, ty)?;
+                let payloads = self.variant_payload_types(*def, args, &name)?;
+                let Repr::Tagged { tag, payload_offset, variants } = layout.repr.clone() else {
+                    return Err(self.unhashable_key(ty, "its layout is not a tagged union"));
+                };
+                let mut arms = Vec::with_capacity(variants.len());
+                for (place, field_tys) in variants.iter().zip(payloads.iter()) {
+                    let offsets: Vec<u64> = match field_tys.len() {
+                        0 => Vec::new(),
+                        // §3.3's un-wrapped payload: the one field sits at
+                        // `payload_offset` itself.
+                        1 => vec![payload_offset],
+                        _ => match place.payload.as_ref().map(|p| &p.repr) {
+                            Some(Repr::Aggregate { fields }) if fields.len() == field_tys.len() => {
+                                fields.iter().map(|f| payload_offset + f.offset).collect()
+                            }
+                            _ => {
+                                return Err(self.unhashable_key(
+                                    ty,
+                                    "a variant's payload layout disagrees with its declaration",
+                                ));
+                            }
+                        },
+                    };
+                    let mut parts = Vec::with_capacity(field_tys.len());
+                    for (field, offset) in field_tys.iter().zip(offsets) {
+                        parts.push((offset, self.key_part(*field, depth)?));
+                    }
+                    arms.push((place.discriminant, parts));
+                }
+                KeyShape::Tagged { tag, arms }
+            }
+            (_, None) => match self.types.kind(ty).clone() {
+                TyKind::Tuple(elements) => {
+                    let Repr::Aggregate { fields: places } = &layout.repr else {
+                        return Err(self.unhashable_key(ty, "its layout is not an aggregate"));
+                    };
+                    let places = places.clone();
+                    let mut parts = Vec::with_capacity(elements.len());
+                    for (element, place) in elements.iter().zip(places.iter()) {
+                        parts.push((place.offset, self.key_part(*element, depth)?));
+                    }
+                    KeyShape::Fields(parts)
+                }
+                _ => return Err(self.unhashable_key(ty, "it is no tuple, record or `choice`")),
+            },
+            _ => return Err(self.unhashable_key(ty, "it is no tuple, record or `choice`")),
+        };
+        let hash_body = self.key_hash_body(&shape)?;
+        let eq_body = self.key_eq_body(&shape)?;
+        let hash_sig = self.key_hash_signature(&hash);
+        let eq_sig = self.key_eq_signature(&eq);
+        self.glue_definitions.push((hash_sig, hash_body));
+        self.glue_definitions.push((eq_sig, eq_body));
+        Ok((hash, eq))
+    }
+
+    /// **A key whose type implements `Eq` by hand is refused, and not hashed
+    /// structurally.** `is` on such a type is the user's `eq`, and a structural
+    /// hash agrees with it only when that `eq` is structural too — an `eq`
+    /// that ignores a field, or compares case-insensitively, would put two
+    /// values that are `is`-equal in two different buckets. The front end
+    /// refuses the key as `SC0548` and says so; this is the backstop.
+    fn refuse_user_eq_key(&self, def: DefId, ty: Ty) -> Result<(), Unlowered> {
+        let Some(decls) = self.decls else { return Ok(()) };
+        let eq = self
+            .defs
+            .iter()
+            .find(|d| d.is_builtin() && d.kind == DefKind::Interface && d.name == "Eq")
+            .map(|d| d.id);
+        match eq {
+            Some(eq) if decls.methods().declares(self.types, ty, eq) => Err(self.unhashable_key(
+                ty,
+                &format!("`{}` implements `Eq` by hand", self.defs.get(def).name),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Every variant's payload types, in declaration order, with this use's
+    /// arguments bound — [`Lowerer::emit_choice_glue`]'s reading, for a
+    /// caller that needs every variant rather than the ones that own
+    /// something.
+    fn variant_payload_types(
+        &self,
+        def: DefId,
+        args: &[GenericArg],
+        name: &str,
+    ) -> Result<Vec<Vec<Ty>>, Unlowered> {
+        let variant_defs = self.choice_variants(def);
+        let decls = self.declarations()?;
+        let generics = variant_defs
+            .iter()
+            .find_map(|variant| decls.variant(*variant).map(|v| v.generics.clone()))
+            .unwrap_or_default();
+        let (_, env) = self.aggregate_env(def, &generics, args, &TyEnv::new())?;
+        let mono_payloads =
+            self.mono_aggregate_fields(def, args).and_then(|layout| match layout {
+                science_codegen::mono::AggregateLayout::Choice(payloads) => Some(payloads),
+                science_codegen::mono::AggregateLayout::Record(_) => None,
+            });
+        let no_binding = TyEnv::new();
+        let mut all = Vec::with_capacity(variant_defs.len());
+        for (index, variant) in variant_defs.iter().enumerate() {
+            let tys = match mono_payloads.and_then(|p| p.get(index)) {
+                Some(substituted) => substituted
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &no_binding, name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+                None => decls
+                    .variant(*variant)
+                    .ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "the variant `{name}.{}`, which the declaration table has no lowered \
+                             payload for",
+                            self.defs.get(*variant).name
+                        ))
+                    })?
+                    .payload
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &env, name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+            };
+            all.push(tys);
+        }
+        Ok(all)
+    }
+
+    /// `uint64_t (*)(const uint8_t *key)` — `EMITTED_FN_SIGNATURES`' `hash_fn`.
+    fn key_hash_signature(&self, symbol: &str) -> AbiSignature {
+        AbiSignature::science(
+            self.target,
+            symbol.to_string(),
+            layout_of(self.target, &CgTy::Int(IntTy::U64)),
+            vec![(
+                "key".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+                ParamAttrs::default(),
+            )],
+        )
+    }
+
+    /// `bool (*)(const uint8_t *a, const uint8_t *b)` — `EMITTED_FN_SIGNATURES`'
+    /// `eq_fn`.
+    fn key_eq_signature(&self, symbol: &str) -> AbiSignature {
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+        AbiSignature::science(
+            self.target,
+            symbol.to_string(),
+            layout_of(self.target, &CgTy::Bool),
+            vec![
+                ("a".to_string(), pointer.clone(), ParamAttrs::default()),
+                ("b".to_string(), pointer, ParamAttrs::default()),
+            ],
+        )
+    }
+
+    /// One part's hash, as a `u64` value: loaded and widened, or called for.
+    fn key_part_hash(
+        &mut self,
+        part: &KeyPart,
+        offset: u64,
+        next: &mut u32,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let mut fresh = || {
+            let id = ValueId(*next);
+            *next += 1;
+            id
+        };
+        let address = fresh();
+        insts.push(ExtInst::FieldAddr { dest: address, base: Operand::Param(0), offset });
+        let word = layout_of(self.target, &CgTy::Int(IntTy::U64));
+        match part {
+            KeyPart::Scalar(layout) => {
+                let loaded = fresh();
+                insts.push(ExtInst::LoadAt {
+                    dest: loaded,
+                    address: Operand::Value(address),
+                    layout: layout.clone(),
+                });
+                if layout.size >= word.size {
+                    return Ok(Operand::Value(loaded));
+                }
+                let widened = fresh();
+                insts.push(ExtInst::Convert {
+                    dest: widened,
+                    op: ConvOp::ZeroExtend,
+                    value: Operand::Value(loaded),
+                    from: layout.clone(),
+                    to: word,
+                });
+                Ok(Operand::Value(widened))
+            }
+            KeyPart::String => {
+                let ret = self.declare("science_string_hash")?.ret.clone();
+                let dest = fresh();
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(dest),
+                    callee: Callee::Runtime("science_string_hash"),
+                    args: vec![Operand::Value(address)],
+                    ret,
+                    sret_slot: None,
+                }));
+                Ok(Operand::Value(dest))
+            }
+            KeyPart::Glue { hash, .. } => {
+                let ret = self.key_hash_signature(hash).ret.clone();
+                let dest = fresh();
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(dest),
+                    callee: Callee::Science(hash.clone()),
+                    args: vec![Operand::Value(address)],
+                    ret,
+                    sret_slot: None,
+                }));
+                Ok(Operand::Value(dest))
+            }
+        }
+    }
+
+    /// FxHash's step: `(acc.rotate_left(5) ^ part) * 0x517cc1b727220a95`.
+    fn key_fold(
+        acc: Operand,
+        part: Operand,
+        next: &mut u32,
+        insts: &mut Vec<ExtInst>,
+    ) -> Operand {
+        let mut fresh = || {
+            let id = ValueId(*next);
+            *next += 1;
+            id
+        };
+        let (high, low, rotated, mixed, product) = (fresh(), fresh(), fresh(), fresh(), fresh());
+        let binary = |dest, op, lhs, rhs| ExtInst::Above(Inst::IntBinary { dest, op, lhs, rhs });
+        insts.push(binary(high, IntOp::Shl, acc.clone(), Operand::ConstInt(5)));
+        insts.push(binary(low, IntOp::LShr, acc, Operand::ConstInt(59)));
+        insts.push(binary(rotated, IntOp::Or, Operand::Value(high), Operand::Value(low)));
+        insts.push(binary(mixed, IntOp::Xor, Operand::Value(rotated), part));
+        insts.push(binary(
+            product,
+            IntOp::Mul,
+            Operand::Value(mixed),
+            Operand::ConstInt(0x517c_c1b7_2722_0a95),
+        ));
+        Operand::Value(product)
+    }
+
+    /// The `hash_fn` body for one key shape.
+    fn key_hash_body(&mut self, shape: &KeyShape) -> Result<ExtBody, Unlowered> {
+        let mut next = 0u32;
+        // The fold's starting value. Typed through `ExtInst::Const` so that
+        // the first rotate has a value operand to take its width from.
+        let word = layout_of(self.target, &CgTy::Int(IntTy::U64));
+        let seed = ValueId(next);
+        next += 1;
+        let mut entry = vec![ExtInst::Const {
+            dest: seed,
+            layout: word.clone(),
+            value: Operand::ConstInt(0x243f_6a88_85a3_08d3),
+        }];
+        match shape {
+            KeyShape::Fields(parts) => {
+                let mut acc = Operand::Value(seed);
+                for (offset, part) in parts {
+                    let hashed = self.key_part_hash(part, *offset, &mut next, &mut entry)?;
+                    acc = Self::key_fold(acc, hashed, &mut next, &mut entry);
+                }
+                Ok(ExtBody {
+                    blocks: vec![ExtBlock {
+                        id: BlockId(0),
+                        label: "entry".to_string(),
+                        insts: entry,
+                        terminator: Terminator::Return(Some(acc)),
+                    }],
+                })
+            }
+            KeyShape::Tagged { tag, arms } => {
+                // The discriminant is folded in first, so `Some(0)` and a
+                // payload-free variant whose neighbour holds `0` differ.
+                let tag_layout = layout_of(self.target, &CgTy::Int(*tag));
+                let loaded = ValueId(next);
+                next += 1;
+                entry.push(ExtInst::LoadAt {
+                    dest: loaded,
+                    address: Operand::Param(0),
+                    layout: tag_layout.clone(),
+                });
+                let tag_word = if tag_layout.size >= word.size {
+                    Operand::Value(loaded)
+                } else {
+                    let widened = ValueId(next);
+                    next += 1;
+                    entry.push(ExtInst::Convert {
+                        dest: widened,
+                        op: ConvOp::ZeroExtend,
+                        value: Operand::Value(loaded),
+                        from: tag_layout,
+                        to: word.clone(),
+                    });
+                    Operand::Value(widened)
+                };
+                let base = Self::key_fold(Operand::Value(seed), tag_word, &mut next, &mut entry);
+                // Block 1 returns the tag's hash alone; blocks 2.. are one per
+                // variant with a payload.
+                let mut blocks = Vec::new();
+                let mut switch_arms = Vec::new();
+                let mut arm_blocks = Vec::new();
+                for (discriminant, parts) in arms {
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let id = BlockId((arm_blocks.len() + 2) as u32);
+                    switch_arms.push((*discriminant, id));
+                    let mut insts = Vec::new();
+                    let mut acc = base.clone();
+                    for (offset, part) in parts {
+                        let hashed = self.key_part_hash(part, *offset, &mut next, &mut insts)?;
+                        acc = Self::key_fold(acc, hashed, &mut next, &mut insts);
+                    }
+                    arm_blocks.push(ExtBlock {
+                        id,
+                        label: format!("variant{discriminant}"),
+                        insts,
+                        terminator: Terminator::Return(Some(acc)),
+                    });
+                }
+                blocks.push(ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts: entry,
+                    terminator: Terminator::Switch {
+                        value: Operand::Value(loaded),
+                        arms: switch_arms,
+                        default: BlockId(1),
+                    },
+                });
+                blocks.push(ExtBlock {
+                    id: BlockId(1),
+                    label: "bare".to_string(),
+                    insts: Vec::new(),
+                    terminator: Terminator::Return(Some(base)),
+                });
+                blocks.extend(arm_blocks);
+                Ok(ExtBody { blocks })
+            }
+        }
+    }
+
+    /// One part's equality: an `i1` from a compare, or §3.1's `i8` `Bool`
+    /// from a call. `Terminator::Branch` takes either.
+    fn key_part_eq(
+        &mut self,
+        part: &KeyPart,
+        offset: u64,
+        next: &mut u32,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let mut fresh = || {
+            let id = ValueId(*next);
+            *next += 1;
+            id
+        };
+        let (left, right) = (fresh(), fresh());
+        insts.push(ExtInst::FieldAddr { dest: left, base: Operand::Param(0), offset });
+        insts.push(ExtInst::FieldAddr { dest: right, base: Operand::Param(1), offset });
+        let dest = fresh();
+        match part {
+            KeyPart::Scalar(layout) => {
+                let (a, b) = (fresh(), fresh());
+                insts.push(ExtInst::LoadAt {
+                    dest: a,
+                    address: Operand::Value(left),
+                    layout: layout.clone(),
+                });
+                insts.push(ExtInst::LoadAt {
+                    dest: b,
+                    address: Operand::Value(right),
+                    layout: layout.clone(),
+                });
+                insts.push(ExtInst::Above(Inst::Cmp {
+                    dest,
+                    op: CmpOp::Eq,
+                    signed: false,
+                    lhs: Operand::Value(a),
+                    rhs: Operand::Value(b),
+                }));
+            }
+            KeyPart::String => {
+                let ret = self.declare("science_string_eq")?.ret.clone();
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(dest),
+                    callee: Callee::Runtime("science_string_eq"),
+                    args: vec![Operand::Value(left), Operand::Value(right)],
+                    ret,
+                    sret_slot: None,
+                }));
+            }
+            KeyPart::Glue { eq, .. } => {
+                let ret = self.key_eq_signature(eq).ret.clone();
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(dest),
+                    callee: Callee::Science(eq.clone()),
+                    args: vec![Operand::Value(left), Operand::Value(right)],
+                    ret,
+                    sret_slot: None,
+                }));
+            }
+        }
+        Ok(Operand::Value(dest))
+    }
+
+    /// The `eq_fn` body for one key shape: every part compared in declaration
+    /// order, leaving for `false` at the first that differs.
+    ///
+    /// Block 0 is the entry, block 1 returns `true` and block 2 returns
+    /// `false`; every block after those is one part's comparison.
+    fn key_eq_body(&mut self, shape: &KeyShape) -> Result<ExtBody, Unlowered> {
+        let (yes, no) = (BlockId(1), BlockId(2));
+        let mut next = 0u32;
+        let mut blocks: Vec<ExtBlock> = Vec::new();
+        let chain = |this: &mut Self,
+                         parts: &[(u64, KeyPart)],
+                         blocks: &mut Vec<ExtBlock>,
+                         next: &mut u32|
+         -> Result<BlockId, Unlowered> {
+            // Allocated from the end so that `blocks[i].id == i` holds once
+            // the three fixed blocks are put in front.
+            if parts.is_empty() {
+                return Ok(yes);
+            }
+            let first = blocks.len() as u32 + 3;
+            for (index, (offset, part)) in parts.iter().enumerate() {
+                let mut insts = Vec::new();
+                let cond = this.key_part_eq(part, *offset, next, &mut insts)?;
+                let then_block = match index + 1 == parts.len() {
+                    true => yes,
+                    false => BlockId(first + index as u32 + 1),
+                };
+                blocks.push(ExtBlock {
+                    id: BlockId(first + index as u32),
+                    label: format!("part{}", first + index as u32),
+                    insts,
+                    terminator: Terminator::Branch { cond, then_block, else_block: no },
+                });
+            }
+            Ok(BlockId(first))
+        };
+        let entry = match shape {
+            KeyShape::Fields(parts) => {
+                let start = chain(self, parts, &mut blocks, &mut next)?;
+                ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts: Vec::new(),
+                    terminator: Terminator::Goto(start),
+                }
+            }
+            KeyShape::Tagged { tag, arms } => {
+                let tag_layout = layout_of(self.target, &CgTy::Int(*tag));
+                let (a, b, same) = (ValueId(next), ValueId(next + 1), ValueId(next + 2));
+                next += 3;
+                let insts = vec![
+                    ExtInst::LoadAt {
+                        dest: a,
+                        address: Operand::Param(0),
+                        layout: tag_layout.clone(),
+                    },
+                    ExtInst::LoadAt { dest: b, address: Operand::Param(1), layout: tag_layout },
+                    ExtInst::Above(Inst::Cmp {
+                        dest: same,
+                        op: CmpOp::Eq,
+                        signed: false,
+                        lhs: Operand::Value(a),
+                        rhs: Operand::Value(b),
+                    }),
+                ];
+                // The dispatch block switches on the shared discriminant; it
+                // is placed first among the chained blocks so its id is known.
+                let dispatch = BlockId(3);
+                blocks.push(ExtBlock {
+                    id: dispatch,
+                    label: "dispatch".to_string(),
+                    insts: Vec::new(),
+                    terminator: Terminator::Unreachable,
+                });
+                let mut switch_arms = Vec::new();
+                for (discriminant, parts) in arms {
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let start = chain(self, parts, &mut blocks, &mut next)?;
+                    switch_arms.push((*discriminant, start));
+                }
+                blocks[0].terminator = Terminator::Switch {
+                    value: Operand::Value(a),
+                    arms: switch_arms,
+                    default: yes,
+                };
+                ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Branch {
+                        cond: Operand::Value(same),
+                        then_block: dispatch,
+                        else_block: no,
+                    },
+                }
+            }
+        };
+        let mut all = vec![
+            entry,
+            ExtBlock {
+                id: yes,
+                label: "equal".to_string(),
+                insts: Vec::new(),
+                terminator: Terminator::Return(Some(Operand::ConstInt(1))),
+            },
+            ExtBlock {
+                id: no,
+                label: "unequal".to_string(),
+                insts: Vec::new(),
+                terminator: Terminator::Return(Some(Operand::ConstInt(0))),
+            },
+        ];
+        all.extend(blocks);
+        Ok(ExtBody { blocks: all })
     }
 
     /// The [`CgTy`] of a record or choice definition, for a descriptor.
