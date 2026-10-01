@@ -2006,14 +2006,7 @@ impl LlvmBackend {
             Callee::Runtime(symbol) => (*symbol).to_string(),
             Callee::Science(symbol) | Callee::Foreign(symbol) => symbol.clone(),
             Callee::Intrinsic(intrinsic) => {
-                return Err(BackendError::Unsupported {
-                    what: format!(
-                        "a call to `{}`: Decision 37's intrinsic whitelist is reachable from \
-                         above the line but nothing in stage 1 emits one, so the declaration is \
-                         not built yet",
-                        intrinsic.llvm_name()
-                    ),
-                });
+                return self.emit_intrinsic(state, dest, *intrinsic, args);
             }
             Callee::Indirect { .. } => unreachable!("returned above"),
         };
@@ -2025,6 +2018,102 @@ impl LlvmBackend {
         let fn_type = declared.fn_type;
         let sig = &declared.sig;
         self.emit_call_through(state, dest, function, fn_type, sig, args, ret, sret_slot)
+    }
+
+    /// A call to one of Decision 37's eleven whitelisted intrinsics,
+    /// `llvm.sqrt.f64` and its siblings, declared into the module on first use.
+    ///
+    /// # The decision
+    ///
+    /// **The overload is read off the first argument's type, and that argument
+    /// must be a value.** Every intrinsic on the whitelist is `T -> T`,
+    /// `(T, T) -> T` or `(T, T, T) -> T` over one float type, so one operand's
+    /// type names the whole signature. [`Callee::Intrinsic`] carries the
+    /// operation and not the width — the enum is `science-codegen`'s and is
+    /// shared with a classifier that has no width to give — and the operand
+    /// already knows it, which is [`LlvmBackend::value_is_float`]'s argument
+    /// for asking LLVM rather than carrying a second copy. A constant first
+    /// argument has no type to ask, so it is refused rather than guessed as
+    /// `double`; `crate::lower`'s one caller always loads the receiver first.
+    ///
+    /// **Declared by name, as `saturating_float_to_int` declares
+    /// `llvm.fptosi.sat`**, and with that function's stated cost: a misspelt
+    /// overload is an ordinary external symbol and fails at link time, so the
+    /// suffix is built from the type's kind rather than written out, and
+    /// `tests/math.rs` runs every one of the eight the prelude reaches.
+    fn emit_intrinsic(
+        &self,
+        state: &mut BodyState,
+        dest: &Option<ValueId>,
+        intrinsic: science_codegen::target::Intrinsic,
+        args: &[Operand],
+    ) -> Result<(), BackendError> {
+        let first = match args.first() {
+            Some(op @ Operand::Value(_)) => self.operand(state, op, None)?,
+            _ => {
+                return Err(BackendError::Unsupported {
+                    what: format!(
+                        "a call to `{}` whose first argument is not a value, so it names no \
+                         overload",
+                        intrinsic.llvm_name()
+                    ),
+                })
+            }
+        };
+        let ty = unsafe { sys::LLVMTypeOf(first) };
+        let suffix = match self.type_kind_of(ty) {
+            kind if kind == sys::type_kind::FLOAT => "f32",
+            kind if kind == sys::type_kind::DOUBLE => "f64",
+            _ => {
+                return Err(BackendError::Unsupported {
+                    what: format!(
+                        "a call to `{}` at {}: the whitelist is lowered for `F32` and `F64`",
+                        intrinsic.llvm_name(),
+                        self.describe_type(ty)
+                    ),
+                })
+            }
+        };
+        let mut values = Vec::with_capacity(args.len());
+        values.push(first);
+        for arg in &args[1..] {
+            let value = self.operand(state, arg, Some(ty))?;
+            if unsafe { sys::LLVMTypeOf(value) } != ty {
+                return Err(BackendError::Other(format!(
+                    "a call to `{}` whose arguments are not all {}",
+                    intrinsic.llvm_name(),
+                    self.describe_type(ty)
+                )));
+            }
+            values.push(value);
+        }
+        let symbol = format!("{}.{suffix}", intrinsic.llvm_name());
+        let mut params = vec![ty; values.len()];
+        let fn_type =
+            unsafe { sys::LLVMFunctionType(ty, params.as_mut_ptr(), params.len() as c_uint, 0) };
+        let module = self.module_ref()?;
+        let c_name = cstr(&symbol);
+        let existing = unsafe { sys::LLVMGetNamedFunction(module.raw(), c_name.as_ptr()) };
+        let function = if existing.is_null() {
+            unsafe { sys::LLVMAddFunction(module.raw(), c_name.as_ptr(), fn_type) }
+        } else {
+            existing
+        };
+        let name = cstr(&dest.map(|d| format!("v{}", d.0)).unwrap_or_default());
+        let result = unsafe {
+            sys::LLVMBuildCall2(
+                self.builder.raw(),
+                fn_type,
+                function,
+                values.as_mut_ptr(),
+                values.len() as c_uint,
+                name.as_ptr(),
+            )
+        };
+        if let Some(dest) = dest {
+            state.values.insert(dest.0, result);
+        }
+        Ok(())
     }
 
     /// The half of [`LlvmBackend::emit_call`] that is the same whether the

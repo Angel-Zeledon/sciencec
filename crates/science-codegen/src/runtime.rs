@@ -659,7 +659,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 85 entry points. §2.6: *"They are the whole list."*
+/// The 104 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -894,6 +894,42 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // arm is the one caller.
     RuntimeFn { symbol: "science_libm_pow", params: &[RtParam::F64, RtParam::F64], ret: RtRet::F64 },
     RuntimeFn { symbol: "science_ipow_i64", params: &[N, N], ret: RtRet::Int },
+    // **Eighty-eight to one hundred and four: `stdlib-core.md` §8.1's Level 1
+    // math.** Sixteen are the transcendental methods — `cbrt`, `hypot`,
+    // `exp`, `ln`, `log2`, `log10`, the six circular and three hyperbolic
+    // functions, and `atan2` — under the `science_libm_<name>` spelling
+    // `target::lower_math_call` already gives every name off Decision 37's
+    // whitelist, and met Decision 14 exactly as `science_libm_pow` did: a
+    // libm call is not an instruction sequence codegen could emit. `F32`
+    // widens to them, as it does to `science_libm_pow`, so there is one
+    // symbol per function and not two. The seventeenth is
+    // `science_rem_euclid_i64`: `Int.rem_euclid`'s zero divisor is a panic,
+    // a panic is a branch, and Decision 8 keeps a branch out of a method
+    // call's one block — `science_ipow_i64`'s loop, one shape over.
+    //
+    // **What is *not* here is the larger half.** `sqrt`, `abs`, `floor`,
+    // `ceil`, `trunc`, `round`, `min` and `max` are Decision 37's whitelisted
+    // intrinsics, and `sign`, `fract`, `clamp`, `rem_euclid` on a float,
+    // `to_degrees`, `to_radians`, the predicates and every integer method
+    // but two are a few compares, selects and arithmetic emitted inline —
+    // `science-codegen-llvm`'s `Lowerer::math_method` has the list.
+    RuntimeFn { symbol: "science_libm_cbrt", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_exp", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_ln", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_log2", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_log10", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_sin", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_cos", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_tan", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_asin", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_acos", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_atan", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_sinh", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_cosh", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_tanh", params: &[RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_hypot", params: &[RtParam::F64, RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_libm_atan2", params: &[RtParam::F64, RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_rem_euclid_i64", params: &[N, N], ret: RtRet::Int },
 ];
 
 /// Look an entry point up by symbol.
@@ -1232,9 +1268,24 @@ mod tests {
     /// literal. The bundled `os` module is its caller — a string out of the
     /// runtime crosses an `extern` boundary as copied bytes — and UTF-8
     /// validation is a loop, not an instruction sequence.
+    ///
+    /// **One hundred and four**: `stdlib-core.md` §8.1's Level 1 math. Sixteen
+    /// `science_libm_*` symbols — `cbrt`, `hypot`, `exp`, `ln`, `log2`,
+    /// `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`,
+    /// `cosh`, `tanh` — joined because a libm call is not an instruction
+    /// sequence codegen could emit, and Decision 37 forbids the `llvm.sin`
+    /// that would look like one; `science_libm_pow` is the precedent, and
+    /// `F64.pow` reuses it rather than adding a seventeenth. And
+    /// `science_rem_euclid_i64`, because `Int.rem_euclid(0)` must panic and a
+    /// panic is a branch a method call's one block cannot hold —
+    /// `science_ipow_i64`'s reason. Thirty-five methods on two float widths
+    /// and seven on `Int` cost seventeen symbols because the rest are
+    /// whitelisted intrinsics or a few inline instructions, and that ratio is
+    /// Decision 14 working rather than being worked around. All seventeen
+    /// return a scalar, so the `sret` lists did not move.
     #[test]
-    fn there_are_eighty_seven_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 87, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_four_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 104, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

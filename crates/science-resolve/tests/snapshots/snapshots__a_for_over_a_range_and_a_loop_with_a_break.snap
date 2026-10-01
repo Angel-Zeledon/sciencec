@@ -2,32 +2,32 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #758 @0..87
-  Fn `sum` #759 @0..87
+Module `main` #939 @0..87
+  Fn `sum` #940 @0..87
     params
-      Param `xs` #760 @71..81
+      Param `xs` #941 @71..81
         type: Borrowed @71..78
           Path -> `Array` #18 @71..76
             generics
               Path -> `I64` #5 @67..70
     ret: Path -> `I64` #5 @82..85
     body: Block @0..87
-      Let `total` #761 mutable @0..7
+      Let `total` #942 mutable @0..7
         value: Int 0 @0..1
       Borrowed @8..19
-        Path -> `xs` #760 @8..10
+        Path -> `xs` #941 @8..10
       For @20..43
-        pattern: Binding `i` #762 @30..31
+        pattern: Binding `i` #943 @30..31
         iter: Range @32..39
           start: Int 0 @32..33
           end: Int 10 @34..36
         body: Block @20..29
           Assign @20..27
-            target: Path -> `total` #761 @20..25
-            value: Path -> `i` #762 @26..27
+            target: Path -> `total` #942 @20..25
+            value: Path -> `i` #943 @26..27
       tail: Loop @44..62
         body: Block @44..57
           Break @44..55
-            Path -> `total` #761 @44..49
+            Path -> `total` #942 @44..49
 --- diagnostics ---
 (none)

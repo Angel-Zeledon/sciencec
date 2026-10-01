@@ -968,6 +968,82 @@ macro_rules! chain_adapter {
     };
 }
 
+/// `stdlib-core.md` §8.1's thirty-five, on one float width.
+///
+/// **A macro because the two blocks differ in one name and nothing else.**
+/// `F64 has:` and `F32 has:` are the same thirty-five signatures with the
+/// width substituted, and two hand-copied tables of thirty-five rows are two
+/// places for a parameter to be `F64` where it should say `F32`, verifier-clean
+/// and wrong. §8.1's order, group by group.
+macro_rules! float_methods {
+    ($float:ident) => {{
+        const T: Ty = Ty::Name(stringify!($float));
+        const fn unary(name: &'static str) -> Method {
+            Method { name, generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(T) }
+        }
+        const fn binary(name: &'static str, params: &'static [(&'static str, Ty)]) -> Method {
+            Method { name, generics: &[], recv: Some(SelfKind::Shared), params, ret: Some(T) }
+        }
+        const fn predicate(name: &'static str) -> Method {
+            Method { name, generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) }
+        }
+        &[
+            // Elementary.
+            unary("abs"),
+            unary("sign"),
+            unary("floor"),
+            unary("ceil"),
+            unary("round"),
+            unary("trunc"),
+            unary("fract"),
+            binary("min", &[("other", T)]),
+            binary("max", &[("other", T)]),
+            Method {
+                name: "clamp",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("low", T), ("high", T)],
+                ret: Some(T),
+            },
+            binary("rem_euclid", &[("divisor", T)]),
+            unary("sqrt"),
+            unary("cbrt"),
+            binary("hypot", &[("other", T)]),
+            unary("exp"),
+            unary("ln"),
+            unary("log2"),
+            unary("log10"),
+            binary("pow", &[("exponent", T)]),
+            // Trigonometry.
+            unary("sin"),
+            unary("cos"),
+            unary("tan"),
+            unary("asin"),
+            unary("acos"),
+            unary("atan"),
+            binary("atan2", &[("x", T)]),
+            unary("sinh"),
+            unary("cosh"),
+            unary("tanh"),
+            unary("to_degrees"),
+            unary("to_radians"),
+            // Predicates. `is_close` is §8.4's *"relative comparison with the
+            // library's default tolerances"*; the tolerance is decided where
+            // it is lowered.
+            predicate("is_nan"),
+            predicate("is_infinite"),
+            predicate("is_finite"),
+            Method {
+                name: "is_close",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("other", T)],
+                ret: Some(BOOL),
+            },
+        ]
+    }};
+}
+
 /// The prelude's blocks with methods in them.
 ///
 /// **Every one of these is `open`**: the set of methods declared on a prelude
@@ -2091,7 +2167,140 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Take"),
     chain_adapter!("Skip"),
     chain_adapter!("SortedBy"),
+    // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
+    //
+    // **Methods, and §8.2 is why.** *"The Level 1 subset is methods on `F32`,
+    // `F64` and the integer types"*: a free `abs`, `min` or `round` would be a
+    // global name forever, and as methods they cost none. §8.1's table is the
+    // list, transcribed whole: nineteen elementary names, twelve
+    // trigonometric, four predicates — thirty-five, which is §9's *"~35
+    // methods"* exactly. Every receiver is `self`, which revision 2 makes a
+    // shared borrow, because §8.4 writes `def sqrt(self) -> F64` and a
+    // by-value receiver would be `self: Self`; the backend reads the scalar
+    // through it, which is one load of a value already in a register's reach.
+    //
+    // **Names and parameter types come from the notes; parameter names are
+    // decided here** where no note gives one, except `atan2`'s `x`, which
+    // §8.4 writes: `y.atan2(x)` is the quadrant-correct arctangent of `y / x`.
+    //
+    // **What each one means at the edges is decided once, in
+    // `science-codegen-llvm`'s `Lowerer::math_method`**, which is where the
+    // NaN rule of `min`/`max`, the tie rule of `round` and the overflow rule
+    // of `Int.abs` are written beside the instruction that implements them.
+    // The short form, for a reader of this table: `min`/`max` are IEEE-754
+    // `minimum`/`maximum` (NaN propagates, `-0.0 < +0.0`), `round` is
+    // half-away-from-zero (`intrinsics-math-physics.md` §3.2's `llvm.round`
+    // row), `sign` of `±0.0` and of NaN is the argument itself, and the
+    // integer forms wrap exactly as `+`, `-` and `**` already do.
+    Block { ty: "F64", generics: &[], interface: None, assoc: &[], methods: float_methods!(F64) },
+    Block { ty: "F32", generics: &[], interface: None, assoc: &[], methods: float_methods!(F32) },
+    // **`I64`, which is `Int`** — [`ALIASED_PRIMITIVES`] makes them one
+    // definition, so this block is `Int has:` as well. §8.1 does not
+    // enumerate an integer surface; these seven are the names on its list
+    // that mean something on an integer, and `intrinsics-math-physics.md`
+    // §4.3's integer table names the same seven in its *Arithmetic* row
+    // (with `div_euclid`, which §8.1 does not have and [`UNWRITTEN`] holds).
+    //
+    // `I8`…`I32` and the unsigned widths are **not** given the block yet, and
+    // stay in [`WHOLLY_OPEN`] so that `x.abs()` on an `I32` is silence rather
+    // than a false `SC0532`: the note gives the names to *"the integer
+    // types"*, and only `Int` is transcribed.
+    Block {
+        ty: "I64",
+        generics: &[],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method { name: "abs", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method { name: "sign", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method { name: "min", generics: &[], recv: Some(SelfKind::Shared), params: &[("other", INT)], ret: Some(INT) },
+            Method { name: "max", generics: &[], recv: Some(SelfKind::Shared), params: &[("other", INT)], ret: Some(INT) },
+            Method {
+                name: "clamp",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("low", INT), ("high", INT)],
+                ret: Some(INT),
+            },
+            Method {
+                name: "rem_euclid",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("divisor", INT)],
+                ret: Some(INT),
+            },
+            Method {
+                name: "pow",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("exponent", INT)],
+                ret: Some(INT),
+            },
+        ],
+    },
 ];
+
+/// The method names `stdlib-core.md` §8.1 gives a numeric type, with the
+/// numeric types they apply to. Read by `science-types` to decide whether a
+/// type-qualified name is one of §8.1's constants, and kept here because this
+/// is the file that transcribes §8.
+///
+/// **The constants are not declarations, and §8.4 says why.** `const PI: F64`
+/// inside `F64 has:` is *"an associated constant, which §4.4 does not yet
+/// permit in a `has:` block — the one language ask in this note (§11)"*. The
+/// HIR has no associated-constant item for a [`Block`] to hold, and inventing
+/// one for eight names would be the language feature §11 asks the core spec
+/// for, decided by a table. So the spelling §8 gives — `F64.PI`, a field read
+/// on the type — is answered where a field read on a type is already
+/// answered: `science-types`' `field`, which builds the literal this table
+/// gives the value of, beside `Format.Json`'s variant-as-value arm. Nothing
+/// below `science-types` sees anything but a float or integer literal.
+///
+/// **`MIN` is the most negative finite value, not the smallest positive one**,
+/// which is Rust's and NumPy's `finfo.min` reading and not C's `DBL_MIN`.
+/// `intrinsics-math-physics.md` §4.3 calls `MIN` *"the most-confused constant
+/// in every language that has both"* and adds `MIN_POSITIVE` for C's meaning;
+/// that name is not §8.1's and is not here.
+///
+/// `Int` has `MIN` and `MAX` only: `PI` on an integer is not a value.
+pub const NUMERIC_CONSTANTS: &[(&str, &str, NumericConstant)] = &[
+    ("F64", "PI", NumericConstant::Float(std::f64::consts::PI)),
+    ("F64", "E", NumericConstant::Float(std::f64::consts::E)),
+    ("F64", "TAU", NumericConstant::Float(std::f64::consts::TAU)),
+    ("F64", "INFINITY", NumericConstant::Float(f64::INFINITY)),
+    ("F64", "NAN", NumericConstant::Float(f64::NAN)),
+    ("F64", "EPSILON", NumericConstant::Float(f64::EPSILON)),
+    ("F64", "MIN", NumericConstant::Float(f64::MIN)),
+    ("F64", "MAX", NumericConstant::Float(f64::MAX)),
+    // Each `F32` value is the `F32` constant widened, which is exact; the
+    // backend narrows it back with the rounding that gives the same bits.
+    ("F32", "PI", NumericConstant::Float(std::f32::consts::PI as f64)),
+    ("F32", "E", NumericConstant::Float(std::f32::consts::E as f64)),
+    ("F32", "TAU", NumericConstant::Float(std::f32::consts::TAU as f64)),
+    ("F32", "INFINITY", NumericConstant::Float(f64::INFINITY)),
+    ("F32", "NAN", NumericConstant::Float(f64::NAN)),
+    ("F32", "EPSILON", NumericConstant::Float(f32::EPSILON as f64)),
+    ("F32", "MIN", NumericConstant::Float(f32::MIN as f64)),
+    ("F32", "MAX", NumericConstant::Float(f32::MAX as f64)),
+    ("I64", "MIN", NumericConstant::Int(i64::MIN)),
+    ("I64", "MAX", NumericConstant::Int(i64::MAX)),
+];
+
+/// One of [`NUMERIC_CONSTANTS`]' values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NumericConstant {
+    /// A float constant, at `f64` precision whatever its type.
+    Float(f64),
+    /// An integer constant.
+    Int(i64),
+}
+
+/// The constant `ty.name` stands for, if §8.1 gives one. `ty` is the
+/// canonical name — `I64` and `F64`, never their aliases — which is what
+/// `Def::name` holds for both spellings.
+pub fn numeric_constant(ty: &str, name: &str) -> Option<NumericConstant> {
+    NUMERIC_CONSTANTS.iter().find(|(t, n, _)| *t == ty && *n == name).map(|(_, _, value)| *value)
+}
 
 /// The surface a note gives a prelude type and [`BLOCKS`] has not transcribed.
 ///
@@ -2248,6 +2457,37 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Take", CHAIN_UNWRITTEN),
     ("Skip", CHAIN_UNWRITTEN),
     ("SortedBy", CHAIN_UNWRITTEN),
+    // `F64` and `F32` — the eleven names `intrinsics-math-physics.md` §4.2's
+    // Decision 8 adds to §8.1's prelude (P1–P3), which [`BLOCKS`] does not
+    // transcribe because the task that wrote the block was §8.1's list and
+    // not that note's extension of it. `MIN_POSITIVE` is the twelfth and is
+    // a constant, so it is not a method name to be silent about.
+    ("F64", FLOAT_EXTENSIONS),
+    ("F32", FLOAT_EXTENSIONS),
+    // `Int` — the same note's §4.3 integer table, less the seven [`BLOCKS`]
+    // has: `div_euclid`, the bit operations and the overflow discipline.
+    (
+        "I64",
+        &[
+            "div_euclid",
+            "count_ones",
+            "count_zeros",
+            "leading_zeros",
+            "trailing_zeros",
+            "reverse_bytes",
+            "rotate_left",
+            "rotate_right",
+            "wrapping_add",
+            "wrapping_sub",
+            "wrapping_mul",
+            "checked_add",
+            "checked_sub",
+            "checked_mul",
+            "saturating_add",
+            "saturating_sub",
+            "saturating_mul",
+        ],
+    ),
 ];
 
 /// `collections-and-chains.md` §1.4's names that no chain type in [`BLOCKS`]
@@ -2296,6 +2536,22 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "last",
     "group",
     "tally",
+];
+
+/// `intrinsics-math-physics.md` §4.3's float names beyond `stdlib-core.md`
+/// §8.1 — see [`UNWRITTEN`]'s `F64` row.
+const FLOAT_EXTENSIONS: &[&str] = &[
+    "exp2",
+    "exp10",
+    "expm1",
+    "ln1p",
+    "asinh",
+    "acosh",
+    "atanh",
+    "copysign",
+    "round_ties_even",
+    "div_euclid",
+    "fma",
 ];
 
 /// Prelude types whose method surface is open *entirely*, with the reason.
@@ -2365,8 +2621,17 @@ const WHOLLY_OPEN: &[&str] = &[
     // which is what held them open, is declared now.
     // The numeric primitives, `Bool` and `Char`, which `Clone.clone` gave an
     // index entry and therefore a closed surface they have no note for.
-    "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F16", "BF16", "F32", "F64", "Int",
-    "Float", "Bool", "Char",
+    //
+    // **`F64`, `F32` and `I64` left this row with `stdlib-core.md` §8**,
+    // which is the note this comment was waiting for: §8.1 gives each of
+    // them a surface and [`BLOCKS`] transcribes it, so `x.sqroot()` on an
+    // `F64` is `SC0532` now, as it is on a `Doc`. (`Int` and `Float` were
+    // never reached — `Def::name` is the canonical width — and went with
+    // them.) The names a later note adds on top of §8.1 are [`UNWRITTEN`]'s
+    // rows. The narrower integer widths stay, because §8.2 gives the names to
+    // *"the integer types"* and only `Int` is transcribed: closing `I32` would
+    // make `x.abs()` on it a false `SC0532`.
+    "I8", "I16", "I32", "U8", "U16", "U32", "U64", "F16", "BF16", "Bool", "Char",
 ];
 
 /// Whether *"this prelude type has no method of that name"* is a statement

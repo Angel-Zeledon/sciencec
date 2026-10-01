@@ -555,6 +555,22 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   write(\"partial\")\n\
          \x20   flush()\n",
     ),
+    // `math.rs`, reduced: `stdlib-core.md` §8.1's sixteen library methods —
+    // one call each to `science_libm_cbrt` … `science_libm_tanh`, `hypot`
+    // and `atan2` — and `Int.rem_euclid`'s `science_rem_euclid_i64`. The
+    // symbols and their callers (`Lowerer::lower_math_method`) arrived in one
+    // change, so this closes nothing on `ALLOWLIST`; it is here so that a
+    // method whose lowering stops reaching its symbol fails by name.
+    (
+        "level_one_math",
+        "def main():\n\
+         \x20   let x: F64 be 0.5\n\
+         \x20   print(x.cbrt() + x.exp() + x.ln() + x.log2() + x.log10())\n\
+         \x20   print(x.sin() + x.cos() + x.tan() + x.asin() + x.acos() + x.atan())\n\
+         \x20   print(x.sinh() + x.cosh() + x.tanh() + x.hypot(2.0) + x.atan2(2.0))\n\
+         \x20   let n be -7\n\
+         \x20   print(n.rem_euclid(3))\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over

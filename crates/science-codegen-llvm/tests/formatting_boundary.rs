@@ -172,6 +172,11 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// **And sixteen — or eighteen, with eighty-seven rows.** `science_string_from_utf8`, §6.9's
 /// `String.from_bytes`, returns `(String, TextError?)`: thirty-two bytes,
 /// `science_read_file`'s case, a hidden pointer on every convention.
+///
+/// **Still sixteen — or eighteen — with one hundred and four rows.**
+/// `stdlib-core.md` §8.1's seventeen math entry points each return an `f64`
+/// or an `Int`, in a register on every convention, so the table grew by
+/// seventeen and this set by none.
 #[test]
 fn the_derived_sret_set_is_sixteen_and_eighteen_on_windows_and_has_moved_eight_times() {
     let triple = Triple::host().expect("a supported host");
@@ -186,7 +191,7 @@ fn the_derived_sret_set_is_sixteen_and_eighteen_on_windows_and_has_moved_eight_t
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 87, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 104, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

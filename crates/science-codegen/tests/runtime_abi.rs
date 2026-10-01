@@ -378,7 +378,21 @@ fn nothing_outside_the_table_is_callable() {
     // instruction sequence, and it is the only way a `String` is built from
     // bytes a program did not write as a literal — the bundled `os` module's
     // way back from the runtime.
-    assert_eq!(RUNTIME.len(), 87);
+    //
+    // **One hundred and four.** `stdlib-core.md` §8.1's Level 1 math added
+    // seventeen. Sixteen are `science_libm_*` — `cbrt`, `hypot`, `exp`, `ln`,
+    // `log2`, `log10`, the six circular and three hyperbolic functions and
+    // `atan2` — and they come through `science_libm_pow`'s door exactly: a
+    // libm call is not an instruction sequence codegen could emit, and
+    // Decision 37 forbids the `llvm.sin` that would pretend to be one. The
+    // seventeenth, `science_rem_euclid_i64`, is `science_ipow_i64`'s case:
+    // `Int.rem_euclid(0)` panics, a panic is a branch, and a method call is one
+    // block. What did *not* join is the point of the rule: `abs`, `floor`,
+    // `min` and the rest of the whitelist are intrinsics, and `sign`, `clamp`,
+    // `fract`, the predicates and five of `Int`'s seven methods are a few
+    // inline compares and selects — the tempting list below grows by the
+    // names that were kept out.
+    assert_eq!(RUNTIME.len(), 104);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [
@@ -387,6 +401,13 @@ fn nothing_outside_the_table_is_callable() {
         "science_bounds_check",
         "science_int_add",
         "science_string_format",
+        "science_libm_sqrt",
+        "science_libm_abs",
+        "science_libm_floor",
+        "science_libm_min",
+        "science_float_sign",
+        "science_float_is_nan",
+        "science_int_abs",
     ] {
         assert!(runtime_fn(tempting).is_none(), "{tempting} is inline, per §2.6");
     }

@@ -1246,19 +1246,38 @@ def scratch(bytes: &Array[U8]) -> Int:
 /// A prelude head the index has **no entry for at all** — `Methods::receiver`'s
 /// own arm, one step before `surface_is_closed`.
 ///
-/// `builtins.rs` declares blocks on five of its types and on none of the
-/// numeric primitives, so `I64` is a receiver this compiler cannot speak for
-/// rather than one it answers no about. Accepting `DefKind::Primitive` at
-/// `type_receiver` does not change that, and this is the test that says so.
+/// `builtins.rs` declares no block on `U32`, so it is a receiver this compiler
+/// cannot speak for rather than one it answers no about. Accepting
+/// `DefKind::Primitive` at `type_receiver` does not change that, and this is
+/// the test that says so.
+///
+/// **This test was written against `I64`, and `stdlib-core.md` §8 moved it.**
+/// §8.1 gave `I64` (which is `Int`) a surface and `builtins.rs` transcribes
+/// it, so `I64` left `WHOLLY_OPEN` and `I64.new()` is now a name nothing gives
+/// it — the second test below. The narrower widths are still open, because
+/// §8.2 gives its names to *"the integer types"* and only `Int` is
+/// transcribed, so `U32` keeps this test's claim exactly as it was made.
 #[test]
 fn a_prelude_type_with_no_declared_block_is_still_a_receiver_nothing_is_known_about() {
+    let checked = check(
+        "\
+def zero() -> U32:
+    U32.new()
+",
+    );
+    checked.assert_clean();
+}
+
+/// The other half: a numeric head §8 closed answers no.
+#[test]
+fn a_numeric_type_section_8_gives_a_surface_answers_no_about_another_name() {
     let checked = check(
         "\
 def zero() -> I64:
     I64.new()
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![532]);
 }
 
 /// `Found::Mismatched` through a prelude type: the name is there and the form

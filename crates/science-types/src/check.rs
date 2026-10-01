@@ -2574,6 +2574,34 @@ impl<'a> BodyChecker<'a> {
             let id = self.body.push_expr(ExprKind::Item(variant), ty, span);
             return Typed { id, ty: InferTy::Known(ty) };
         }
+        // `F64.PI`, `stdlib-core.md` §8.1's constants: a field read on a
+        // numeric *type*, which reaches here for `Format.Json`'s reason — the
+        // parser cannot tell a type from a value, and the resolver leaves a
+        // dotted name that does not start with a module alone.
+        //
+        // **Built as the literal it stands for, and nothing below this phase
+        // learns the name.** §8.4 writes `const PI: F64` inside `F64 has:` and
+        // says in the same breath that §4.4 does not permit it — the
+        // associated constant is §11's one language ask, unbuilt. What can be
+        // built honestly is the *spelling* the note uses, answered by a table
+        // (`builtins::NUMERIC_CONSTANTS`) of eight values per float width and
+        // two for `Int`: a suffixed literal, typed by its suffix through the
+        // ordinary `literal` arm, so MIR and the backend see `3.14…f64` and
+        // have no new construct to lower. The cost is that a user's own
+        // `has:` block still cannot declare one; that is §11's to give.
+        match self.numeric_constant(base, name) {
+            Some(Ok(constant)) => return self.literal(&constant, span),
+            // `Int.PI`, or `F64.pi`: a numeric type with §8.1's table and
+            // nothing of that name in it. Said, rather than left to `synth`,
+            // which would read a type in value position as `Ty::ERROR` with
+            // no diagnostic — `F64.PI` itself reached the backend that way
+            // before the table existed, as an `SC0400` about a hole.
+            Some(Err(ty)) => {
+                self.diagnostics.push(no_such_field(name.span, &name.name, ty));
+                return self.error_expr(span);
+            }
+            None => {}
+        }
         let base = self.synth(base);
         // `coords.first` in the same statement as `let coords be Pair(first:
         // 3, second: 4)`: `coords`'s type is a [`PendingNamed`], not a `Ty`
@@ -4249,7 +4277,26 @@ impl<'a> BodyChecker<'a> {
         // and got `Callee::Missing` — silently, because a receiver that never
         // settled is not a name the lookup can report as unknown. Settling it
         // here is the same commitment `let pair: Pair[I64, String]` makes.
-        self.settle_receiver(recv.ty);
+        //
+        // **A bare numeric literal is settled here too**, through
+        // `settle_open`, which defaults it as it already does for a `match`
+        // scrutinee. `stdlib-core.md` §8.2 made `sqrt` a method, so `let y be
+        // 2.0` followed by `y.sqrt()` is the commonest receiver in numerical
+        // code — and with `settle_receiver` alone it asked its question of a
+        // variable with no head and got `Callee::Missing`, silently, which the
+        // backend then refused as *"a method call the front end resolved to
+        // no method at all"*. The cost is Decision 2's default taken at the
+        // call rather than at the end of the body: `let t be 0` then
+        // `t.max(1)` commits `t` to `Int` there, and a later `let u: F64 be
+        // t` is a mismatch rather than a float. Rust refuses the call itself
+        // (*"can't call method on ambiguous numeric type"*); committing is
+        // the kinder of the two and is what an annotation would have said.
+        match self.infer.resolve(recv.ty) {
+            InferTy::Var(var) => {
+                self.settle_open(var);
+            }
+            InferTy::Known(_) => {}
+        }
         let recv_ty = self.known_or_error(recv.ty);
         let revealed = self.revealed(recv_ty, span);
         let self_ty = self.receiver_self_ty(revealed, span);
@@ -4973,6 +5020,52 @@ impl<'a> BodyChecker<'a> {
     /// Before [`BodyChecker::type_receiver`], because a variant is not a method
     /// and asking the method index about it would answer `SC0532` for a
     /// construct that is not a method call at all.
+    /// `F64.PI` as the literal it names, if `receiver` is a prelude numeric
+    /// type and `name` one of `stdlib-core.md` §8.1's constants on it — see
+    /// [`BodyChecker::field`]'s arm for why this is a literal.
+    ///
+    /// **An integer constant is its two's-complement bits.** `Literal::Int`
+    /// holds a `u128` because the lexer never sees a sign, and `Int.MIN` has
+    /// no unsigned spelling; its bit pattern does, and the backend builds an
+    /// `I64` constant from the low sixty-four bits of what it is given — the
+    /// same bits `-9223372036854775808` would have, with no negation to
+    /// overflow on the way.
+    ///
+    /// `Some(Err(ty))` is a numeric type §8.1 gives constants to, read with a
+    /// name that is not one of them; `ty` is the type's name for the message.
+    fn numeric_constant(
+        &self,
+        receiver: &hir::Expr,
+        name: &hir::Ident,
+    ) -> Option<Result<Literal, &'static str>> {
+        let hir::ExprKind::Path { res: Res::Def(def), .. } = &receiver.kind else {
+            return None;
+        };
+        let def = self.defs.get(*def);
+        if def.kind != hir::DefKind::Primitive || !def.is_builtin() {
+            return None;
+        }
+        let (suffix, ty) = match def.name.as_str() {
+            "F64" => (NumSuffix::F64, "F64"),
+            "F32" => (NumSuffix::F32, "F32"),
+            "I64" => (NumSuffix::I64, "I64"),
+            _ => return None,
+        };
+        let Some(constant) = science_resolve::builtins::numeric_constant(ty, &name.name) else {
+            return Some(Err(ty));
+        };
+        Some(Ok(match constant {
+            science_resolve::builtins::NumericConstant::Float(value) => {
+                Literal::Float { value, suffix: Some(suffix) }
+            }
+            science_resolve::builtins::NumericConstant::Int(value) => Literal::Int {
+                value: u128::from(value as u64),
+                base: science_lexer::IntBase::Dec,
+                suffix: Some(suffix),
+            },
+        }))
+    }
+
     fn variant_receiver(&self, receiver: &hir::Expr, name: &hir::Ident) -> Option<DefId> {
         let hir::ExprKind::Path { res: Res::Def(def), .. } = &receiver.kind else {
             return None;

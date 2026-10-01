@@ -225,7 +225,7 @@
 use std::collections::BTreeMap;
 
 use science_codegen::abi::{
-    AbiParam, AbiSignature, ArgClass, BorrowKind, ParamAttrs, ReturnClass, borrow_attrs,
+    AbiParam, AbiSignature, ArgClass, BorrowKind, ParamAttrs, RegClass, ReturnClass, borrow_attrs,
     classify_extern_argument, classify_extern_return,
 };
 use science_codegen::backend::{
@@ -234,7 +234,7 @@ use science_codegen::backend::{
 use science_codegen::descriptor::{DescriptorTable, StringLiteral, TypeInfo, Vtable};
 use science_codegen::diagnostics::construct_not_lowered;
 use science_codegen::layout::{
-    CgTy, Field as CgField, IntTy, Layout, Niche, PtrKind, Repr, Scalar, Triple,
+    CgTy, Field as CgField, FloatTy, IntTy, Layout, Niche, PtrKind, Repr, Scalar, Triple,
     Variant as CgVariant, layout_of,
 };
 use science_codegen::mangle::{MonoKey, mangle};
@@ -242,6 +242,7 @@ use science_codegen::runtime::{
     OwnedNullableReturn, RUNTIME, RtAggregate, RtParam, RtRet, RuntimeFn, owned_nullable_return,
     runtime_fn,
 };
+use science_codegen::target::{Intrinsic, MathLowering, lower_math_call};
 use science_diagnostics::{Diagnostic, Span};
 use science_mir::mir::{self, Body as MirBody, Constant, Rvalue, StatementKind, TerminatorKind};
 use science_parser::ast::{BinaryOp, UnaryOp};
@@ -8781,6 +8782,9 @@ impl<'a> Lowerer<'a> {
         } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
+        } else if let Some(receiver) = self.math_method(def) {
+            let method = self.defs.get(def).name.clone();
+            self.lower_math_method(body, ctx, receiver, &method, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
             // **Decision 13's vtable, named as itself.** A method the lookup
@@ -10256,6 +10260,382 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Whether `def` is one of `stdlib-core.md` §8.1's Level 1 math methods —
+    /// a prelude method declared in `builtins.rs`'s `F64 has:`, `F32 has:` or
+    /// `I64 has:` block — and on which receiver.
+    ///
+    /// Keyed on the declaring block's `Self` and filtered on `is_builtin` at
+    /// both ends, for [`Lowerer::prelude_method`]'s reason: a user's own
+    /// `type F64:` with a `sqrt` of its own must not land here.
+    fn math_method(&self, def: DefId) -> Option<MathReceiver> {
+        if !self.defs.get(def).is_builtin() {
+            return None;
+        }
+        let owner = self.decls?.signature(def)?.owner?;
+        if self.defs.get(owner).kind == DefKind::Interface {
+            return None;
+        }
+        let self_ty = self.decls?.self_ty(owner)?;
+        let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
+            return None;
+        };
+        if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
+            return None;
+        }
+        match self.defs.get(*receiver).name.as_str() {
+            "F64" => Some(MathReceiver::Float(FloatTy::F64)),
+            "F32" => Some(MathReceiver::Float(FloatTy::F32)),
+            "I64" => Some(MathReceiver::Int),
+            _ => None,
+        }
+    }
+
+    /// `stdlib-core.md` §8.1's methods, lowered: what each one *is* at its
+    /// edges is decided here, beside the instruction that implements it.
+    ///
+    /// # The decision: three lowerings, chosen per name, never per target
+    ///
+    /// **1. Decision 37's whitelist, as the intrinsic.** `sqrt`, `abs`,
+    /// `floor`, `ceil`, `trunc`, `round`, `min` and `max` are eight of the
+    /// eleven `science_codegen::target::Intrinsic`s, and
+    /// [`science_codegen::target::lower_math_call`] is what says so — this
+    /// function asks it rather than keeping a second list, so a name can only
+    /// become an intrinsic by being on that whitelist. Every one is IEEE-754
+    /// exact (`intrinsics-math-physics.md` §3.6's Decision 6), so it is
+    /// bit-identical on every target and safe for LLVM to constant-fold.
+    ///
+    /// **2. A library call, for everything that is library code.**
+    /// `lower_math_call` answers `science_libm_<name>` for every other name,
+    /// and the transcendental twelve plus `cbrt`, `hypot`, `pow` and `atan2`
+    /// take that answer: a direct call to the `science-rt` symbol, never an
+    /// `llvm.sin` LLVM could fold against the build host's libm. `F32`
+    /// widens, calls the `F64` symbol and narrows — `science-rt`'s `math.rs`
+    /// says why that is inside §8.3's 1 ULP rather than near it.
+    ///
+    /// **3. Inline, for the rest — `intrinsics-math-physics.md` §3.4's tier
+    /// 1b and the integer forms.** `sign`, `fract`, `clamp`, the float
+    /// `rem_euclid`, `to_degrees`, `to_radians`, the four predicates and five
+    /// of `Int`'s seven are compares, selects and one or two arithmetic
+    /// instructions with no branch, which Decision 14 says codegen emits
+    /// itself. The two `Int` methods that are calls are `pow` (a loop,
+    /// `science_ipow_i64`, `**`'s own entry point) and `rem_euclid` (a panic
+    /// on a zero divisor, `science_rem_euclid_i64`).
+    ///
+    /// # The edges, each decided once
+    ///
+    /// - **`min`/`max` are IEEE-754-2019 `minimum`/`maximum`**: a NaN on
+    ///   either side is the answer, and `-0.0` is below `+0.0`. That is
+    ///   §3.2's table row for both, and the scientific default — NumPy's
+    ///   `minimum` and Julia's `min` propagate NaN; Rust's `f64::min` and C's
+    ///   `fmin` drop it, which hides a bad input in exactly the reduction
+    ///   that was supposed to surface it.
+    /// - **`round` is half-away-from-zero**: `2.5` is `3.0`, `-2.5` is
+    ///   `-3.0`. §3.2's table lists `round` as `llvm.round` and the
+    ///   ties-to-even form under the separate name `round_ties_even`, which
+    ///   is not §8.1's and is not built.
+    /// - **`sign` of `±0.0` is that zero, and of NaN is NaN**; `±1.0`
+    ///   otherwise. The mathematical sign — §3.4 lists `sign` and `signum`
+    ///   as two names, and Rust's `signum`, which answers `1.0` for `+0.0`,
+    ///   is the other one.
+    /// - **`fract` is `x - x.trunc()`**, so it carries `x`'s sign:
+    ///   `(-1.25).fract()` is `-0.25`.
+    /// - **`clamp(low, high)` is `max(low)` then `min(high)`**, total, with
+    ///   no check that `low <= high`: a reversed range answers `high`, on
+    ///   both types. Rust panics there; a panic is a branch this one block
+    ///   cannot hold, and nothing in §8 asks for one.
+    /// - **`rem_euclid` is never negative** for a non-zero divisor, on both
+    ///   types. On a float it is `x % d`, plus `|d|` when that is negative —
+    ///   Rust's definition, and a NaN for `d = 0` as `%` gives; on `Int`, a
+    ///   zero divisor panics with `%`'s own message.
+    /// - **`is_close(other)` is Julia's `isapprox` with its defaults**: equal,
+    ///   or both finite and `|x - other| <= √ε · max(|x|, |other|)`, with
+    ///   `ε` the width's own `EPSILON`. Relative only, so nothing but `0.0`
+    ///   is close to `0.0` — the honest answer to a question with no scale
+    ///   in it, and the reason `math`'s Level 2 `is_close_within` takes one.
+    ///   A width-relative tolerance is what makes the `F32` form mean
+    ///   something at all: Python's fixed `1e-9` is below `F32`'s epsilon.
+    /// - **`Int.abs()` of `Int.MIN` is `Int.MIN`.** It wraps, exactly as
+    ///   `-x` and `+` already do in this backend (`lower_binary`'s overflow
+    ///   note: no `nsw`, no debug guard). `intrinsics-math-physics.md` §3.3
+    ///   writes *"traps on `MIN`"*, and a trap is a guard `science-mir`
+    ///   would have to emit, as `division_check` does for `%`; until it does,
+    ///   the answer is the one `-Int.MIN` gives. `Int.pow` wraps the same way.
+    /// - **`to_degrees`/`to_radians` are one multiply** by `180 / π` and
+    ///   `π / 180`, each rounded once to the receiver's width.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_math_method(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        receiver: MathReceiver,
+        method: &str,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new(format!(
+                "a `{method}()` on a number whose result goes through a field"
+            )));
+        }
+        let dest_local = LocalId(destination.local.index() as u32);
+        let scalar = match receiver {
+            MathReceiver::Float(float) => CgTy::Float(float),
+            MathReceiver::Int => CgTy::Int(IntTy::I64),
+        };
+        let layout = layout_of(self.target, &scalar);
+        let first = args.first().ok_or_else(|| {
+            Unlowered::new(format!("a `{method}()` call lowered with no receiver argument"))
+        })?;
+        // `self` is a shared borrow (§8.4 writes `def sqrt(self)`), so the
+        // receiver arrives as the scalar's address and is read through it —
+        // `lower_trivial_scalar_clone`'s load. A receiver MIR already copied
+        // out is used as it is.
+        let borrowed = self
+            .operand_ty(body, first)
+            .is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Borrowed { .. }));
+        let x = if borrowed {
+            let address = self.lower_operand(ctx, first, None, insts)?;
+            let value = ctx.value();
+            insts.push(ExtInst::LoadAt { dest: value, address, layout: layout.clone() });
+            Operand::Value(value)
+        } else {
+            match self.lower_operand(ctx, first, Some(&layout), insts)? {
+                value @ Operand::Value(_) => value,
+                // A receiver that is a constant has no LLVM type for an
+                // intrinsic's overload to be read off; give it one.
+                constant => {
+                    let value = ctx.value();
+                    insts.push(ExtInst::Const { dest: value, layout: layout.clone(), value: constant });
+                    Operand::Value(value)
+                }
+            }
+        };
+        let mut rest = Vec::with_capacity(args.len().saturating_sub(1));
+        for arg in &args[1..] {
+            rest.push(self.lower_operand(ctx, arg, Some(&layout), insts)?);
+        }
+        let arg = |index: usize| -> Result<Operand, Unlowered> {
+            rest.get(index).cloned().ok_or_else(|| {
+                Unlowered::new(format!("a `{method}()` call missing its argument {}", index + 1))
+            })
+        };
+        let value = match receiver {
+            MathReceiver::Float(float) => {
+                let mut b = MathBuilder { ctx, insts, layout: &layout };
+                match method {
+                    "sign" => {
+                        let positive = b.cmp(CmpOp::Gt, x.clone(), Operand::ConstFloat(0.0));
+                        let negative = b.cmp(CmpOp::Lt, x.clone(), Operand::ConstFloat(0.0));
+                        let low = b.select(negative, Operand::ConstFloat(-1.0), x);
+                        b.select(positive, Operand::ConstFloat(1.0), low)
+                    }
+                    "fract" => {
+                        let whole = b.intrinsic(Intrinsic::Trunc, vec![x.clone()]);
+                        b.float(FloatOp::Sub, x, whole)
+                    }
+                    "clamp" => {
+                        let raised = b.intrinsic(Intrinsic::Maximum, vec![x, arg(0)?]);
+                        b.intrinsic(Intrinsic::Minimum, vec![raised, arg(1)?])
+                    }
+                    "rem_euclid" => {
+                        let divisor = arg(0)?;
+                        let remainder = b.float(FloatOp::Rem, x, divisor.clone());
+                        let negative =
+                            b.cmp(CmpOp::Lt, remainder.clone(), Operand::ConstFloat(0.0));
+                        let divisor = b.materialise(divisor);
+                        let magnitude = b.intrinsic(Intrinsic::Fabs, vec![divisor]);
+                        let lifted = b.float(FloatOp::Add, remainder.clone(), magnitude);
+                        b.select(negative, lifted, remainder)
+                    }
+                    "to_degrees" => {
+                        b.float(FloatOp::Mul, x, Operand::ConstFloat(180.0 / std::f64::consts::PI))
+                    }
+                    "to_radians" => {
+                        b.float(FloatOp::Mul, x, Operand::ConstFloat(std::f64::consts::PI / 180.0))
+                    }
+                    "is_nan" => {
+                        // `fcmp oeq x, x` is false for NaN and only for NaN;
+                        // its negation is the predicate. The backend's `Ne`
+                        // is the *ordered* `one`, which is false for NaN too
+                        // and so cannot be used for this.
+                        let ordered = b.cmp(CmpOp::Eq, x.clone(), x);
+                        b.cmp_int(CmpOp::Eq, ordered, Operand::ConstInt(0))
+                    }
+                    "is_infinite" => {
+                        let magnitude = b.intrinsic(Intrinsic::Fabs, vec![x]);
+                        b.cmp(CmpOp::Eq, magnitude, Operand::ConstFloat(f64::INFINITY))
+                    }
+                    "is_finite" => {
+                        let magnitude = b.intrinsic(Intrinsic::Fabs, vec![x]);
+                        b.cmp(CmpOp::Lt, magnitude, Operand::ConstFloat(f64::INFINITY))
+                    }
+                    "is_close" => {
+                        let other = b.materialise(arg(0)?);
+                        let tolerance = match float {
+                            FloatTy::F32 => f64::from(f32::EPSILON.sqrt()),
+                            _ => f64::EPSILON.sqrt(),
+                        };
+                        let equal = b.cmp(CmpOp::Eq, x.clone(), other.clone());
+                        let difference = b.float(FloatOp::Sub, x.clone(), other.clone());
+                        let distance = b.intrinsic(Intrinsic::Fabs, vec![difference]);
+                        let left = b.intrinsic(Intrinsic::Fabs, vec![x]);
+                        let right = b.intrinsic(Intrinsic::Fabs, vec![other]);
+                        let scale = b.intrinsic(Intrinsic::Maximum, vec![left, right]);
+                        let allowed = b.float(FloatOp::Mul, scale, Operand::ConstFloat(tolerance));
+                        let finite = b.cmp(
+                            CmpOp::Lt,
+                            distance.clone(),
+                            Operand::ConstFloat(f64::INFINITY),
+                        );
+                        let within = b.cmp(CmpOp::Le, distance, allowed);
+                        let near = b.int(IntOp::And, finite, within);
+                        b.int(IntOp::Or, equal, near)
+                    }
+                    name => {
+                        let mut operands = vec![x];
+                        operands.extend(rest.iter().cloned());
+                        match lower_math_call(name) {
+                            MathLowering::Intrinsic(intrinsic) => {
+                                let operands =
+                                    operands.into_iter().map(|op| b.materialise(op)).collect();
+                                b.intrinsic(intrinsic, operands)
+                            }
+                            MathLowering::LibmCall(symbol) => {
+                                let entry = runtime_fn(&symbol).ok_or_else(|| {
+                                    Unlowered::new(format!(
+                                        "`{name}()` on a float, whose library symbol `{symbol}` \
+                                         is not a `science-rt` entry point"
+                                    ))
+                                })?;
+                                self.lower_libm_call(ctx, entry.symbol, &layout, operands, insts)?
+                            }
+                        }
+                    }
+                }
+            }
+            MathReceiver::Int => {
+                let mut b = MathBuilder { ctx, insts, layout: &layout };
+                match method {
+                    "abs" => {
+                        let negative = b.cmp_int(CmpOp::Lt, x.clone(), Operand::ConstInt(0));
+                        let negated = b.int(IntOp::Sub, Operand::ConstInt(0), x.clone());
+                        b.select(negative, negated, x)
+                    }
+                    "sign" => {
+                        let positive = b.cmp_int(CmpOp::Gt, x.clone(), Operand::ConstInt(0));
+                        let negative = b.cmp_int(CmpOp::Lt, x, Operand::ConstInt(0));
+                        let low = b.select(negative, Operand::ConstInt(-1), Operand::ConstInt(0));
+                        b.select(positive, Operand::ConstInt(1), low)
+                    }
+                    "min" | "max" => {
+                        let other = arg(0)?;
+                        let op = if method == "min" { CmpOp::Lt } else { CmpOp::Gt };
+                        let keep = b.cmp_int(op, x.clone(), other.clone());
+                        b.select(keep, x, other)
+                    }
+                    "clamp" => {
+                        let (low, high) = (arg(0)?, arg(1)?);
+                        let below = b.cmp_int(CmpOp::Lt, x.clone(), low.clone());
+                        let raised = b.select(below, low, x);
+                        let above = b.cmp_int(CmpOp::Gt, raised.clone(), high.clone());
+                        b.select(above, high, raised)
+                    }
+                    "pow" | "rem_euclid" => {
+                        let symbol =
+                            if method == "pow" { "science_ipow_i64" } else { "science_rem_euclid_i64" };
+                        let sig = self.declare(symbol)?;
+                        let result = ctx.value();
+                        insts.push(ExtInst::Above(Inst::Call {
+                            dest: Some(result),
+                            callee: Callee::Runtime(symbol),
+                            args: vec![x, arg(0)?],
+                            ret: sig.ret.clone(),
+                            sret_slot: None,
+                        }));
+                        Operand::Value(result)
+                    }
+                    other => {
+                        return Err(Unlowered::new(format!(
+                            "`Int.{other}()`, which `builtins.rs` declares and this backend has \
+                             no lowering for"
+                        )))
+                    }
+                }
+            }
+        };
+        insts.push(ExtInst::Above(Inst::Store { local: dest_local, value }));
+        Ok(())
+    }
+
+    /// A call to a `science_libm_*` entry point on a float of `layout`'s
+    /// width: [`Lowerer::lower_pow`]'s widen-call-narrow, for a method.
+    fn lower_libm_call(
+        &mut self,
+        ctx: &mut BodyCtx,
+        symbol: &'static str,
+        layout: &Layout,
+        operands: Vec<Operand>,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let wide = layout_of(self.target, &CgTy::Float(FloatTy::F64));
+        let widen = layout.size != wide.size;
+        let operands = operands
+            .into_iter()
+            .map(|value| {
+                if !widen {
+                    return value;
+                }
+                // `ExtInst::Convert` converts a value, and `f.pow(0.5)`'s
+                // exponent is a constant with no width of its own: it is
+                // built at the narrow width first, so the widening is the
+                // same exact `fpext` a variable would get.
+                let value = match value {
+                    Operand::Value(_) => value,
+                    constant => {
+                        let built = ctx.value();
+                        insts.push(ExtInst::Const {
+                            dest: built,
+                            layout: layout.clone(),
+                            value: constant,
+                        });
+                        Operand::Value(built)
+                    }
+                };
+                let converted = ctx.value();
+                insts.push(ExtInst::Convert {
+                    dest: converted,
+                    op: ConvOp::FloatExtend,
+                    value,
+                    from: layout.clone(),
+                    to: wide.clone(),
+                });
+                Operand::Value(converted)
+            })
+            .collect();
+        let sig = self.declare(symbol)?;
+        let result = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(result),
+            callee: Callee::Runtime(symbol),
+            args: operands,
+            ret: sig.ret.clone(),
+            sret_slot: None,
+        }));
+        if !widen {
+            return Ok(Operand::Value(result));
+        }
+        let narrowed = ctx.value();
+        insts.push(ExtInst::Convert {
+            dest: narrowed,
+            op: ConvOp::FloatTrunc,
+            value: Operand::Value(result),
+            from: wide,
+            to: layout.clone(),
+        });
+        Ok(Operand::Value(narrowed))
+    }
+
     /// Whether this call is `String.bytes()`.
     ///
     /// **A reinterpretation, and the two layouts are why it can be one.**
@@ -11438,6 +11818,85 @@ impl<'a> Lowerer<'a> {
             terminator: Terminator::Unreachable,
         };
         Ok((sig, ExtBody { blocks: vec![entry, ok, failed] }))
+    }
+}
+
+/// Which of `stdlib-core.md` §8.1's receivers a math method was declared on.
+#[derive(Debug, Clone, Copy)]
+enum MathReceiver {
+    /// `F64 has:` or `F32 has:`.
+    Float(FloatTy),
+    /// `I64 has:`, which is `Int has:`.
+    Int,
+}
+
+/// The handful of instructions [`Lowerer::lower_math_method`]'s inline
+/// lowerings are built from, each one a fresh value appended to one block.
+///
+/// **A builder and not a set of methods on [`Lowerer`]**, because none of
+/// these needs anything a `Lowerer` holds: each is one `ExtInst` at one
+/// layout, and borrowing `self` for each would forbid the `rest`-reading
+/// closure beside it.
+struct MathBuilder<'a> {
+    ctx: &'a mut BodyCtx,
+    insts: &'a mut Vec<ExtInst>,
+    /// The receiver's scalar layout, which every `select` here is built at.
+    layout: &'a Layout,
+}
+
+impl MathBuilder<'_> {
+    fn push(&mut self, build: impl FnOnce(ValueId) -> ExtInst) -> Operand {
+        let dest = self.ctx.value();
+        self.insts.push(build(dest));
+        Operand::Value(dest)
+    }
+
+    /// A whitelisted intrinsic — Decision 37's list, never anything else,
+    /// because [`Intrinsic`] has no other variant to name.
+    fn intrinsic(&mut self, intrinsic: Intrinsic, args: Vec<Operand>) -> Operand {
+        self.push(|dest| {
+            ExtInst::Above(Inst::Call {
+                dest: Some(dest),
+                callee: Callee::Intrinsic(intrinsic),
+                args,
+                ret: ReturnClass::Direct { registers: vec![RegClass::Sse] },
+                sret_slot: None,
+            })
+        })
+    }
+
+    fn float(&mut self, op: FloatOp, lhs: Operand, rhs: Operand) -> Operand {
+        self.push(|dest| ExtInst::Above(Inst::FloatBinary { dest, op, lhs, rhs }))
+    }
+
+    fn int(&mut self, op: IntOp, lhs: Operand, rhs: Operand) -> Operand {
+        self.push(|dest| ExtInst::Above(Inst::IntBinary { dest, op, lhs, rhs }))
+    }
+
+    /// A float comparison. The backend's float predicates are the *ordered*
+    /// ones, so every one of these is false when either side is NaN.
+    fn cmp(&mut self, op: CmpOp, lhs: Operand, rhs: Operand) -> Operand {
+        self.push(|dest| ExtInst::Above(Inst::Cmp { dest, op, signed: false, lhs, rhs }))
+    }
+
+    /// A signed integer comparison — `Int` is the one integer receiver.
+    fn cmp_int(&mut self, op: CmpOp, lhs: Operand, rhs: Operand) -> Operand {
+        self.push(|dest| ExtInst::Above(Inst::Cmp { dest, op, signed: true, lhs, rhs }))
+    }
+
+    fn select(&mut self, cond: Operand, if_true: Operand, if_false: Operand) -> Operand {
+        let layout = self.layout.clone();
+        self.push(|dest| ExtInst::Select { dest, cond, if_true, if_false, layout })
+    }
+
+    /// A constant as a value of the receiver's type, so that an intrinsic
+    /// whose overload is read off its first argument has one to read.
+    fn materialise(&mut self, operand: Operand) -> Operand {
+        if matches!(operand, Operand::Value(_)) {
+            return operand;
+        }
+        let layout = self.layout.clone();
+        self.push(|dest| ExtInst::Const { dest, layout, value: operand })
     }
 }
 
