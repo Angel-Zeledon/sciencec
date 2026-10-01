@@ -288,7 +288,7 @@
 //!   loops still bind at [`Ty::ERROR`]. Decision 15's `TryIterate` does not
 //!   exist at all, which is why `SC0521` is still unclaimed by this crate.
 //! - **A `loop`'s value.** `break e` is checked and its type discarded; a
-//!   `loop` is [`Ty::UNIT`].
+//!   `loop` with a `break` is [`Ty::UNIT`], and one with none is `Never`.
 //! - **Arity and kind of generic arguments**, which `lowering`'s §1 deferred to
 //!   *"whoever holds the declaration and the use at once"*. This file holds
 //!   both and still does not check it: the check wants `hir::GenericArity` and a
@@ -1153,6 +1153,13 @@ impl<'a> BodyChecker<'a> {
     fn coerce(&mut self, expr: ExprId, from: Ty, to: Ty, site: Site, span: Span) -> ExprId {
         let source = self.revealed(from, span);
         let target = self.revealed(to, span);
+        // `Never` coerces to anything, and to nothing in particular: the
+        // expression never produces a value, so there is no value to convert
+        // and no node to record. `diverged` is what tells the rest of the
+        // body that control does not continue.
+        if self.decls.prelude().is_never(self.types, source) {
+            return expr;
+        }
         match assignable(self.types, self.decls.methods(), self.coercions, site, source, target) {
             Some(Coercion::Identity) => expr,
             Some(coercion) => {
@@ -7572,9 +7579,25 @@ impl<'a> BodyChecker<'a> {
         // Facts the body establishes do not survive the back edge. §3.
         self.facts = entry;
         self.diverged = !saw_break;
-        // §6: a `loop` has no value.
-        let id = self.body.push_expr(ExprKind::Loop { body: block }, Ty::UNIT, span);
-        Typed { id, ty: InferTy::Known(Ty::UNIT) }
+        // §6: a `loop` has no value — unless nothing leaves it by `break`.
+        //
+        // Decision: a `loop` with no `break` targeting it has type `Never`,
+        // which coerces to anything; one with a `break` is `()`. Reason: a
+        // loop that exits only by `return` (or never) produces no value on any
+        // path, so typing it `()` refused `def find_first(..) -> Int:` ending
+        // in `loop:` — the tail was `()` where `Int` was wanted — while the
+        // same function ending in `panic(..)` was accepted. `saw_break` is the
+        // break-target stack's answer: `breaks` has one entry per enclosing
+        // `loop` and a `break` marks only the innermost, so an inner loop's
+        // `break` does not make the outer one finite. Cost: a `loop` with a
+        // `break` is still `()`, so using it as a non-unit value stays an
+        // ordinary mismatch; its value is not inferred from `break e`.
+        let ty = match self.decls.prelude().ty(self.types, "Never") {
+            Some(never) if !saw_break => never,
+            _ => Ty::UNIT,
+        };
+        let id = self.body.push_expr(ExprKind::Loop { body: block }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
     }
 
     fn for_expr(

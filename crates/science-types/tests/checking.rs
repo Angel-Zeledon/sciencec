@@ -1534,3 +1534,120 @@ def main():
     assert_eq!(checked.codes(), vec![525]);
     assert_eq!(checked.messages(), vec!["expected `&mut Counter`, found `&Counter`"]);
 }
+
+
+// --- a `loop` with no `break` never produces a value -----------------------
+
+/// The reported program: the only exits are `return`s, so the `loop` is the
+/// function's tail and has type `Never`, which coerces to `Int`.
+#[test]
+fn a_loop_that_only_returns_can_end_a_function_with_a_value() {
+    let checked = program(
+        "
+def find_first(xs: &Array[Int], target: Int) -> Int:
+    let mutable i be 0
+    loop:
+        if i >= xs.length():
+            return -1
+        let v be xs.get(i)
+        if v? and v is target:
+            return i
+        i be i + 1
+",
+    );
+    checked.assert_clean();
+    assert!(checked.body("find_first").diverges());
+}
+
+/// `break` marks the innermost `loop` only, so an inner loop's `break` does not
+/// make the outer one finite.
+#[test]
+fn an_inner_loops_break_does_not_end_the_outer_loop() {
+    let checked = program(
+        "
+def spin(n: Int) -> Int:
+    loop:
+        loop:
+            break
+        if n > 3:
+            return n
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn an_if_with_a_forever_loop_arm_still_type_checks() {
+    let checked = program(
+        "
+def pick(flag: Bool) -> Int:
+    if flag:
+        4
+    else:
+        loop:
+            return 5
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn a_match_arm_that_loops_forever_coerces_to_the_others() {
+    let checked = program(
+        "
+def pick(n: Int) -> Int:
+    match n:
+        0: 1
+        other:
+            loop:
+                if other > 2:
+                    return other
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn a_call_to_a_function_returning_never_ends_a_function_with_a_value() {
+    let checked = program(
+        "
+def give_up() -> Never:
+    loop:
+        write(1)
+
+def pick() -> Int:
+    give_up()
+",
+    );
+    checked.assert_clean();
+}
+
+/// A `loop` that *has* a `break` is `()`, and using it as a value is still a
+/// plain mismatch.
+#[test]
+fn a_loop_with_a_break_is_still_unit_and_is_refused_as_a_value() {
+    let checked = program(
+        "
+def bad() -> Int:
+    loop:
+        break
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `()`"]);
+}
+
+/// A `break` under a condition still targets the `loop`.
+#[test]
+fn a_break_under_a_condition_still_makes_the_loop_finite() {
+    let checked = program(
+        "
+def bad(n: Int) -> Int:
+    loop:
+        if n > 1:
+            break
+        return 1
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}

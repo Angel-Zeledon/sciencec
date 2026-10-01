@@ -598,3 +598,45 @@ fn a_loop_item_assigned_to_a_literal_initialised_binding_is_its_value() {
         "2.5\n3.5\n"
     );
 }
+
+/// A `loop` that exits only through `return` ends a function whose result is
+/// not `()`.
+///
+/// The `loop` has no `break`, so the checker types it `Never`, which coerces to
+/// the `Int` the function promises; MIR lowers the diverging tail as a body
+/// that leaves on every path and the backend must not look for a value after
+/// it. The program finds a present element, an absent one (the `-1` exit), and
+/// a nested loop whose own `break` leaves the outer one alone.
+#[test]
+fn a_loop_with_no_break_can_end_a_function_that_returns_a_value() {
+    assert_eq!(
+        prints(
+            "loop-never",
+            "def find_first(xs: &Array[Int], target: Int) -> Int:\n\
+             \x20   let mutable i be 0\n\
+             \x20   loop:\n\
+             \x20       if i >= xs.length():\n\
+             \x20           return -1\n\
+             \x20       let v be xs.get(i)\n\
+             \x20       if v? and v is target:\n\
+             \x20           return i\n\
+             \x20       i be i + 1\n\
+             \n\
+             def settle(n: Int) -> Int:\n\
+             \x20   let mutable k be n\n\
+             \x20   loop:\n\
+             \x20       loop:\n\
+             \x20           break\n\
+             \x20       if k > 5:\n\
+             \x20           return k\n\
+             \x20       k be k + 2\n\
+             \n\
+             def main():\n\
+             \x20   let xs be [4, 8, 15, 16]\n\
+             \x20   print(find_first(xs, 15))\n\
+             \x20   print(find_first(xs, 99))\n\
+             \x20   print(settle(1))\n",
+        ),
+        "2\n-1\n7\n"
+    );
+}
