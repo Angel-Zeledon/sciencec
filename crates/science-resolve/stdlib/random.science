@@ -1,0 +1,472 @@
+# random — `stdlib-standard.md` §5, Level 2: `use random (Key, Stream, uniform, normal)`.
+#
+# Two generators that share no name (§5.2): `Key`, the reproducible face, and
+# `Stream`, the convenient one. There is no ambient generator — no module
+# state, no `seed()`, no draw that does not name its generator (§5.3).
+#
+# Reach for a `Key` whenever anyone may need this exact number again — a
+# figure, a fitted parameter, a train/test split, a simulated dataset — and
+# for a `Stream` only when nobody will (§5.4):
+#
+#     let key be Key.from_seed(20260916)
+#     let left, right be key.split()
+#     print(uniform(left))
+#     print(normal(right, 0.0, 1.0))
+#
+# This is not a source of secrets, and must never be used as one: both faces
+# are predictable from their seed by design. Cryptographic randomness is
+# `crypto`'s (`stdlib-core.md` §1.2, `stdlib-standard.md` §13.4).
+#
+# What this file decides, each where it applies:
+#
+# - **`Key` is Threefry-2x64-20**, §5.5's recommendation, and its bits are
+#   contract: the generator, the counter layout, `split`'s derivation, the
+#   53-bit mapping and the inverse CDF below change only by becoming a new
+#   type. `crates/science-codegen-llvm/tests/random.rs` checks them against a
+#   second implementation that is itself checked against Random123's
+#   published vectors.
+# - **A key is seeded as the Threefry key `(0, seed)`**: the seed is the low
+#   word and the high word is zero, JAX's convention widened to 64 bits.
+# - **The counter's second word names the purpose and the first is the
+#   index**: `split` uses purpose 0, `fold_in` 1, a draw 2. A key is consumed
+#   by any one of them, so the separation is defence and not load-bearing.
+# - **A key reused is `SC0301` because `Key` implements `Drop`.** The move
+#   checker reports a use after move only for a type that owns something
+#   (`science-regions`' `moved.rs` §3 item 4), and two `U64`s own nothing —
+#   without the `Drop` below, the reuse §1 of the core spec names as a
+#   motivating case would compile silently. The `drop` does nothing; what it
+#   buys is the diagnostic. It goes when the checker reports moves of every
+#   non-`Copy` type.
+# - **`normal` is the inverse CDF, Wichura's AS 241 (`PPND16`), over this
+#   file's own `ln` and `sqrt`** (`reproducibility.md` Decision 2: `random`
+#   does not call Level 1 `math`). They use only `+ - * /` and comparisons in
+#   a fixed order, so every IEEE-754 target computes the same bits —
+#   `science-codegen-llvm` sets no fast-math flag that could contract or
+#   reorder them. They are **not** correctly rounded, which Decision 2 asks
+#   for: `ln` is within a few units in the last place and `sqrt` within one.
+#   Reproducibility holds; the accuracy clause is not met, and is recorded
+#   here rather than claimed.
+# - **`integer` rejects rather than reduces**: a word below `2⁶⁴ mod n` is
+#   thrown away, so every value of `[low, high)` is equally likely. On the
+#   `Key` face that walks the key's words in order, so the result is still a
+#   pure function of the key.
+# - **`Stream` is xoshiro256\*\*, seeded through SplitMix64**, and it is *not*
+#   frozen (§5.5: nothing built on a stream was meant to be reproduced). Its
+#   draws reuse the `Key` face's mappings.
+# - **`Stream.from_entropy()` takes 64 bits from the operating system**
+#   through `science-rt`, and is the one constructor here that is not
+#   reproducible. The name is the warning.
+# - **`shuffle` needs `T: Clone`**: `Array` has no `swap`, so an exchange is
+#   two clones. A `permutation` of indices is the clone-free answer for a type
+#   that is expensive to clone.
+# - **`split_many`, `fold_in` and `permutation` are §7.3's; `bits` and
+#   `bits_from` are this file's**: the raw word, for code that builds its own
+#   mapping.
+
+# `science-rt`'s one entry point for this module: 64 bits from the operating
+# system's random source.
+unsafe extern "C" library "science-rt":
+    def science_random_entropy() -> U64
+
+# --- Threefry-2x64-20 ---------------------------------------------------------
+
+# `x` rotated left by `by`, for `by` in `1..64`.
+def rotate(x: U64, by: U64) -> U64:
+    (x << by) | (x >> (64 - by))
+
+# Random123's `R_64x2` rotation constants, by round modulo eight.
+def rotation(round: Int) -> U64:
+    let step be round % 8
+    if step is 0:
+        return 16
+    if step is 1:
+        return 42
+    if step is 2:
+        return 12
+    if step is 3:
+        return 31
+    if step is 4:
+        return 16
+    if step is 5:
+        return 32
+    if step is 6:
+        return 24
+    21
+
+# One word of the key schedule: the two key words and Skein's parity word.
+def schedule(high: U64, low: U64, index: Int) -> U64:
+    if index is 0:
+        return high
+    if index is 1:
+        return low
+    0x1BD11BDAA9FC1A22 ^ high ^ low
+
+# The Threefry-2x64 block function at twenty rounds: `threefry2x64_R(20, …)`
+# with key `(high, low)` and counter `(first, second)`.
+def threefry(high: U64, low: U64, first: U64, second: U64) -> (U64, U64):
+    let mutable x0 be first.wrapping_add(high)
+    let mutable x1 be second.wrapping_add(low)
+    for round in 0..20:
+        x0 be x0.wrapping_add(x1)
+        x1 be rotate(x1, rotation(round)) ^ x0
+        if round % 4 is 3:
+            let injection be round / 4 + 1
+            x0 be x0.wrapping_add(schedule(high, low, injection % 3))
+            x1 be x1.wrapping_add(schedule(high, low, (injection + 1) % 3))
+            x1 be x1.wrapping_add(injection as U64)
+    (x0, x1)
+
+# --- The mappings both faces share -------------------------------------------
+
+# 2⁻⁵³.
+def two_to_minus_53() -> F64:
+    1.0 / 9007199254740992.0
+
+# §5.5's mapping: the top 53 bits, scaled by 2⁻⁵³, into `[0.0, 1.0)`. Exact.
+def unit(word: U64) -> F64:
+    (word >> 11) as F64 * two_to_minus_53()
+
+# The same 53 bits at the middle of their interval, into `(0.0, 1.0)`: what
+# the inverse CDF needs, which has no value at either end. Exact.
+def open_unit(word: U64) -> F64:
+    ((word >> 11) as F64 + 0.5) * two_to_minus_53()
+
+# The natural logarithm of a positive, finite `x`. `x` is scaled by powers of
+# two — exactly — into `[√½, √2)`, and `ln m` is `2·atanh((m − 1)/(m + 1))`,
+# summed to `s²¹`, which is past the last bit for `|s| ≤ 0.172`. `ln 2` is
+# fdlibm's two-word split.
+def ln(x: F64) -> F64:
+    let sqrt_half be 0.7071067811865476
+    let mutable m be x
+    let mutable e be 0
+    loop:
+        if m >= sqrt_half:
+            break
+        m be m * 2.0
+        e be e - 1
+    loop:
+        if m < 2.0 * sqrt_half:
+            break
+        m be m * 0.5
+        e be e + 1
+    let s be (m - 1.0) / (m + 1.0)
+    let s2 be s * s
+    let mutable sum be 1.0 / 23.0
+    for step in 0..11:
+        let k be 10 - step
+        sum be sum * s2 + 1.0 / ((2 * k + 1) as F64)
+    let ef be e as F64
+    ef * 0.693147180369123816490 + (2.0 * s * sum + ef * 1.90821492927058770002e-10)
+
+# The square root of a positive `x`, by Newton's iteration from above: the
+# iterates fall until they stop falling, which is within one unit in the
+# last place.
+def sqrt(x: F64) -> F64:
+    let mutable y be 1.0
+    if x > 1.0:
+        y be x
+    loop:
+        let next be 0.5 * (y + x / y)
+        if next >= y:
+            break
+        y be next
+    y
+
+# `c0 + c1·x + … + c7·x⁷`, by Horner's rule from the highest term.
+def horner(
+    x: F64,
+    c0: F64,
+    c1: F64,
+    c2: F64,
+    c3: F64,
+    c4: F64,
+    c5: F64,
+    c6: F64,
+    c7: F64
+) -> F64:
+    ((((((c7 * x + c6) * x + c5) * x + c4) * x + c3) * x + c2) * x + c1) * x + c0
+
+# Φ⁻¹(p) for `p` in `(0, 1)`: Wichura's AS 241, `PPND16`, about sixteen
+# digits. One uniform in, one normal out — a fixed count of words, which is
+# §5.5's reason for the inverse CDF over Box–Muller or the ziggurat.
+def inverse_normal(p: F64) -> F64:
+    let q be p - 0.5
+    if q >= -0.425 and q <= 0.425:
+        let r be 0.180625 - q * q
+        let top be horner(
+            r,
+            3.3871328727963666080,
+            1.3314166789178437745e+2,
+            1.9715909503065514427e+3,
+            1.3731693765509461125e+4,
+            4.5921953931549871457e+4,
+            6.7265770927008700853e+4,
+            3.3430575583588128105e+4,
+            2.5090809287301226727e+3
+        )
+        let bottom be horner(
+            r,
+            1.0,
+            4.2313330701600911252e+1,
+            6.8718700749205790830e+2,
+            5.3941960214247511077e+3,
+            2.1213794301586595867e+4,
+            3.9307895800092710610e+4,
+            2.8729085735721942674e+4,
+            5.2264952788528545610e+3
+        )
+        return q * top / bottom
+    let mutable tail be 1.0 - p
+    if q < 0.0:
+        tail be p
+    let r be sqrt(-ln(tail))
+    let mutable value be 0.0
+    if r <= 5.0:
+        let t be r - 1.6
+        let top be horner(
+            t,
+            1.42343711074968357734,
+            4.63033784615654529590,
+            5.76949722146069140550,
+            3.64784832476320460504,
+            1.27045825245236838258,
+            2.41780725177450611770e-1,
+            2.27238449892691845833e-2,
+            7.74545014278341407640e-4
+        )
+        let bottom be horner(
+            t,
+            1.0,
+            2.05319162663775882187,
+            1.67638483018380384940,
+            6.89767334985100004550e-1,
+            1.48103976427480074590e-1,
+            1.51986665636164571966e-2,
+            5.47593808499534494600e-4,
+            1.05075007164441684324e-9
+        )
+        value be top / bottom
+    else:
+        let t be r - 5.0
+        let top be horner(
+            t,
+            6.65790464350110377720,
+            5.46378491116411436990,
+            1.78482653991729133580,
+            2.96560571828504891230e-1,
+            2.65321895265761230930e-2,
+            1.24266094738807843860e-3,
+            2.71155556874348757815e-5,
+            2.01033439929228813265e-7
+        )
+        let bottom be horner(
+            t,
+            1.0,
+            5.99832206555887937690e-1,
+            1.36929880922735805310e-1,
+            1.48753612908506148525e-2,
+            7.86869131145613259100e-4,
+            1.84631831751005468180e-5,
+            1.42151175831644588870e-7,
+            2.04426310338993978564e-15
+        )
+        value be top / bottom
+    if q < 0.0:
+        return -value
+    value
+
+# --- Key ----------------------------------------------------------------------
+
+# A splittable counter-based key: the two words of a Threefry-2x64-20 key.
+# Neither `Copy` nor `Clone`, and every operation on it consumes it.
+public type Key:
+    high: U64
+    low: U64
+
+Key has:
+    # The only way to make a key. There is no key from entropy: a key whose
+    # seed nobody recorded is a result nobody can reproduce (§5.7).
+    public def from_seed(seed: U64) -> Key:
+        Key(high: 0, low: seed)
+
+    # Two independent keys, and this one is gone. They are `split_many(2)`'s
+    # first two, in that order, on every machine.
+    public def split(self) -> (Key, Key):
+        let a0, a1 be threefry(self.high, self.low, 0, 0)
+        let b0, b1 be threefry(self.high, self.low, 1, 0)
+        (Key(high: a0, low: a1), Key(high: b0, low: b1))
+
+    # `count` independent keys: the `i`th is the block at counter `(i, 0)`.
+    public def split_many(self, count: Int) -> Array[Key]:
+        let mutable keys be Array[Key].new()
+        for index in 0..count:
+            let k0, k1 be threefry(self.high, self.low, index as U64, 0)
+            keys.push(Key(high: k0, low: k1))
+        keys
+
+    # A key derived from this one and `data` — a step number, a rank — at
+    # counter `(data, 1)`.
+    public def fold_in(self, data: U64) -> Key:
+        let k0, k1 be threefry(self.high, self.low, data, 1)
+        Key(high: k0, low: k1)
+
+# Nothing to release. See the header: this is what makes reuse `SC0301`.
+Key implements Drop:
+    def drop(mutable self):
+        return
+
+# The words a key draws, in order: word `2j` and `2j + 1` are the block at
+# counter `(j, 2)`. Private — a cursor over a key that has already been
+# consumed by the draw that made it.
+type Draws:
+    high: U64
+    low: U64
+    block: U64
+    spare: U64
+    has_spare: Bool
+
+Draws has:
+    def starting(key: Key) -> Draws:
+        Draws(high: key.high, low: key.low, block: 0, spare: 0, has_spare: false)
+
+    def next(mutable self) -> U64:
+        if self.has_spare:
+            self.has_spare be false
+            return self.spare
+        let first, second be threefry(self.high, self.low, self.block, 2)
+        self.block be self.block + 1
+        self.spare be second
+        self.has_spare be true
+        first
+
+# A uniform integer in `[0, span)` from words `next` hands out, by rejection:
+# the words below `2⁶⁴ mod span` are refused, so no residue is favoured.
+def below_from_draws(draws: &mut Draws, span: U64) -> U64:
+    let threshold be (0 as U64).wrapping_sub(span) % span
+    let mutable word be draws.next()
+    loop:
+        if word >= threshold:
+            break
+        word be draws.next()
+    word % span
+
+# 64 random bits.
+public def bits(key: Key) -> U64:
+    let mutable draws be Draws.starting(key)
+    draws.next()
+
+# A uniform `F64` in `[0.0, 1.0)`, from 53 bits.
+public def uniform(key: Key) -> F64:
+    unit(bits(key))
+
+# A uniform integer in `[low, high)`. `high` must be greater than `low`.
+public def integer(key: Key, low: Int, high: Int) -> Int:
+    if high <= low:
+        panic("random.integer: the range is empty")
+    let span be (high as U64).wrapping_sub(low as U64)
+    let mutable draws be Draws.starting(key)
+    low.wrapping_add(below_from_draws(&mut draws, span) as Int)
+
+# A normal draw. The inverse CDF of one open uniform (§5.5).
+public def normal(key: Key, mean: F64, standard_deviation: F64) -> F64:
+    mean + standard_deviation * inverse_normal(open_unit(bits(key)))
+
+# `items` in a uniformly random order: Fisher–Yates from the last place down.
+public def shuffle[T: Clone](key: Key, items: &mut Array[T]):
+    let mutable draws be Draws.starting(key)
+    let count be items.length()
+    for step in 0..count - 1:
+        let i be count - 1 - step
+        let j be below_from_draws(&mut draws, (i + 1) as U64) as Int
+        let held be items[i].clone()
+        items[i] be items[j].clone()
+        items[j] be held
+
+# `0..count` in a uniformly random order.
+public def permutation(key: Key, count: Int) -> Array[Int]:
+    let mutable indices be Array[Int].new()
+    for index in 0..count:
+        indices.push(index)
+    shuffle(key, &mut indices)
+    indices
+
+# --- Stream -------------------------------------------------------------------
+
+# A sequential generator, xoshiro256**: owned, advanced in place, and passed
+# `&mut`. Not splittable, not frozen.
+public type Stream:
+    s0: U64
+    s1: U64
+    s2: U64
+    s3: U64
+
+# SplitMix64's step, which spreads one seed over the four words.
+def splitmix(state: U64) -> U64:
+    let mutable z be state
+    z be (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z be (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    z ^ (z >> 31)
+
+Stream has:
+    # Reproducible for a given seed and a given order of calls (§5.2).
+    public def from_seed(seed: U64) -> Stream:
+        let golden: U64 be 0x9E3779B97F4A7C15
+        let a be seed.wrapping_add(golden)
+        let b be a.wrapping_add(golden)
+        let c be b.wrapping_add(golden)
+        let d be c.wrapping_add(golden)
+        Stream(s0: splitmix(a), s1: splitmix(b), s2: splitmix(c), s3: splitmix(d))
+
+    # Not reproducible, and the name is the warning (§5.3).
+    public def from_entropy() -> Stream:
+        Stream.from_seed(unsafe: science_random_entropy())
+
+    def next(mutable self) -> U64:
+        let result be rotate(self.s1.wrapping_mul(5), 7).wrapping_mul(9)
+        let t be self.s1 << 17
+        self.s2 be self.s2 ^ self.s0
+        self.s3 be self.s3 ^ self.s1
+        self.s1 be self.s1 ^ self.s2
+        self.s0 be self.s0 ^ self.s3
+        self.s2 be self.s2 ^ t
+        self.s3 be rotate(self.s3, 45)
+        result
+
+# `below_from_draws` over a stream.
+def below_from_stream(stream: &mut Stream, span: U64) -> U64:
+    let threshold be (0 as U64).wrapping_sub(span) % span
+    let mutable word be stream.next()
+    loop:
+        if word >= threshold:
+            break
+        word be stream.next()
+    word % span
+
+# 64 random bits, and the stream advances.
+public def bits_from(stream: &mut Stream) -> U64:
+    stream.next()
+
+# A uniform `F64` in `[0.0, 1.0)`. `_from` names the sequential face (§5.2).
+public def uniform_from(stream: &mut Stream) -> F64:
+    unit(stream.next())
+
+# A uniform integer in `[low, high)`. `high` must be greater than `low`.
+public def integer_from(stream: &mut Stream, low: Int, high: Int) -> Int:
+    if high <= low:
+        panic("random.integer_from: the range is empty")
+    let span be (high as U64).wrapping_sub(low as U64)
+    low.wrapping_add(below_from_stream(stream, span) as Int)
+
+# A normal draw, by the same inverse CDF as `normal`.
+public def normal_from(stream: &mut Stream, mean: F64, standard_deviation: F64) -> F64:
+    mean + standard_deviation * inverse_normal(open_unit(stream.next()))
+
+# `items` in a uniformly random order, Fisher–Yates as `shuffle`.
+public def shuffle_from[T: Clone](stream: &mut Stream, items: &mut Array[T]):
+    let count be items.length()
+    for step in 0..count - 1:
+        let i be count - 1 - step
+        let j be below_from_stream(stream, (i + 1) as U64) as Int
+        let held be items[i].clone()
+        items[i] be items[j].clone()
+        items[j] be held

@@ -1,0 +1,14 @@
+# UI test: a `random.Key` drawn from twice is a use after move (SC0301).
+#
+# Core spec §6.5 names *"random keys that cannot be reused"* as a motivating
+# verification case, and `stdlib-standard.md` §5.7 makes it `SC0301`. A `Key`
+# is two `U64`s, and the move checker reports only a type that owns something,
+# so the bundled module gives `Key` a `Drop` to be reported at all — this file
+# is what notices if that stops being enough.
+
+use random (Key, uniform)
+
+def main():
+    let key be Key.from_seed(20260916)
+    print(uniform(key))
+    print(uniform(key))

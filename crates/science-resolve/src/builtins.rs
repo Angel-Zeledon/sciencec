@@ -1049,6 +1049,42 @@ macro_rules! float_methods {
 
 /// The prelude's blocks with methods in them.
 ///
+/// `T has: def wrapping_add(self, other: T) -> T`, and `_sub` and `_mul`, for
+/// one fixed-width integer `T`. See the comment above its uses in [`BLOCKS`].
+macro_rules! wrapping_block {
+    ($ty:literal) => {
+        Block {
+            ty: $ty,
+            generics: &[],
+            interface: None,
+            assoc: &[],
+            methods: &[
+                Method {
+                    name: "wrapping_add",
+                    generics: &[],
+                    recv: Some(SelfKind::Value),
+                    params: &[("other", Ty::Name($ty))],
+                    ret: Some(Ty::Name($ty)),
+                },
+                Method {
+                    name: "wrapping_sub",
+                    generics: &[],
+                    recv: Some(SelfKind::Value),
+                    params: &[("other", Ty::Name($ty))],
+                    ret: Some(Ty::Name($ty)),
+                },
+                Method {
+                    name: "wrapping_mul",
+                    generics: &[],
+                    recv: Some(SelfKind::Value),
+                    params: &[("other", Ty::Name($ty))],
+                    ret: Some(Ty::Name($ty)),
+                },
+            ],
+        }
+    };
+}
+
 /// **Every one of these is `open`**: the set of methods declared on a prelude
 /// type is smaller than the set that exists, so a name this table does not have
 /// is *"not written down yet"* and never *"no such method"*. `Methods` reads
@@ -2322,8 +2358,70 @@ const BLOCKS: &[Block] = &[
                 params: &[("exponent", INT)],
                 ret: Some(INT),
             },
+            // The overflow discipline's wrapping half, declared here rather
+            // than by `wrapping_block!` below because this is `I64`'s one
+            // block: see the `wrapping_*` comment under it.
+            Method {
+                name: "wrapping_add",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("other", INT)],
+                ret: Some(INT),
+            },
+            Method {
+                name: "wrapping_sub",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("other", INT)],
+                ret: Some(INT),
+            },
+            Method {
+                name: "wrapping_mul",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("other", INT)],
+                ret: Some(INT),
+            },
         ],
     },
+    // --- `wrapping_*`, `intrinsics-math-physics.md` §3.3 ------------------
+    //
+    // **Decision. The three wrapping operations are declared on every
+    // fixed-width integer, and nothing else of Decision 4's integer surface
+    // is.** The core spec says *"integer overflow panics in debug builds and
+    // wraps in release, as Rust does. `wrapping_add` and friends are
+    // explicit"*. `science-codegen-llvm` emits only the release half today
+    // (`lower_binary`'s *"Overflow"* note), so `a * b` already wraps — but a
+    // program that *means* the wrap, which is every hash and every random
+    // number generator, would be relying on the half of that sentence that
+    // is missing. These are its other half, and `random` is written over them.
+    //
+    // **The lowering is the plain instruction, and it happens in
+    // `science-mir`**: `science_mir::lower`'s `wrapping_operator` rewrites the
+    // call into the `Rvalue::Binary` that `+`, `-` or `*` would have built,
+    // which is the row the note's table gives (*"the plain instruction …
+    // two's complement is exact by definition"*).
+    //
+    // **Cost.** `checked_*`, `saturating_*`, `rotate_*` and the rest of the
+    // table stay untranscribed — the blocks are `open`, so writing one is
+    // `SC0400` at the backend rather than a front-end error, as for every
+    // other name a note gives a prelude type and this file has not reached.
+    //
+    // **One block per type.** `I64` — which is `Int`, [`ALIASED_PRIMITIVES`]
+    // making them one definition — declares the three in its own block
+    // above, beside §8.1's seven, and has no `wrapping_block!` here. A second
+    // block naming the same method on one definition was measured as a
+    // diagnostic whose span is in no file and a renderer that panics on it.
+    //
+    // The narrower widths stay in [`WHOLLY_OPEN`], so these three are the
+    // only names their blocks answer and every other name is still silence.
+    wrapping_block!("I8"),
+    wrapping_block!("I16"),
+    wrapping_block!("I32"),
+    wrapping_block!("U8"),
+    wrapping_block!("U16"),
+    wrapping_block!("U32"),
+    wrapping_block!("U64"),
 ];
 
 /// The method names `stdlib-core.md` §8.1 gives a numeric type, with the
@@ -2547,8 +2645,9 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // a constant, so it is not a method name to be silent about.
     ("F64", FLOAT_EXTENSIONS),
     ("F32", FLOAT_EXTENSIONS),
-    // `Int` — the same note's §4.3 integer table, less the seven [`BLOCKS`]
-    // has: `div_euclid`, the bit operations and the overflow discipline.
+    // `Int` — the same note's §4.3 integer table, less the ten [`BLOCKS`]
+    // has: `div_euclid`, the bit operations, and the overflow discipline but
+    // for its three `wrapping_*`.
     (
         "I64",
         &[
@@ -2560,9 +2659,6 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
             "reverse_bytes",
             "rotate_left",
             "rotate_right",
-            "wrapping_add",
-            "wrapping_sub",
-            "wrapping_mul",
             "checked_add",
             "checked_sub",
             "checked_mul",

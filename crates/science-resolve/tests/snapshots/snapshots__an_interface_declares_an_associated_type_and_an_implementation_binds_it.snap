@@ -2,33 +2,33 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, iterate, implementation, show]))"
 ---
-Module `main` #950 @0..99
-  Record `Doc` #951 @0..3
-  Interface `Iterate` #952 @4..31
+Module `main` #1029 @0..99
+  Record `Doc` #1030 @0..3
+  Interface `Iterate` #1031 @4..31
     assoc types
-      AssocType `Item` #955 @27..31
+      AssocType `Item` #1034 @27..31
     methods
-      Fn `next` #956 @4..18
-        receiver: SelfParam `self` #957 mutable @9..13
-        ret: SelfAssoc `Item` -> `Item` #955 @14..18
+      Fn `next` #1035 @4..18
+        receiver: SelfParam `self` #1036 mutable @9..13
+        ret: SelfAssoc `Item` -> `Item` #1034 @14..18
         body: (none)
-  Impl #953 @32..82
-    interface: Bound -> `Iterate` #952 @51..58
-    for: Path -> `Doc` #951 @59..62
+  Impl #1032 @32..82
+    interface: Bound -> `Iterate` #1031 @51..58
+    for: Path -> `Doc` #1030 @59..62
     assoc types
-      AssocType `Item` #958 @63..82
+      AssocType `Item` #1037 @63..82
         is: Path -> `I64` #5 @63..66
     methods
-      Fn `next` #959 @32..50
-        receiver: SelfParam `self` #960 mutable @37..41
-        ret: SelfAssoc `Item` -> `Item` #958 @42..46
+      Fn `next` #1038 @32..50
+        receiver: SelfParam `self` #1039 mutable @37..41
+        ret: SelfAssoc `Item` -> `Item` #1037 @42..46
         body: Block @47..50
           tail: Int 0 @47..48
-  Fn `show` #954 @83..99
+  Fn `show` #1033 @83..99
     params
-      Param `x` #961 @88..97
+      Param `x` #1040 @88..97
         type: Any @88..95
-          Bound -> `Iterate` #952 @88..95
+          Bound -> `Iterate` #1031 @88..95
     body: Block @98..99
 --- diagnostics ---
 (none)

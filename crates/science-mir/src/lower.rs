@@ -2856,6 +2856,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 }
             }
         }
+        // **`a.wrapping_mul(b)` is `a * b`**, and is built as exactly that
+        // `Rvalue::Binary`: `builtins.rs`' `wrapping_block!` comment is the
+        // decision, and `science-codegen-llvm`'s `lower_binary` is why the
+        // plain operator already is the wrapping instruction. Both operands
+        // are integer scalars, so both are copies and nothing is consumed.
+        if let Some(op) = method.and_then(|def| self.wrapping_operator(def)) {
+            if let [other] = args {
+                let (left, next) = self.operand(receiver, block);
+                let (right, next) = self.operand(*other, next);
+                self.assign(next, dest, Rvalue::Binary { op, lhs: left, rhs: right }, span);
+                return next;
+            }
+        }
         let callee = match method {
             Some(def) => Callee::Def { def, self_ty: None },
             // Decision 11's lookup. `Unresolved::Method` is the price, and §5's
@@ -5905,6 +5918,10 @@ fn ty_mentions_param(types: &Types, ty: Ty) -> bool {
 /// one place.
 const CHAIN_TYPES: &[&str] = science_resolve::builtins::CHAIN_TYPES;
 
+/// The prelude types `builtins.rs`' `wrapping_block!` declares the three
+/// wrapping operations on: every fixed-width integer. `Int` is `I64`.
+const WRAPPING_TYPES: &[&str] = &["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"];
+
 /// One link of a chain, with the argument the author wrote at it.
 #[derive(Debug, Clone, Copy)]
 enum Step {
@@ -5998,6 +6015,25 @@ impl Builder<'_, '_> {
         CHAIN_TYPES
             .contains(&owner_name)
             .then_some((owner_name, entry.name.as_str()))
+    }
+
+    /// The operator a prelude `wrapping_add`, `wrapping_sub` or `wrapping_mul`
+    /// on a fixed-width integer is, or `None` for any other definition — a
+    /// user's own method of one of those names among them, which
+    /// `is_builtin` is what rules out.
+    fn wrapping_operator(&self, def: DefId) -> Option<BinaryOp> {
+        let entry = self.context.defs.get(def);
+        if !entry.is_builtin() {
+            return None;
+        }
+        let op = match entry.name.as_str() {
+            "wrapping_add" => BinaryOp::Add,
+            "wrapping_sub" => BinaryOp::Sub,
+            "wrapping_mul" => BinaryOp::Mul,
+            _ => return None,
+        };
+        let owner = entry.parent?;
+        WRAPPING_TYPES.contains(&self.context.defs.get(owner).name.as_str()).then_some(op)
     }
 
     /// Whether this definition is the prelude's `Array.iterate`.
