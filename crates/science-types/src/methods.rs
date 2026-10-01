@@ -244,11 +244,12 @@
 //!
 //! §1's *"`None` is 'this index cannot say'"* used to cover every prelude
 //! receiver, because the prelude had no methods. It has some now, and *some* is
-//! the whole difficulty: `builtins.rs` transcribes thirteen of
-//! `stdlib-core.md` §6.9's nineteen `String` methods and five of what
-//! `collections-and-chains.md` gives `Array`, so the index can answer
-//! `"a".length()` and cannot answer `"a".slice(0..4)` — and the second is a
-//! correct program.
+//! the whole difficulty: when this was written `builtins.rs` transcribed
+//! thirteen of `stdlib-core.md` §6.9's nineteen `String` methods and five of
+//! what `collections-and-chains.md` gives `Array`, so the index could answer
+//! `"a".length()` and could not answer `"a".slice(0..4)` — and the second is a
+//! correct program. All nineteen are transcribed now; `"a".owned()`, §1.4's
+//! chain terminal, is the `String` call that is still in that position.
 //!
 //! **Decision. [`Methods::receiver`] answers for a builtin head that has
 //! declared methods, and [`Methods::surface_is_closed`] says that its answer of

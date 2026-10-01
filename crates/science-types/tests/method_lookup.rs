@@ -1042,10 +1042,13 @@ def probe(text: &String, items: &Array[I64]) -> Bool:
 /// And the other half of §8a, which is the reason the rule is a *list* and not
 /// a flag: these are correct programs.
 ///
-/// `truncate` and `slice` are two of the six `stdlib-core.md` §6.9 methods the
-/// `String` block's own comment names as left out, and `pop` and `iterate` are
-/// `collections-and-chains.md`'s. Every one of them is in `builtins.rs`'
-/// `UNWRITTEN`, and every one goes when the signature lands.
+/// `truncate` and `slice` were two of the `stdlib-core.md` §6.9 methods the
+/// `String` block's own comment named as left out, and `pop` and `iterate` are
+/// `collections-and-chains.md`'s. Each was in `builtins.rs`' `UNWRITTEN` and
+/// left it when its signature landed — all four have now — so this program is
+/// still correct and is now *resolved* rather than excused; `text.owned()` is
+/// the `String` name that remains unwritten, and is added to keep the
+/// excusing half under test.
 #[test]
 fn a_name_a_note_gives_and_the_prelude_has_not_written_is_silent() {
     check(
@@ -1053,6 +1056,7 @@ fn a_name_a_note_gives_and_the_prelude_has_not_written_is_silent() {
 def uses(text: &mut String, items: &mut Array[I64]) -> Bool:
     text.truncate(4)
     let s be text.slice(0..4)
+    let o be text.owned()
     let p be items.pop()
     let it be items.iterate()
     true

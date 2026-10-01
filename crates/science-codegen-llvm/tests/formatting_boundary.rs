@@ -177,21 +177,30 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// `stdlib-core.md` §8.1's seventeen math entry points each return an `f64`
 /// or an `Int`, in a register on every convention, so the table grew by
 /// seventeen and this set by none.
+///
+/// **And nineteen — twenty-one on Windows — with one hundred and nine rows.**
+/// `stdlib-core.md` §6.9's last three `String` methods added five entry
+/// points and three of them return an aggregate: `science_string_trim` an
+/// owned `String`, `science_string_slice` `from_bytes`'s four-word `(String,
+/// TextError?)`, `science_string_split` a nine-word `Split`. All three are
+/// MEMORY everywhere, so the host does not matter for them;
+/// `science_split_next` returns a `Bool` and `science_split_free` nothing, and
+/// the count did not move for those two.
 #[test]
-fn the_derived_sret_set_is_sixteen_and_eighteen_on_windows_and_has_moved_eight_times() {
+fn the_derived_sret_set_is_nineteen_and_twenty_one_on_windows_and_has_moved_nine_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
         .map(|entry| runtime_signature(triple, entry))
         .filter(|sig| sig.ret.is_sret())
         .count();
-    let expected = if triple == Triple::X86_64WindowsMsvc { 18 } else { 16 };
+    let expected = if triple == Triple::X86_64WindowsMsvc { 21 } else { 19 };
     assert_eq!(
         indirect, expected,
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 104, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 109, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

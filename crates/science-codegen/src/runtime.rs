@@ -184,11 +184,22 @@ pub enum RtAggregate {
     /// with it for the prelude name `Formatter`, which is what gives
     /// `science-mir`'s `Formatter` temporary a stack slot to live in.
     Formatter,
+    /// `{ text: ScienceString, separator: ScienceString, start, search, done }`
+    /// — `stdlib-core.md` §6.9's `Split`, nine words. **The first iterator
+    /// here that owns memory**: `science-rt`'s `ScienceSplit` says why it
+    /// copies both of its operands rather than borrowing them as
+    /// [`RtAggregate::Lines`] does, and `science_split_free` is its release.
+    Split,
+    /// `{ start: i64, end: i64, inclusive: bool }` — a `Range of Int` held as
+    /// a value, three words. A `for` over a range never builds one; the first
+    /// thing that does is `String.slice`'s argument, which crosses the
+    /// boundary by address.
+    RangeI64,
 }
 
 impl RtAggregate {
-    /// All seventeen, in a fixed order.
-    pub const ALL: [RtAggregate; 17] = [
+    /// All nineteen, in a fixed order.
+    pub const ALL: [RtAggregate; 19] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Lines,
@@ -206,6 +217,8 @@ impl RtAggregate {
         RtAggregate::StringAndTextError,
         RtAggregate::FormatSpec,
         RtAggregate::Formatter,
+        RtAggregate::Split,
+        RtAggregate::RangeI64,
     ];
 
     /// The C name, as it appears in `science-rt`.
@@ -228,6 +241,8 @@ impl RtAggregate {
             RtAggregate::StringAndTextError => "ScienceStringAndTextError",
             RtAggregate::FormatSpec => "ScienceFormatSpec",
             RtAggregate::Formatter => "ScienceFormatter",
+            RtAggregate::Split => "ScienceSplit",
+            RtAggregate::RangeI64 => "ScienceRangeI64",
         }
     }
 
@@ -450,6 +465,24 @@ impl RtAggregate {
                     Field::new("spec", RtAggregate::FormatSpec.cg_ty()),
                 ],
             ),
+            RtAggregate::Split => CgTy::strukt(
+                "ScienceSplit",
+                vec![
+                    Field::new("text", RtAggregate::String.cg_ty()),
+                    Field::new("separator", RtAggregate::String.cg_ty()),
+                    Field::new("start", usize_ty.clone()),
+                    Field::new("search", usize_ty),
+                    Field::new("done", CgTy::Bool),
+                ],
+            ),
+            RtAggregate::RangeI64 => CgTy::strukt(
+                "ScienceRangeI64",
+                vec![
+                    Field::new("start", CgTy::Int(IntTy::I64)),
+                    Field::new("end", CgTy::Int(IntTy::I64)),
+                    Field::new("inclusive", CgTy::Bool),
+                ],
+            ),
         }
     }
 
@@ -659,7 +692,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 104 entry points. §2.6: *"They are the whole list."*
+/// The 109 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -829,6 +862,17 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_chars_next", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_lines", params: &[P], ret: RtRet::Aggregate(RtAggregate::Lines) },
     RuntimeFn { symbol: "science_lines_next", params: &[P, P], ret: RtRet::Bool },
+    // `stdlib-core.md` §6.9's last three. `trim` and `slice` hand back an
+    // **owned** copy where the note says `borrowed String` — `builtins.rs`
+    // argues it at the `String` block — so both are `sret` returns of a
+    // fresh value; `slice`'s is `from_bytes`'s pair. Its second pointer is a
+    // `Range of Int` held in a caller's slot. `Split` owns its operands and
+    // so has a `free`.
+    RuntimeFn { symbol: "science_string_trim", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
+    RuntimeFn { symbol: "science_string_slice", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::StringAndTextError) },
+    RuntimeFn { symbol: "science_string_split", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::Split) },
+    RuntimeFn { symbol: "science_split_next", params: &[P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_split_free", params: &[P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_eq", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_cmp", params: &[P, P], ret: RtRet::I32 },
     RuntimeFn { symbol: "science_string_hash", params: &[P], ret: RtRet::U64 },
@@ -1283,9 +1327,18 @@ mod tests {
     /// whitelisted intrinsics or a few inline instructions, and that ratio is
     /// Decision 14 working rather than being worked around. All seventeen
     /// return a scalar, so the `sret` lists did not move.
+    ///
+    /// **One hundred and nine**: `science_string_trim`, `science_string_slice`,
+    /// `science_string_split`, `science_split_next` and `science_split_free` —
+    /// the last three of `stdlib-core.md` §6.9's nineteen `String` methods, and
+    /// the iterator `split` returns. Each is a scan of the text (for
+    /// whitespace, for a character boundary, for a separator) that builds a
+    /// fresh buffer, so Decision 14 is met as it was for
+    /// `science_string_replace`. The fifth is the first `free` an iterator has
+    /// needed, because `Split` is the first iterator that owns its operands.
     #[test]
-    fn there_are_one_hundred_and_four_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 104, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_nine_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 109, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1427,6 +1480,12 @@ mod tests {
             // thirty-two in all — `science_read_file`'s case, on every
             // convention.
             "science_string_from_utf8",
+            // `trim`'s owned copy is a `String`, `slice` returns
+            // `from_bytes`'s pair and `split` a nine-word `Split`: all MEMORY
+            // on every convention, and derived before they were listed here.
+            "science_string_trim",
+            "science_string_slice",
+            "science_string_split",
         ];
         // **And for the first time the set differs by convention.**
         // `science_string_parse_int` and `science_string_parse_float` return

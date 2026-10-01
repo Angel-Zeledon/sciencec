@@ -652,3 +652,160 @@ fn free_is_idempotent_on_the_emptied_value() {
         assert_eq!(v.len, 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// `trim`, `slice`, `split` and `from_bytes`: `stdlib-core.md` §6.9's last four.
+// ---------------------------------------------------------------------------
+
+fn trimmed(text: &str) -> String {
+    let v = s(text);
+    let out = unsafe { science_string_trim(&v) };
+    let seen = as_str(&out).to_owned();
+    free(out);
+    free(v);
+    seen
+}
+
+#[test]
+fn trim_removes_the_six_ascii_whitespace_bytes_from_both_ends() {
+    assert_eq!(trimmed("  hello \t"), "hello");
+    // Space, tab, CR, LF, FF and VT — VT is the one `is_ascii_whitespace`
+    // leaves out, and §6.9 names.
+    assert_eq!(trimmed(" \t\r\n\x0C\x0Bx\x0B\x0C\n\r\t "), "x");
+    assert_eq!(trimmed("inner  space"), "inner  space");
+}
+
+#[test]
+fn trim_of_empty_and_of_whitespace_only_is_empty() {
+    assert_eq!(trimmed(""), "");
+    assert_eq!(trimmed(" \t\n "), "");
+}
+
+#[test]
+fn trim_leaves_unicode_whitespace_and_multibyte_text_alone() {
+    // U+00A0 and U+3000 are Unicode `White_Space` and not ASCII: §6.9 pins
+    // `trim` to ASCII, and `text.trim_unicode()` is the other one.
+    assert_eq!(trimmed("\u{A0}é\u{3000}"), "\u{A0}é\u{3000}");
+    assert_eq!(trimmed("  héllo€  "), "héllo€");
+}
+
+fn sliced(text: &str, start: i64, end: i64, inclusive: bool) -> Result<String, ScienceTextError> {
+    let v = s(text);
+    let range = ScienceRangeI64 { start, end, inclusive };
+    let pair = unsafe { science_string_slice(&v, &range) };
+    let seen = as_str(&pair.value).to_owned();
+    free(pair.value);
+    free(v);
+    if pair.error.present == SCIENCE_NULLABLE_PRESENT {
+        assert_eq!(seen, "", "the failing path hands back the empty string");
+        Err(pair.error.error)
+    } else {
+        Ok(seen)
+    }
+}
+
+#[test]
+fn slice_copies_a_byte_range_on_character_boundaries() {
+    assert_eq!(sliced("hello", 1, 4, false), Ok("ell".into()));
+    assert_eq!(sliced("hello", 1, 4, true), Ok("ello".into()));
+    assert_eq!(sliced("hello", 0, 5, false), Ok("hello".into()));
+    assert_eq!(sliced("hello", 2, 2, false), Ok("".into()));
+    assert_eq!(sliced("", 0, 0, false), Ok("".into()));
+    // `é` is two bytes and `€` three: 1..3 is `é` exactly, 3..6 is `€`.
+    assert_eq!(sliced("hé€", 1, 3, false), Ok("é".into()));
+    assert_eq!(sliced("hé€", 3, 6, false), Ok("€".into()));
+}
+
+#[test]
+fn slice_inside_a_character_is_not_a_character_boundary() {
+    assert_eq!(sliced("hé", 0, 2, false), Err(ScienceTextError::NOT_A_CHARACTER_BOUNDARY));
+    assert_eq!(sliced("hé", 2, 3, false), Err(ScienceTextError::NOT_A_CHARACTER_BOUNDARY));
+    assert_eq!(sliced("\u{1F600}", 1, 4, false), Err(ScienceTextError::NOT_A_CHARACTER_BOUNDARY));
+}
+
+#[test]
+fn slice_outside_the_string_is_out_of_range() {
+    assert_eq!(sliced("abc", 0, 9, false), Err(ScienceTextError::OUT_OF_RANGE));
+    assert_eq!(sliced("abc", 0, 3, true), Err(ScienceTextError::OUT_OF_RANGE));
+    assert_eq!(sliced("abc", -1, 2, false), Err(ScienceTextError::OUT_OF_RANGE));
+    assert_eq!(sliced("abc", 2, 1, false), Err(ScienceTextError::OUT_OF_RANGE));
+    assert_eq!(sliced("abc", 0, i64::MAX, true), Err(ScienceTextError::OUT_OF_RANGE));
+}
+
+fn split_of(text: &str, separator: &str) -> Vec<String> {
+    let v = s(text);
+    let sep = s(separator);
+    let mut seen = Vec::new();
+    unsafe {
+        let mut it = science_string_split(&v, &sep);
+        // The iterator owns copies: both operands can go before it is walked.
+        free(v);
+        free(sep);
+        let mut out = science_string_new();
+        while science_split_next(&mut it, &mut out) {
+            seen.push(as_str(&out).to_owned());
+            free(out);
+        }
+        assert!(!science_split_next(&mut it, &mut out), "exhausted stays exhausted");
+        science_split_free(&mut it);
+    }
+    seen
+}
+
+#[test]
+fn split_keeps_every_empty_piece() {
+    assert_eq!(split_of("a,b,c", ","), ["a", "b", "c"]);
+    assert_eq!(split_of("a,,b", ","), ["a", "", "b"]);
+    assert_eq!(split_of(",a,", ","), ["", "a", ""]);
+    assert_eq!(split_of("abc", ","), ["abc"]);
+    assert_eq!(split_of("", ","), [""]);
+}
+
+#[test]
+fn split_on_a_multibyte_or_longer_separator() {
+    assert_eq!(split_of("a::b::", "::"), ["a", "b", ""]);
+    assert_eq!(split_of("é€é", "€"), ["é", "é"]);
+    // Non-overlapping, left to right — `replace`'s rule.
+    assert_eq!(split_of("aaa", "aa"), ["", "a"]);
+}
+
+#[test]
+fn split_on_the_empty_separator_cuts_at_every_character_boundary() {
+    assert_eq!(split_of("ab", ""), ["", "a", "b", ""]);
+    assert_eq!(split_of("é€", ""), ["", "é", "€", ""]);
+    assert_eq!(split_of("", ""), ["", ""]);
+}
+
+fn from_utf8(bytes: &[u8]) -> Result<String, ScienceTextError> {
+    // An `Array of U8` the runtime only borrows, so a Rust buffer serves.
+    let array = ScienceArray { ptr: bytes.as_ptr() as *mut u8, len: bytes.len(), cap: bytes.len() };
+    let pair = unsafe { science_string_from_utf8(&array) };
+    let seen = as_str(&pair.value).to_owned();
+    free(pair.value);
+    if pair.error.present == SCIENCE_NULLABLE_PRESENT {
+        assert_eq!(seen, "");
+        Err(pair.error.error)
+    } else {
+        Ok(seen)
+    }
+}
+
+#[test]
+fn from_bytes_copies_valid_utf8() {
+    assert_eq!(from_utf8(b"hello"), Ok("hello".into()));
+    assert_eq!(from_utf8("hé€\u{1F600}".as_bytes()), Ok("hé€\u{1F600}".into()));
+    assert_eq!(from_utf8(b""), Ok("".into()));
+}
+
+#[test]
+fn from_bytes_refuses_anything_that_is_not_utf8() {
+    for bad in [
+        &b"\xff"[..],
+        b"\x80",             // a stray continuation byte
+        b"h\xc3",            // a truncated sequence
+        b"\xc0\xaf",         // an overlong `/`
+        b"\xed\xa0\x80",     // an encoded surrogate
+    ] {
+        assert_eq!(from_utf8(bad), Err(ScienceTextError::NOT_UTF8), "{bad:?}");
+    }
+}

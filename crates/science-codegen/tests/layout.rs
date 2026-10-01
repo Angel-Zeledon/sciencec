@@ -29,7 +29,7 @@ use science_rt::{
     SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec, ScienceLines,
     ScienceF64AndTextError, ScienceFormatter, ScienceI64AndTextError, ScienceMap, ScienceMapInfo,
     ScienceNullableIoError, ScienceNullableTextError, ScienceString, ScienceStringAndIoError,
-    ScienceStringAndTextError, ScienceTextError, ScienceTypeInfo,
+    ScienceStringAndTextError, ScienceTextError, ScienceTypeInfo, ScienceSplit, ScienceRangeI64,
 };
 
 /// The host triple. These comparisons are only meaningful against the target
@@ -82,6 +82,24 @@ fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     // would read the wrong bytes if the third disagreed.
     agrees!(RtAggregate::FormatSpec, ScienceFormatSpec);
     agrees!(RtAggregate::Formatter, ScienceFormatter);
+    // §6.9's `split` and `slice`: the iterator one returns and the range the
+    // other takes. (`slice` returns `from_bytes`'s pair, agreed above.)
+    agrees!(RtAggregate::Split, ScienceSplit);
+    agrees!(RtAggregate::RangeI64, ScienceRangeI64);
+}
+
+#[test]
+fn split_and_range_fields_are_where_rustc_puts_them() {
+    let split = layout_of(host(), &RtAggregate::Split.cg_ty());
+    assert_eq!(split.field_offset(0), Some(offset_of!(ScienceSplit, text) as u64));
+    assert_eq!(split.field_offset(1), Some(offset_of!(ScienceSplit, separator) as u64));
+    assert_eq!(split.field_offset(2), Some(offset_of!(ScienceSplit, start) as u64));
+    assert_eq!(split.field_offset(3), Some(offset_of!(ScienceSplit, search) as u64));
+    assert_eq!(split.field_offset(4), Some(offset_of!(ScienceSplit, done) as u64));
+    let range = layout_of(host(), &RtAggregate::RangeI64.cg_ty());
+    assert_eq!(range.field_offset(0), Some(offset_of!(ScienceRangeI64, start) as u64));
+    assert_eq!(range.field_offset(1), Some(offset_of!(ScienceRangeI64, end) as u64));
+    assert_eq!(range.field_offset(2), Some(offset_of!(ScienceRangeI64, inclusive) as u64));
 }
 
 #[test]

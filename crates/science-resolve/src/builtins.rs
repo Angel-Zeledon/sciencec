@@ -167,6 +167,9 @@ const LIBRARY_TYPES: &[&str] = &[
     // [materialising a forty-gigabyte file] requires an import has put the
     // trap on the default path"*.
     "Lines",
+    // `stdlib-core.md` §6.9's `split(self, separator) -> Split`. §9 lists it
+    // among the Level 1 types; what it hands out is decided at its block.
+    "Split",
     "Range",
     "IoError",
     "TextError",
@@ -1469,21 +1472,59 @@ const BLOCKS: &[Block] = &[
     },
     // --- String, §6.9 -----------------------------------------------------
     //
-    // Fifteen of the note's nineteen, and `new` is the one of them that a note
-    // declares in full: §6.9's first line is `def new() -> String`, so it is
-    // transcription and not a decision.
-    //
-    // The ones left out, with the reason each is out:
-    //
-    // - `slice` and `split` return `Range` and `Split` — the second a Level 1
-    //   type §9 lists and the prelude does not have, the first a borrowed
-    //   `String` in the middle of another, which has no `String` header of its
-    //   own to point at (the reason `Lines` hands out owned lines).
-    // - `from_bytes` was left out while no program called it. The bundled
-    //   `os` module does, and it is declared at the end of the block.
+    // All nineteen of the note's methods, `characters` spelled `chars` (its
+    // row says why). `new` is the one of them that a note declares in full:
+    // §6.9's first line is `def new() -> String`, so it is transcription and
+    // not a decision.
     //
     // `lines` and `bytes` joined for Gate C1: a file split into lines, and a
-    // dump written through `Write.write(bytes: &Array[U8])`.
+    // dump written through `Write.write(bytes: &Array[U8])`. `from_bytes`
+    // joined when the bundled `os` module called it, and is declared at the
+    // end of the block. `trim`, `slice` and `split` were the last three, and
+    // two of them are **not** §6.9's signature.
+    //
+    // # Decision: `trim` and `slice` return an owned `String`
+    //
+    // §6.9 writes `def trim(self) -> borrowed String` and `def slice(self,
+    // bytes: Range of Int) -> (borrowed String, TextError?)`. Here they are
+    // `-> String` and `-> (String, TextError?)`: the bytes are copied.
+    //
+    // # Reason
+    //
+    // A `String` is `science-rt`'s `{ ptr, len, cap }` and a `borrowed
+    // String` is a pointer to such a header. A trimmed or sliced string is
+    // the middle of another string's buffer, and has no header of its own for
+    // that pointer to reach — the reason `Lines` already hands out owned
+    // lines. The three ways out were measured against what each costs:
+    //
+    // - **A string-view type** — a `{ ptr, len }` that reads as a `String`
+    //   wherever a `&String` is accepted, and borrows the receiver. The
+    //   faithful one, and a type-system change: every `&String` parameter in
+    //   the prelude and the runtime would have to accept two representations,
+    //   or the view would need a coercion at every call, and `science-regions`
+    //   places a region only at `TyKind::Borrowed`, so the view's borrow of
+    //   its receiver would be invisible to it unless the view *is* a
+    //   `borrowed` type. That is a design note's worth of decisions, not a
+    //   method's.
+    // - **A header in a caller-owned slot** — `{ ptr + start, len, 0 }`
+    //   written to a temporary and a pointer to it returned. Unsound as soon
+    //   as the result is returned from the function that owns the slot:
+    //   `def first(s: borrowed String) -> borrowed String: s.trim()` passes
+    //   the region checker, which sees a borrow of `s`, and hands back the
+    //   address of a dead frame.
+    // - **An owned copy** — always sound, and needs nothing new from the type
+    //   checker or the region checker.
+    //
+    // # Cost
+    //
+    // One allocation per call, and a program that writes `let field be
+    // line.trim()` owns `field` rather than borrowing `line` — so it may
+    // outlive `line`, which §6.9's signature would forbid. Every use §6.11
+    // shows (`field.is_empty()`, `field.starts_with("#")`,
+    // `field.parse_float()`) reads the same under both. Moving to the view
+    // later narrows what programs may do with the result, so it is a
+    // breaking change to these two signatures, and whoever writes the view's
+    // design note decides it.
     Block {
         ty: "String",
         generics: &[],
@@ -1548,13 +1589,35 @@ const BLOCKS: &[Block] = &[
                 params: &[("needle", Ty::Ref(&STRING))],
                 ret: Some(Ty::Opt(&INT)),
             },
-            // §6.9: ASCII whitespace only, pinned forever.
+            // §6.9: ASCII whitespace only — space, tab, CR, LF, FF, VT —
+            // pinned forever. Owned, not borrowed: the block's Decision.
             Method {
                 name: "trim",
                 generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
-                ret: Some(Ty::Ref(&STRING)),
+                ret: Some(STRING),
+            },
+            // §6.4's byte-range view, owned for the same Decision. It fails
+            // with `TextError` when either end is inside a character, and
+            // when the range is not within the string — the second is
+            // `science-rt`'s `science_string_slice`'s to argue.
+            Method {
+                name: "slice",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("bytes", Ty::App("Range", &[INT]))],
+                ret: Some(Ty::Pair(&STRING, &Ty::Opt(&Ty::Name("TextError")))),
+            },
+            // §6.9's `def split(self, separator: borrowed String) -> Split`,
+            // transcribed. What a piece is — every occurrence separates and
+            // empty pieces are kept — is `science_split_next`'s to decide.
+            Method {
+                name: "split",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("separator", Ty::Ref(&STRING))],
+                ret: Some(Ty::Name("Split")),
             },
             Method {
                 name: "replace",
@@ -1859,8 +1922,8 @@ const BLOCKS: &[Block] = &[
     // `File.lines()`, and says nothing about what a line is. A `&String` item
     // was the other candidate and is not available: a `String` is `{ ptr, len,
     // cap }` and a line in the middle of one has no `String` of its own for a
-    // borrow to point at — which is also why `trim`, declared above as
-    // returning a borrow, has no entry point. And the file source settles it
+    // borrow to point at — which is also why `trim` and `slice` above return
+    // owned copies, against §6.9. And the file source settles it
     // regardless: a line read from a `File` has no buffer to borrow from, and
     // one `Lines` with one `Item` is what lets §4.5 give both sources one type.
     //
@@ -1871,6 +1934,29 @@ const BLOCKS: &[Block] = &[
     // and declaring it here is what gives the call a type for an owner.
     Block {
         ty: "Lines",
+        generics: &[],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", STRING)],
+        methods: &[Method {
+            name: "next",
+            generics: &[],
+            recv: Some(SelfKind::Mutable),
+            params: &[],
+            ret: Some(Ty::Opt(&STRING)),
+        }],
+    },
+    // --- Split ------------------------------------------------------------
+    //
+    // `String.split`'s iterator, `Lines`' shape and `Lines`' reason for an
+    // owned `Item`: a piece in the middle of a string has no header for a
+    // borrow to point at. **Unlike `Lines` it borrows nothing at all** — it
+    // owns copies of the text and the separator, so it has drop glue —
+    // because nothing in the type `Split` tells `science-regions` that it
+    // borrows, and `line.split(",")`'s separator is a temporary that dies at
+    // the end of its statement. `science-rt`'s `ScienceSplit` has the
+    // argument in full.
+    Block {
+        ty: "Split",
         generics: &[],
         interface: Some(("Iterate", &[])),
         assoc: &[("Item", STRING)],
@@ -2352,15 +2438,12 @@ pub fn numeric_constant(ty: &str, name: &str) -> Option<NumericConstant> {
 /// true — so the string comparison is total. It is the lookup the `DefTable`
 /// exists to abolish, performed once per otherwise-unresolved method call.
 const UNWRITTEN: &[(&str, &[&str])] = &[
-    // `String` — the five of `stdlib-core.md` §6.9's nineteen that the
-    // `String` block above leaves out. That block's own comment names all
-    // five and gives the reason for each:
-    // `slice`/`lines`/`split` because they return
-    // Level 1 types the prelude does not have, and `from_bytes`/`bytes`
-    // because no program in `examples/` calls either. `from_bytes` retired
-    // from this list the day the bundled `os` module called it.
+    // `String` — §6.9's nineteen are all in the block above now (`from_bytes`
+    // left this row when the bundled `os` module called it, `slice` and
+    // `split` were the last to leave it, and `lines` and `bytes` had left it
+    // in substance at Gate C1 without being struck here), so what remains is
+    // a name another note gives.
     ("String", &[
-        "slice", "lines", "split", "bytes",
         // `clone` retired from this list the day `INTERFACE_DECLS` gained
         // `Clone.clone`: §6.2's *"`.owned()` and `.clone()` are both written"*
         // is now true of the first half. `owned()` stays — it is
@@ -2614,6 +2697,8 @@ const WHOLLY_OPEN: &[&str] = &[
     // `Lines`, for `Chars`' reason: its surface is `Iterate`'s provided
     // methods and only `next` is transcribed.
     "Lines",
+    // `Split`, for `Lines`' reason.
+    "Split",
     // **The chain types are not here any more.** They were, for `Chars`'
     // reason, while six of §1.4's thirty-eight were transcribed; with
     // thirteen, the remainder is one list and [`UNWRITTEN`] points each of

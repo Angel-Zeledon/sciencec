@@ -1,7 +1,8 @@
-//! `TextError`, and the three `String` methods that produce one:
+//! `TextError`, and the four `String` methods that produce one:
 //! `parse_int(self) -> (I64, TextError?)`, `parse_float(self) -> (F64,
-//! TextError?)` and `from_bytes(bytes: borrowed Array of U8) -> (String,
-//! TextError?)` of `stdlib-core.md` §6.9.
+//! TextError?)`, `from_bytes(bytes: borrowed Array of U8) -> (String,
+//! TextError?)` and `slice(self, bytes: Range of Int)`, all of
+//! `stdlib-core.md` §6.9.
 //!
 //! The layout follows `io.rs` exactly, for `io.rs`'s reasons: a payload-free
 //! error is its own discriminant byte (the crate documentation, §5.1), its
@@ -17,10 +18,10 @@ use crate::string::ScienceString;
 ///
 /// **One byte, payload-free, numbered in `stdlib-core.md` §7.4's declaration
 /// order**: `NotUtf8`, `NotACharacterBoundary`, `NotANumber`, `OutOfRange` are
-/// 0 to 3. The last two are produced by the two parse entry points below and
-/// the first by [`science_string_from_utf8`]; the second belongs to
-/// `String.slice`, which has no entry point yet and is numbered now so that it
-/// does not renumber the others when it arrives.
+/// 0 to 3. The last two are produced by the two parse entry points below, the
+/// first by [`science_string_from_utf8`] (`String.from_bytes`) and the second
+/// by [`science_string_slice`] (`String.slice`) — the second numbered before
+/// it had an entry point, so that its arrival renumbered nothing.
 ///
 /// # The reason
 ///
@@ -50,13 +51,14 @@ impl ScienceTextError {
     /// The bytes are not valid UTF-8. §7.4's `NotUtf8`, from
     /// [`science_string_from_utf8`].
     pub const NOT_UTF8: Self = Self(0);
-    /// A byte offset falls inside a character. §7.4's `NotACharacterBoundary`;
-    /// not produced yet.
+    /// A byte offset falls inside a character. §7.4's `NotACharacterBoundary`,
+    /// from `String.slice`.
     pub const NOT_A_CHARACTER_BOUNDARY: Self = Self(1);
     /// The text is not a number in the accepted syntax — including the empty
     /// string and a sign with no digits after it.
     pub const NOT_A_NUMBER: Self = Self(2);
-    /// The text is a number, and the type cannot hold it.
+    /// The text is a number, and the type cannot hold it — or, from
+    /// `String.slice`, a byte range that does not lie within the string.
     pub const OUT_OF_RANGE: Self = Self(3);
 }
 
@@ -320,6 +322,94 @@ pub unsafe extern "C" fn science_string_from_utf8(bytes: *const crate::ScienceAr
 fn names_infinity(text: &str) -> bool {
     let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
     unsigned.bytes().next().is_some_and(|byte| byte.is_ascii_alphabetic())
+}
+
+/// Science's `Range of Int`, as a value: `0..n` and `0..=n` once they are
+/// held rather than walked.
+///
+/// `{ start, end, inclusive }`, in that order: two `i64` and a `bool`, 24 bytes
+/// aligned to 8. A `for i in a..b:` never builds one — `science-mir` lowers it
+/// to a counting loop — so the one place a range crosses into this crate is an
+/// argument, and [`science_string_slice`] is the first. `science-codegen`'s
+/// `RtAggregate::RangeI64` is the compiler's half of this layout and its
+/// `tests/layout.rs` holds the two together.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ScienceRangeI64 {
+    /// The first element.
+    pub start: i64,
+    /// The bound: excluded for `a..b`, included for `a..=b`.
+    pub end: i64,
+    /// Whether `end` is part of the range.
+    pub inclusive: bool,
+}
+
+/// [`science_string_slice`]'s two outcomes, as the pair `from_bytes` already
+/// returns.
+impl ScienceStringAndTextError {
+    fn failed(code: ScienceTextError) -> Self {
+        Self { value: ScienceString::empty(), error: ScienceNullableTextError::present(code) }
+    }
+
+    /// An owned copy of `text`, with the error null.
+    fn copied(text: &str) -> Self {
+        Self {
+            // SAFETY: a `&str` is valid UTF-8 of its own length.
+            value: unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) },
+            error: ScienceNullableTextError::null(),
+        }
+    }
+}
+
+/// Science's `String.slice(self, bytes: Range of Int)`, returning **an owned
+/// copy** of the bytes the range names.
+///
+/// # The decision
+///
+/// `stdlib-core.md` §6.4 and §6.9 give the return as `(borrowed String,
+/// TextError?)`. This returns `(String, TextError?)`: the bytes are copied
+/// into a fresh `String`. `science-resolve`'s `builtins.rs`, at the `String`
+/// block, carries the whole argument; the short form is that a `&String` is a
+/// pointer to a `{ ptr, len, cap }` header, and a sub-range of another
+/// string's buffer has no header of its own for such a pointer to reach.
+///
+/// # The errors, decided here
+///
+/// - [`ScienceTextError::NOT_A_CHARACTER_BOUNDARY`] when either end lies
+///   inside a multi-byte character — §6.4's *"fails if either end is not a
+///   character boundary"*, the case the signature exists for.
+/// - [`ScienceTextError::OUT_OF_RANGE`] when the range does not lie within
+///   the string at all: a negative start, an end past `length()`, or a start
+///   after the end. §6.4 does not name this case. A byte past the end is no
+///   boundary of the string either, but `NotACharacterBoundary` read off
+///   `"abc".slice(0..9)` would send a reader looking for a character that is
+///   not there; §7.4's `OutOfRange` is the variant whose name is true.
+///
+/// An empty range at a boundary — `"abc".slice(1..1)` — is the empty string,
+/// not an error.
+///
+/// # Safety
+///
+/// `value` and `range` must be non-null, aligned pointers to a live
+/// [`ScienceString`] and a live [`ScienceRangeI64`].
+#[no_mangle]
+pub unsafe extern "C" fn science_string_slice(
+    value: *const ScienceString,
+    range: *const ScienceRangeI64,
+) -> ScienceStringAndTextError {
+    // SAFETY: the caller guarantees both pointers are live.
+    let (text, range) = unsafe { ((*value).as_str(), *range) };
+    let end = if range.inclusive { range.end.checked_add(1) } else { Some(range.end) };
+    let (Ok(start), Some(Ok(end))) = (usize::try_from(range.start), end.map(usize::try_from)) else {
+        return ScienceStringAndTextError::failed(ScienceTextError::OUT_OF_RANGE);
+    };
+    if start > end || end > text.len() {
+        return ScienceStringAndTextError::failed(ScienceTextError::OUT_OF_RANGE);
+    }
+    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+        return ScienceStringAndTextError::failed(ScienceTextError::NOT_A_CHARACTER_BOUNDARY);
+    }
+    ScienceStringAndTextError::copied(&text[start..end])
 }
 
 #[cfg(test)]

@@ -71,6 +71,58 @@ pub struct ScienceLines {
     pub offset: usize,
 }
 
+/// `String::split(separator)`, an iterator over the pieces between
+/// occurrences of a separator.
+///
+/// This is `stdlib-core.md` §6.9's Level 1 `Split`, which `implements
+/// Iterate` with `Item is String`: each piece is an **owned** `String`, for
+/// [`ScienceLines`]' reason — a piece in the middle of another string has no
+/// header of its own for a `&String` to point at.
+///
+/// # The decision: it owns copies of both strings
+///
+/// **Unlike [`ScienceChars`] and [`ScienceLines`], a `Split` borrows
+/// nothing.** [`science_string_split`] copies the text and the separator into
+/// the iterator, and [`science_split_free`] releases them.
+///
+/// # The reason
+///
+/// `Lines` and `Chars` borrow the string they walk, and nothing in the type
+/// says so: `science-regions` places a region only at a `borrowed` type, and
+/// neither iterator type is one. So `let it be "a\nb".lines()` frees the
+/// literal at the end of the `let` and walks freed memory after it — which is
+/// a hole in those two, found while writing this one, and reported rather
+/// than repeated. `split` makes that hole twice as easy to fall into, because
+/// its *second* operand is almost always a temporary: `line.split(",")`
+/// builds the `","` for the call and drops it at the end of the statement. An
+/// iterator that owns its operands is sound whatever the region checker can
+/// see.
+///
+/// # The cost
+///
+/// One copy of the text and one of the separator per `split` call, beside
+/// the one allocation per piece every owned-item iterator already pays —
+/// at most doubling the bytes `split` allocates. A `Split` is also the first
+/// iterator with drop glue.
+///
+/// Layout: `{ text, separator, start, search, done }` — two [`ScienceString`]s,
+/// two words, and a `bool`: 72 bytes aligned to 8 on every F0 target.
+#[repr(C)]
+pub struct ScienceSplit {
+    /// The text being split; owned.
+    pub text: ScienceString,
+    /// The separator; owned.
+    pub separator: ScienceString,
+    /// Byte offset of the next piece's first byte.
+    pub start: usize,
+    /// Byte offset the next search for the separator begins at. Equal to
+    /// `start` except for an empty separator, which matches *at* `start` and
+    /// so must search from one character past it.
+    pub search: usize,
+    /// Whether the last piece has been handed out.
+    pub done: bool,
+}
+
 impl ScienceString {
     #[inline]
     pub(crate) fn empty() -> Self {
@@ -688,6 +740,147 @@ pub unsafe extern "C" fn science_lines_next(
     // it is valid UTF-8; the caller guarantees `out` is writable.
     unsafe { out.write(ScienceString::from_raw_utf8(line.as_ptr(), line.len())) };
     true
+}
+
+/// Whether `byte` is one of the six ASCII whitespace bytes `stdlib-core.md`
+/// §6.9 pins `trim` to *"forever"*: space, tab, CR, LF, FF and VT.
+///
+/// **Not `u8::is_ascii_whitespace`**, which is WHATWG's set and leaves out VT
+/// (`0x0B`). §6.9 names VT, and a note that pins a set forever is the one place
+/// a borrowed definition must not be trusted to agree.
+fn is_trimmed(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0C | 0x0B)
+}
+
+/// `String.trim(self)`: the text with ASCII whitespace removed from both
+/// ends, as **an owned copy**.
+///
+/// §6.9 returns `borrowed String`, and `science-resolve`'s `builtins.rs` says
+/// at the `String` block why this returns `String` instead: a trimmed string
+/// is the middle of another one, and has no `{ ptr, len, cap }` header for a
+/// `&String` to point at. The whitespace set is [`is_trimmed`]'s. Removing
+/// only ASCII bytes from the ends of valid UTF-8 leaves valid UTF-8, because
+/// no ASCII byte occurs inside a multi-byte sequence.
+///
+/// # Safety
+///
+/// `value` must be a non-null, aligned pointer to a live [`ScienceString`].
+#[no_mangle]
+pub unsafe extern "C" fn science_string_trim(value: *const ScienceString) -> ScienceString {
+    // SAFETY: the caller guarantees a live `ScienceString`.
+    let bytes = unsafe { (*value).bytes() };
+    let start = bytes.iter().position(|&byte| !is_trimmed(byte)).unwrap_or(bytes.len());
+    let end = bytes.iter().rposition(|&byte| !is_trimmed(byte)).map_or(start, |last| last + 1);
+    let kept = &bytes[start..end];
+    // SAFETY: `kept` is valid UTF-8 cut only at ASCII bytes, as above.
+    unsafe { ScienceString::from_raw_utf8(kept.as_ptr(), kept.len()) }
+}
+
+/// `String.split(self, separator: borrowed String) -> Split`.
+///
+/// Copies both strings into the returned [`ScienceSplit`], whose own
+/// documentation says why it borrows nothing. The receiver is not modified.
+///
+/// # Safety
+///
+/// Both pointers must be non-null, aligned and point to live
+/// [`ScienceString`]s; they may be the same string.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_split(
+    value: *const ScienceString,
+    separator: *const ScienceString,
+) -> ScienceSplit {
+    // SAFETY: the caller guarantees two live strings, each valid UTF-8.
+    let (text, separator) = unsafe { ((*value).bytes(), (*separator).bytes()) };
+    ScienceSplit {
+        // SAFETY: each is a whole live `String`'s bytes, so valid UTF-8.
+        text: unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) },
+        // SAFETY: as above.
+        separator: unsafe { ScienceString::from_raw_utf8(separator.as_ptr(), separator.len()) },
+        start: 0,
+        search: 0,
+        done: false,
+    }
+}
+
+/// Advance a [`ScienceSplit`], yielding `String?`: [`science_lines_next`]'s
+/// owned-`T?` convention exactly.
+///
+/// # What a piece is, decided here
+///
+/// **Every occurrence separates, and nothing is dropped**: `"a,,b"` split on
+/// `","` is `"a"`, `""`, `"b"`; a separator at either end gives an empty piece
+/// there, so `",a,"` is `""`, `"a"`, `""`; and `""` is one piece, `""`.
+/// Occurrences are found left to right and do not overlap, which is
+/// `replace`'s rule beside it. That is Rust's `str::split` and Python's
+/// `str.split(sep)`, and unlike [`science_lines_next`] there is no trailing
+/// exception — a final separator in a CSV row *does* mean an empty last field.
+///
+/// **An empty separator matches at every character boundary, both ends
+/// included**, so `"ab"` gives `""`, `"a"`, `"b"`, `""`. Python refuses it
+/// with an exception; this follows Rust, and for [`science_string_replace`]'s
+/// stated reason: `find` already finds `""` at 0 and `replace` already
+/// replaces it at every boundary, so `split` agreeing with both is what makes
+/// the three one story. Boundaries and not bytes, so a piece is never half a
+/// character.
+///
+/// # Safety
+///
+/// `iter` must be a non-null, aligned pointer to a live [`ScienceSplit`];
+/// `out` must be non-null, aligned for a [`ScienceString`], and writable.
+#[no_mangle]
+pub unsafe extern "C" fn science_split_next(iter: *mut ScienceSplit, out: *mut ScienceString) -> bool {
+    // SAFETY: the caller guarantees a live, uniquely borrowed `ScienceSplit`.
+    let iter = unsafe { &mut *iter };
+    if iter.done {
+        return false;
+    }
+    // SAFETY: the iterator owns both strings, which are live while it is.
+    let (text, separator) = unsafe { (iter.text.as_str(), iter.separator.as_str()) };
+    let found = if iter.search > text.len() {
+        None
+    } else {
+        text[iter.search..].find(separator).map(|at| iter.search + at)
+    };
+    let piece = match found {
+        Some(at) => {
+            let piece = &text[iter.start..at];
+            iter.start = at + separator.len();
+            iter.search = if separator.is_empty() {
+                // One character on, or past the end once the end itself has
+                // matched — which is what makes the final piece empty.
+                text[at..].chars().next().map_or(text.len() + 1, |c| at + c.len_utf8())
+            } else {
+                iter.start
+            };
+            piece
+        }
+        None => {
+            iter.done = true;
+            &text[iter.start..]
+        }
+    };
+    // SAFETY: `piece` is `text` cut at a match's ends or the text's own, all
+    // character boundaries; the caller guarantees `out` is writable.
+    unsafe { out.write(ScienceString::from_raw_utf8(piece.as_ptr(), piece.len())) };
+    true
+}
+
+/// Release a [`ScienceSplit`]'s two copies. Codegen calls this from the drop
+/// of a `Split` local, as it calls [`science_string_free`] for a `String`.
+///
+/// # Safety
+///
+/// `iter` must be a non-null, aligned pointer to a live [`ScienceSplit`] that
+/// is not used again afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn science_split_free(iter: *mut ScienceSplit) {
+    // SAFETY: the caller guarantees a live, uniquely borrowed `ScienceSplit`,
+    // whose two strings it owns.
+    unsafe {
+        science_string_free(&mut (*iter).text);
+        science_string_free(&mut (*iter).separator);
+    }
 }
 
 /// `Eq::eq` for `String`.

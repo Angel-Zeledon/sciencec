@@ -3288,6 +3288,34 @@ impl<'a> Lowerer<'a> {
             {
                 Ok(RtAggregate::Map.cg_ty())
             }
+            // **`Range of T` held as a value: `{ start, end, inclusive }`.**
+            // A `for i in a..b:` never needs one — `science-mir` lowers it to
+            // a counting loop — and until `String.slice(bytes: Range of Int)`
+            // nothing else did. Over `Int` it is `RtAggregate::RangeI64`, the
+            // layout `science-rt`'s `ScienceRangeI64` has and `slice` reads
+            // through a pointer; over any other element it is the same three
+            // fields, which nothing outside this crate reads.
+            TyKind::Named { def, args }
+                if args.len() == 1
+                    && self.defs.get(*def).name == "Range"
+                    && self.defs.get(*def).is_builtin() =>
+            {
+                let GenericArg::Type(element) = args[0] else {
+                    return Err(Unlowered::new("a `Range` over something that is not a type"));
+                };
+                let element = self.cg_ty_in(element, depth + 1, env)?;
+                if element == CgTy::Int(IntTy::I64) {
+                    return Ok(RtAggregate::RangeI64.cg_ty());
+                }
+                Ok(CgTy::strukt(
+                    "Range",
+                    vec![
+                        CgField::new("start", element.clone()),
+                        CgField::new("end", element),
+                        CgField::new("inclusive", CgTy::Bool),
+                    ],
+                ))
+            }
             // `Box of T` — §2.6's third runtime container, and the one whose
             // *value* is not an aggregate at all: Decision 19's null niche
             // makes it one word, `CgTy::Ptr(PtrKind::Box)`, with no
@@ -3373,6 +3401,11 @@ impl<'a> Lowerer<'a> {
                     // `Lines`: `Chars`' layout, and `Chars`' reason for
                     // being an ordinary value — it borrows the string it walks.
                     "Lines" => Ok(RtAggregate::Lines.cg_ty()),
+                    // `Split`: nine words, and **not** `Lines`' reason — it
+                    // owns copies of its text and separator, so unlike the two
+                    // above it is not on `drop_runs_something`'s inert list,
+                    // and `direct_release` names `science_split_free`.
+                    "Split" => Ok(RtAggregate::Split.cg_ty()),
                     // §3.1's `Formatter`: `{ sink, spec }`. Like `Chars` it
                     // borrows rather than owns, so it needs no descriptor and
                     // no `drop_fn`; unlike `Chars` a *user's* method body
@@ -3995,6 +4028,18 @@ impl<'a> Lowerer<'a> {
                         }
                         Ok(false)
                     }
+                    // A `Range` holds two of its element and a `Bool`, so it
+                    // owns what its element owns — nothing, for every range a
+                    // program can write today, which is over integers.
+                    _ if args.len() == 1
+                        && self.defs.get(def).name == "Range"
+                        && self.defs.get(def).is_builtin() =>
+                    {
+                        match args[0] {
+                            GenericArg::Type(element) => self.drop_runs_something(element, depth + 1),
+                            _ => Ok(true),
+                        }
+                    }
                     _ if !args.is_empty() => Ok(true),
                     // A primitive, or a library type. The list is
                     // [`Lowerer::cg_ty`]'s own and is kept the same shape on
@@ -4100,6 +4145,11 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Option<(&'static str, Option<String>)>, Unlowered> {
         if self.is_string(ty) {
             return Ok(Some(("science_string_free", None)));
+        }
+        // `Split` owns copies of its two strings, and `science_split_free`
+        // releases both: `science_string_free`'s shape, one type over.
+        if self.is_prelude_named(ty, "Split") {
+            return Ok(Some(("science_split_free", None)));
         }
         if let Some(element) = self.array_element(ty) {
             let descriptor = self.intern_element_descriptor(element)?;
@@ -4208,6 +4258,18 @@ impl<'a> Lowerer<'a> {
                 if args.is_empty()
                     && self.defs.get(*def).is_builtin()
                     && self.defs.get(*def).name == "String"
+        )
+    }
+
+    /// Whether a type is the argument-free prelude type called `name` —
+    /// [`Lowerer::is_string`]'s test, for a name it does not hard-code.
+    fn is_prelude_named(&self, ty: Ty, name: &str) -> bool {
+        matches!(
+            self.types.kind(ty),
+            TyKind::Named { def, args }
+                if args.is_empty()
+                    && self.defs.get(*def).is_builtin()
+                    && self.defs.get(*def).name == name
         )
     }
 
@@ -5807,6 +5869,20 @@ impl<'a> Lowerer<'a> {
                 self.lower_record(ctx, *def, fields, dest, layout, insts)
             }
             Rvalue::Tuple(elements) => self.lower_tuple(ctx, elements, dest, layout, insts),
+            // **A range held as a value is a three-field tuple**, `cg_ty`'s
+            // `Range` arm's `{ start, end, inclusive }`, and the third field
+            // is the one fact the rvalue carries that is not an operand.
+            // `lower_tuple` already writes an aggregate field by field and
+            // refuses a layout whose field count disagrees, so it is reused
+            // rather than restated.
+            Rvalue::Range { start, end, inclusive } => {
+                let fields = [
+                    start.clone(),
+                    end.clone(),
+                    mir::Operand::Const(Constant::Literal(Literal::Bool(*inclusive))),
+                ];
+                self.lower_tuple(ctx, &fields, dest, layout, insts)
+            }
             Rvalue::Variant { variant, payload } => {
                 self.lower_variant(ctx, *variant, payload, dest, layout, insts)
             }
@@ -10002,19 +10078,28 @@ impl<'a> Lowerer<'a> {
             // [`Lowerer::owned_nullable_method`]'s table instead, beside
             // `Chars.next`.
             //
-            // `trim` is still not a row, and for a different reason than
-            // before: §6.9 returns a `borrowed String` — a view into the
-            // receiver — and a `&String` that points into the middle of
-            // another `String`'s buffer is not a value `ScienceString`'s
-            // three-word layout can be, so there is no entry point to write
-            // until a borrowed string slice has a representation. The refusal
-            // a user meets for it names the method, which is the right report.
+            // `trim` was not a row for a long time, because §6.9 returns a
+            // `borrowed String` — a view into the receiver — and a `&String`
+            // that points into the middle of another `String`'s buffer is not
+            // a value `ScienceString`'s three-word layout can be. It is a row
+            // now because the prelude declares it returning an **owned**
+            // copy, and `builtins.rs`' `String` block is where that deviation
+            // is argued; `slice` is the same decision with a `TextError`
+            // beside it. Both come back through `sret` as `replace`'s does.
             ("String", "starts_with", "science_string_starts_with"),
             ("String", "ends_with", "science_string_ends_with"),
             ("String", "contains", "science_string_contains"),
             ("String", "replace", "science_string_replace"),
             ("String", "chars", "science_string_chars"),
             ("String", "lines", "science_string_lines"),
+            ("String", "trim", "science_string_trim"),
+            // `slice`'s range is an ordinary `Range of Int` value in a slot
+            // of the caller's — `cg_ty`'s `Range` arm — passed by address
+            // like every other aggregate argument here.
+            ("String", "slice", "science_string_slice"),
+            // `split` returns the nine-word `Split`, which owns copies of
+            // both operands; `direct_release` frees it.
+            ("String", "split", "science_string_split"),
             // `Array of T`'s two descriptor-free rows. **Only two**, and the
             // line is `RuntimeFn::descriptor_index`: `science_array_len(P)` and
             // `science_array_is_empty(P)` read a header field, so they take the
@@ -10814,6 +10899,9 @@ impl<'a> Lowerer<'a> {
             // `Lines.next`, the same shape with a `String` in `out`: the
             // runtime allocates the line and the `String?` this builds owns it.
             ("Lines", "next", "science_lines_next"),
+            // `Split.next`, `Lines.next`'s shape exactly: an owned piece in
+            // `out`, or `false`.
+            ("Split", "next", "science_split_next"),
             // **`Array.pop`, the third.** `science_array_pop(array, D, out) ->
             // Bool` moves the array's last element into `out` and decrements
             // `len`; it does not run the element's drop glue, so nothing is

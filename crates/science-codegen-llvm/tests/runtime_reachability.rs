@@ -571,6 +571,23 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let n be -7\n\
          \x20   print(n.rem_euclid(3))\n",
     ),
+    // `string_more.rs`, reduced: `stdlib-core.md` §6.9's last three, which
+    // joined `RUNTIME` with their callers. `trim` reaches
+    // `science_string_trim`; `slice` over a range literal reaches
+    // `science_string_slice` (and is the first program to hold a `Range` as
+    // a value); and the `for` over `split` reaches `science_string_split`
+    // and `science_split_next`, with `science_split_free` at the iterator's
+    // drop — the first iterator that has one.
+    (
+        "trim_slice_split",
+        "def main():\n\
+         \x20   let t be \" a,b \".trim()\n\
+         \x20   let part, err be t.slice(0..1)\n\
+         \x20   if err?:\n\
+         \x20       print(err.message())\n\
+         \x20   for piece in t.split(\",\"):\n\
+         \x20       print(f\"{part} {piece}\")\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over

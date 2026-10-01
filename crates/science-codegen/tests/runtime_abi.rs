@@ -206,6 +206,12 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     //
     // `science_string_from_utf8` joins as `science_read_file` did: its
     // `(String, TextError?)` is thirty-two bytes, MEMORY everywhere.
+    //
+    // **Nineteen.** §6.9's last three each return an aggregate:
+    // `science_string_trim` an owned `String`, `science_string_slice` the
+    // same four-word `(String, TextError?)` as `from_utf8`, and
+    // `science_string_split` a nine-word `Split`. `science_split_next` returns
+    // a `Bool` and `science_split_free` nothing.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -226,6 +232,9 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_lines",
             "science_string_new",
             "science_string_replace",
+            "science_string_slice",
+            "science_string_split",
+            "science_string_trim",
             "science_string_with_capacity",
             "science_text_error_message",
         ]
@@ -392,7 +401,16 @@ fn nothing_outside_the_table_is_callable() {
     // `fract`, the predicates and five of `Int`'s seven methods are a few
     // inline compares and selects — the tempting list below grows by the
     // names that were kept out.
-    assert_eq!(RUNTIME.len(), 104);
+    //
+    // **One hundred and nine.** `science_string_trim`, `science_string_slice`,
+    // `science_string_split`, `science_split_next` and `science_split_free`:
+    // §6.9's `trim`, `slice` and `split`, and the iterator `split` returns. A
+    // scan for whitespace, for a character boundary and for a separator, each
+    // building a fresh buffer — `science_string_replace`'s door. The `free` is
+    // there because `Split` owns copies of its two operands, which its
+    // `science-rt` doc comment argues; releasing two buffers is two calls to a
+    // function this table already has, made where the layout is known.
+    assert_eq!(RUNTIME.len(), 109);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

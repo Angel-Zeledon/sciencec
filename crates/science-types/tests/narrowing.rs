@@ -421,9 +421,10 @@ def touch(a: String?) -> Bool:
 #[test]
 fn a_method_this_crate_cannot_resolve_still_gives_up_the_narrowing() {
     // What survives of the conservatism, asserted so that it stays a decision.
-    // `slice` is one of the six `String` methods `builtins.rs` does not
+    // `owned` is a `String` method a note gives and `builtins.rs` does not
     // transcribe, so it resolves to nothing, there is no `SelfKind` to read,
-    // and the safe answer is the old one: the narrowing goes.
+    // and the safe answer is the old one: the narrowing goes. (It was `slice`
+    // until `slice` was transcribed.)
     let checked = check(
         "\
 type Doc:
@@ -431,7 +432,7 @@ type Doc:
 
 def touch(a: String?) -> Bool:
     if a?:
-        let _seen be a.slice(0)
+        let _seen be a.owned(0)
         return a?
     false
 ",

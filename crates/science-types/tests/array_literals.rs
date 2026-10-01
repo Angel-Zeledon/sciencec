@@ -428,9 +428,10 @@ def total(n: I64) -> I64:
 
 #[test]
 fn a_range_passed_to_a_method_is_not_an_index() {
-    // `String.slice(0..4)` is a call, not an index bracket. `methods`' §8
-    // leaves a prelude head's method set open, so this is silent — and it is
-    // silent for the reason it was before this change, not because of it.
+    // `String.slice(0..4)` is a call, not an index bracket. It was silent
+    // because `slice` was untranscribed; it is clean now because it resolves
+    // to `slice(self, bytes: Range[Int])` and `0..4` is that range — neither
+    // reason has anything to do with an index.
     support::check(
         "\
 def head(text: &String) -> Bool:

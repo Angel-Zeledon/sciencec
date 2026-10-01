@@ -59,6 +59,28 @@ fn lines_is_pointer_length_offset() {
     assert_eq!(offset_of!(ScienceLines, offset), 2 * WORD);
 }
 
+/// `Split` owns copies of both strings, so it is two `String`s, two words of
+/// cursor and a `bool` — nine words once the `bool` is padded out.
+#[test]
+fn split_is_two_strings_two_cursors_and_a_flag() {
+    assert_eq!(align_of::<ScienceSplit>(), align_of::<usize>());
+    assert_eq!(size_of::<ScienceSplit>(), 9 * WORD);
+    assert_eq!(offset_of!(ScienceSplit, text), 0);
+    assert_eq!(offset_of!(ScienceSplit, separator), 3 * WORD);
+    assert_eq!(offset_of!(ScienceSplit, start), 6 * WORD);
+    assert_eq!(offset_of!(ScienceSplit, search), 7 * WORD);
+    assert_eq!(offset_of!(ScienceSplit, done), 8 * WORD);
+}
+
+/// `Range of Int` as a value: two `i64` and a `bool`.
+#[test]
+fn range_is_start_end_inclusive() {
+    assert_eq!(size_of::<ScienceRangeI64>(), 3 * WORD);
+    assert_eq!(offset_of!(ScienceRangeI64, start), 0);
+    assert_eq!(offset_of!(ScienceRangeI64, end), 8);
+    assert_eq!(offset_of!(ScienceRangeI64, inclusive), 16);
+}
+
 #[test]
 fn type_info_is_size_align_drop() {
     assert_eq!(size_of::<ScienceTypeInfo>(), 3 * WORD);
@@ -260,7 +282,9 @@ fn every_aggregate_return_is_three_words_or_more() {
         ("science_array_new / with_capacity", std::mem::size_of::<ScienceArray>()),
         ("science_map_new", std::mem::size_of::<ScienceMap>()),
         ("science_read_file", std::mem::size_of::<ScienceStringAndIoError>()),
-        ("science_string_from_utf8", std::mem::size_of::<ScienceStringAndTextError>()),
+        ("science_string_from_utf8 / slice", std::mem::size_of::<ScienceStringAndTextError>()),
+        ("science_string_trim", std::mem::size_of::<ScienceString>()),
+        ("science_string_split", std::mem::size_of::<ScienceSplit>()),
     ] {
         assert!(
             size >= 3 * word,

@@ -336,11 +336,16 @@ fn an_error_given_to_a_method_this_crate_cannot_resolve_still_counts() {
     // is still unresolved-and-silent. This test wants the second, because its
     // subject is what `SC0140` does with a call it cannot see the parameters of
     // — not what `SC0532` does with a misspelling.
+    //
+    // **And then it became `owned`**, when `split` was transcribed: a
+    // resolved `split` has a parameter list, so it is no longer this test's
+    // case. `owned` is the `String` name a note gives that `UNWRITTEN` still
+    // holds.
     let checked = program(
         "
 def given() -> Doc:
     let doc, err be find(\"a\")
-    let _shown be doc.title.split(err)
+    let _shown be doc.title.owned(err)
     doc
 ",
     );

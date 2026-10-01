@@ -128,15 +128,19 @@ def length_of(doc: Doc) -> Bool:
 #[test]
 fn an_undeclared_method_on_a_prelude_type_is_unresolved_and_still_silent() {
     // The half that survives, asserted so that it stays a decision. The
-    // prelude's transcription of `stdlib-core.md` §9 is partial — `String` has
-    // thirteen of its nineteen methods — so `methods`' §8 keeps a builtin
-    // head's method set **open**: an unknown name there is silence, never
-    // `SC0532`, because the alternative is a false positive on
-    // `text.slice(0..4)`, which the note says exists.
+    // prelude's transcription of the notes is partial, so `methods`' §8 keeps
+    // a name a note gives and the prelude has not written **open**: silence,
+    // never `SC0532`.
+    //
+    // **The name is `owned` and it used to be `slice`.** `String` now has all
+    // nineteen of `stdlib-core.md` §6.9's methods, so `slice` resolves and
+    // `slice(0)` is an argument error; `owned()` is `collections-and-chains.md`
+    // §1.4's chain terminal, still in `builtins.rs`' `UNWRITTEN` row for
+    // `String`, and is the case this test is about.
     let checked = program(
         "
 def sliced(doc: Doc) -> Bool:
-    let _part be doc.title.slice(0)
+    let _part be doc.title.owned(0)
     true
 ",
     );
@@ -530,10 +534,12 @@ fn an_erroneous_type_agrees_with_whatever_it_meets() {
     // prelude has **not** declared — `length` now resolves and would give a
     // real `Int` — so the call has no type, and the `Ty::ERROR` it gets makes
     // every use of the result silent rather than producing one message per use.
+    // (`owned` and not `slice`: `slice` is declared now, for the reason the
+    // test above gives.)
     let checked = program(
         "
 def cascade(doc: Doc) -> String:
-    let unknown be doc.title.slice(0)
+    let unknown be doc.title.owned(0)
     let _first be unknown
     let _second: I32 be unknown
     doc.title

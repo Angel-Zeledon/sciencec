@@ -38,7 +38,8 @@
 //! [`science_array_new`], [`science_array_with_capacity`], [`science_map_new`],
 //! [`science_string_chars`], [`science_string_lines`], [`science_string_from_bytes`],
 //! [`science_string_with_capacity`], [`science_string_replace`],
-//! [`science_read_file`]. Every one of those
+//! [`science_read_file`], [`science_string_trim`], [`science_string_split`],
+//! [`science_string_slice`], [`science_string_from_utf8`]. Every one of those
 //! is three words or more, which both
 //! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
 //! the caller passes a hidden pointer to the return slot and the callee writes
