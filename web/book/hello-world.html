@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hello, world &middot; The Science Book</title>
+<meta name="description" content="The traditional first program, and the three ways to run it.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="../assets/science.css">
+<link rel="stylesheet" href="book.css">
+</head>
+<body class="book">
+
+<header class="bar">
+  <button class="menu" aria-label="Chapters" aria-expanded="false">&#9776;</button>
+  <a class="brand" href="index.html"><span class="glyph">&#8730;</span> The Science Book</a>
+  <nav><a href="../index.html">Home</a><a href="index.html" class="here">Learn</a><a href="../reference.html">Reference</a><a href="std.html">Library</a></nav>
+</header>
+
+<div class="layout">
+<aside class="chapters">
+<p class="group">Getting started</p><ol start="1">
+<li><a href="index.html">Introduction</a></li>
+<li><a href="installation.html">Installation</a></li>
+<li><a href="hello-world.html" class="here" aria-current="page">Hello, world</a></li>
+<li><a href="first-project.html">Your first project</a></li>
+</ol>
+<p class="group">The basics</p><ol start="5">
+<li><a href="variables.html">Variables</a></li>
+<li><a href="basic-types.html">Numbers, text and truth</a></li>
+<li><a href="functions.html">Functions</a></li>
+<li><a href="control-flow.html">Control flow</a></li>
+<li><a href="strings.html">Strings and formatting</a></li>
+</ol>
+<p class="group">Structuring data</p><ol start="10">
+<li><a href="types.html">Types</a></li>
+<li><a href="choices.html">Choices and match</a></li>
+<li><a href="collections.html">Arrays, maps and sets</a></li>
+<li><a href="chains.html">Chains and closures</a></li>
+</ol>
+<p class="group">Core ideas</p><ol start="14">
+<li><a href="ownership.html">Ownership and borrowing</a></li>
+<li><a href="errors.html">Missing values and errors</a></li>
+<li><a href="interfaces.html">Interfaces</a></li>
+<li><a href="generics.html">Generics</a></li>
+</ol>
+<p class="group">Growing a program</p><ol start="18">
+<li><a href="modules.html">Modules</a></li>
+<li><a href="packages.html">Packages</a></li>
+<li><a href="testing.html">Testing</a></li>
+</ol>
+<p class="group">The library</p><ol start="21">
+<li><a href="std.html">A tour of the standard library</a></li>
+<li><a href="std-io.html">Files and the system</a></li>
+<li><a href="std-numeric.html">Numbers and arrays</a></li>
+<li><a href="std-formats.html">Data formats</a></li>
+</ol>
+<p class="group">Going further</p><ol start="25">
+<li><a href="ffi.html">Calling C</a></li>
+<li><a href="from-python.html">Coming from Python</a></li>
+<li><a href="from-rust.html">Coming from Rust</a></li>
+<li><a href="keywords.html">Keywords and reserved words</a></li>
+</ol>
+</aside>
+
+<main>
+<p class="crumb">Getting started</p>
+<h1>Hello, world</h1>
+<p>The traditional first program, and the three ways to run it.</p>
+<h2 id="a-script">A script<a class="anchor" href="#a-script" aria-hidden="true">#</a></h2>
+<p>Make a file called <code>hello.science</code>:</p>
+<pre data-science><code>print(&quot;Hello, world!&quot;)</code></pre>
+<pre class="output"><code>Hello, world!</code></pre>
+<p>and run it:</p>
+<pre class="shell"><code>sciencec run hello.science</code></pre>
+<p>A file with statements at the top level is a <strong>script</strong>: the statements run from top to bottom, like Python. That is the quickest way to try something.</p>
+<h2 id="a-program-with-main">A program with <code>main</code><a class="anchor" href="#a-program-with-main" aria-hidden="true">#</a></h2>
+<p>Once a file grows, put the starting point in a function called <code>main</code>:</p>
+<pre data-science><code>def main():
+    let name be &quot;Ada&quot;
+    print(f&quot;Hello, {name}!&quot;)</code></pre>
+<pre class="output"><code>Hello, Ada!</code></pre>
+<p><code>def</code> declares a function. The body is the indented block under it. <code>let name be &quot;Ada&quot;</code> gives a name to a value, and <code>f&quot;…&quot;</code> is a <em>formatted string</em>: whatever is inside <code>{…}</code> is evaluated and put into the text.</p>
+<p>A file can have a <code>main</code> or top-level statements, not both.</p>
+<h2 id="building-an-executable">Building an executable<a class="anchor" href="#building-an-executable" aria-hidden="true">#</a></h2>
+<p><code>sciencec run</code> compiles the file and runs it straight away. To keep the executable instead, use <code>build</code>:</p>
+<pre class="shell"><code>sciencec build hello.science
+./hello</code></pre>
+<p>The result is an ordinary native program. It does not need <code>sciencec</code>, a virtual machine or an interpreter to run; you can copy it to another machine with the same operating system and run it there.</p>
+<h2 id="checking-without-building">Checking without building<a class="anchor" href="#checking-without-building" aria-hidden="true">#</a></h2>
+<p><code>sciencec check</code> reads the file and reports every problem it finds, without producing anything. It is fast, and it is what your editor will use.</p>
+<pre class="shell"><code>sciencec check hello.science</code></pre>
+<p>When something is wrong, the compiler says where and usually how to fix it. Science has no <code>=</code> for naming values, so this is a mistake:</p>
+<pre data-science class="refused"><code>let name = &quot;Ada&quot;
+print(name)</code></pre>
+<p>and the compiler tells you so, pointing at the <code>=</code> and offering the fix:</p>
+<pre class="err"><code>error[SC0100]: expected `be`, found `=`</code></pre>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>sciencec run FILE</code> compiles and runs.</li><li><code>sciencec build FILE</code> produces an executable.</li><li><code>sciencec check FILE</code> only looks for mistakes.</li><li>A file is either a script (top-level statements) or a program (<code>def main()</code>).</li></ul>
+<nav class="pager"><a class="prev" href="installation.html"><span>Previous</span>Installation</a><a class="next" href="first-project.html"><span>Next</span>Your first project</a></nav>
+</main>
+
+<aside class="onpage">
+<p class="group">On this page</p><ul><li><a href="#a-script">A script</a></li><li><a href="#a-program-with-main">A program with <code>main</code></a></li><li><a href="#building-an-executable">Building an executable</a></li><li><a href="#checking-without-building">Checking without building</a></li><li><a href="#summary">Summary</a></li></ul>
+</aside>
+</div>
+
+<script src="../assets/highlight.js"></script>
+<script src="book.js"></script>
+</body>
+</html>

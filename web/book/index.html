@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Introduction &middot; The Science Book</title>
+<meta name="description" content="Science is a compiled language for scientific computing. You write it like a script, it runs like C, and the compiler checks the things that usually go wrong quietly in numerical code: memory, missing values, and errors nobody looked at.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="../assets/science.css">
+<link rel="stylesheet" href="book.css">
+</head>
+<body class="book">
+
+<header class="bar">
+  <button class="menu" aria-label="Chapters" aria-expanded="false">&#9776;</button>
+  <a class="brand" href="index.html"><span class="glyph">&#8730;</span> The Science Book</a>
+  <nav><a href="../index.html">Home</a><a href="index.html" class="here">Learn</a><a href="../reference.html">Reference</a><a href="std.html">Library</a></nav>
+</header>
+
+<div class="layout">
+<aside class="chapters">
+<p class="group">Getting started</p><ol start="1">
+<li><a href="index.html" class="here" aria-current="page">Introduction</a></li>
+<li><a href="installation.html">Installation</a></li>
+<li><a href="hello-world.html">Hello, world</a></li>
+<li><a href="first-project.html">Your first project</a></li>
+</ol>
+<p class="group">The basics</p><ol start="5">
+<li><a href="variables.html">Variables</a></li>
+<li><a href="basic-types.html">Numbers, text and truth</a></li>
+<li><a href="functions.html">Functions</a></li>
+<li><a href="control-flow.html">Control flow</a></li>
+<li><a href="strings.html">Strings and formatting</a></li>
+</ol>
+<p class="group">Structuring data</p><ol start="10">
+<li><a href="types.html">Types</a></li>
+<li><a href="choices.html">Choices and match</a></li>
+<li><a href="collections.html">Arrays, maps and sets</a></li>
+<li><a href="chains.html">Chains and closures</a></li>
+</ol>
+<p class="group">Core ideas</p><ol start="14">
+<li><a href="ownership.html">Ownership and borrowing</a></li>
+<li><a href="errors.html">Missing values and errors</a></li>
+<li><a href="interfaces.html">Interfaces</a></li>
+<li><a href="generics.html">Generics</a></li>
+</ol>
+<p class="group">Growing a program</p><ol start="18">
+<li><a href="modules.html">Modules</a></li>
+<li><a href="packages.html">Packages</a></li>
+<li><a href="testing.html">Testing</a></li>
+</ol>
+<p class="group">The library</p><ol start="21">
+<li><a href="std.html">A tour of the standard library</a></li>
+<li><a href="std-io.html">Files and the system</a></li>
+<li><a href="std-numeric.html">Numbers and arrays</a></li>
+<li><a href="std-formats.html">Data formats</a></li>
+</ol>
+<p class="group">Going further</p><ol start="25">
+<li><a href="ffi.html">Calling C</a></li>
+<li><a href="from-python.html">Coming from Python</a></li>
+<li><a href="from-rust.html">Coming from Rust</a></li>
+<li><a href="keywords.html">Keywords and reserved words</a></li>
+</ol>
+</aside>
+
+<main>
+<p class="crumb">Getting started</p>
+<h1>Introduction</h1>
+<p>Science is a compiled language for scientific computing. You write it like a script, it runs like C, and the compiler checks the things that usually go wrong quietly in numerical code: memory, missing values, and errors nobody looked at.</p>
+<pre data-science><code>let samples be [2.5, 3.1, 2.8, 3.4]
+let mutable total be 0.0
+for x in samples:
+    total be total + x
+print(f&quot;mean = {total / 4.0:.2f}&quot;)</code></pre>
+<pre class="output"><code>mean = 2.95</code></pre>
+<p>This book teaches the language from the beginning. Read it in order: each chapter uses only what came before it. Every example on these pages is real code that the compiler checks every time the book is built, and the ones that show output were actually run.</p>
+<h2 id="who-this-book-is-for">Who this book is for<a class="anchor" href="#who-this-book-is-for" aria-hidden="true">#</a></h2>
+<p>You know at least one programming language — Python, R, Julia, C, Rust, anything. You do not need to know anything about compilers or memory management; the chapters that need those ideas explain them.</p>
+<h2 id="how-to-use-this-book">How to use this book<a class="anchor" href="#how-to-use-this-book" aria-hidden="true">#</a></h2>
+<ul><li><strong>New to Science?</strong> Start with <a href="installation.html">Installation</a> and keep pressing <em>Next</em>. The left and right arrow keys work too.</li><li><strong>Coming from Python or Rust?</strong> Skim <a href="from-python.html">Coming from Python</a> or <a href="from-rust.html">Coming from Rust</a> first. Science looks like both and is neither, and those pages list the habits that will trip you up.</li><li><strong>Looking something up?</strong> The <a href="std.html">standard library tour</a> lists every module, and the <a href="../reference.html">reference</a> describes every construct in detail.</li></ul>
+<h2 id="what-science-looks-like">What Science looks like<a class="anchor" href="#what-science-looks-like" aria-hidden="true">#</a></h2>
+<p>A taste, before the details. Don't worry about understanding every line yet; each one is explained in a later chapter.</p>
+<pre data-science><code>type Reading:
+    sensor: String
+    value: F64
+
+def warmest(readings: &amp;Array[Reading]) -&gt; String:
+    let mutable best be &quot;&quot;
+    let mutable top be -1000.0
+    for r in readings:
+        if r.value &gt; top:
+            top be r.value
+            best be f&quot;{r.sensor}&quot;
+    best
+
+def main():
+    let readings be [
+        Reading(sensor: &quot;north&quot;, value: 12.5),
+        Reading(sensor: &quot;south&quot;, value: 18.25),
+        Reading(sensor: &quot;east&quot;, value: 15.0),
+    ]
+    print(f&quot;warmest: {warmest(readings)}&quot;)</code></pre>
+<pre class="output"><code>warmest: south</code></pre>
+<p>A few things stand out, and the book comes back to each of them:</p>
+<ul><li><code>let x be value</code> names a value, and <code>x be value</code> changes it. There is no <code>=</code>.</li><li>Blocks are indented, like Python. There are no braces.</li><li>Types are checked before the program runs, like Rust, but you rarely have to write them inside a function.</li><li><code>&amp;Array[Reading]</code> means the function <em>borrows</em> the array: it can read it, and the caller keeps it.</li></ul>
+<nav class="pager"><span></span><a class="next" href="installation.html"><span>Next</span>Installation</a></nav>
+</main>
+
+<aside class="onpage">
+<p class="group">On this page</p><ul><li><a href="#who-this-book-is-for">Who this book is for</a></li><li><a href="#how-to-use-this-book">How to use this book</a></li><li><a href="#what-science-looks-like">What Science looks like</a></li></ul>
+</aside>
+</div>
+
+<script src="../assets/highlight.js"></script>
+<script src="book.js"></script>
+</body>
+</html>
