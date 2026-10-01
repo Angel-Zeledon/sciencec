@@ -1,0 +1,516 @@
+# string — `docs/DREAM.md` §13.3's list of `String` operations the prelude type
+# does not carry, plus the text helpers a program reaches for next:
+# `use string (to_upper, title_case, wrap)`.
+#
+# DREAM §13.3 spells these as methods (`s.to_upper()`). A bundled module cannot
+# add methods to the prelude's `String`, so every one is a **free function whose
+# first argument is the string**: `to_upper(&text)`. Written entirely in
+# Science over the code points `encoding` hands out (`code_points`,
+# `from_code_points`); nothing here needs the runtime. Bundled and reached the
+# way `io` is (`science_resolve::stdlib`). Decisions, where DREAM is silent:
+#
+# - **Case mapping is the simple, one-code-point-to-one mapping**, from tables
+#   written in this file; it is not the whole of Unicode. Covered, both
+#   directions: ASCII; Latin-1 (`U+00C0..U+00FE`, plus `ÿ` to `Ÿ` and `µ` to
+#   `Μ`); Latin Extended-A (`U+0100..U+017F`, including `İ` to `i`, `ı` to
+#   `I` and `ſ` to `S`); Greek and Coptic (`Α..Ω`, the accented `Ά Έ Ή Ί Ό Ύ Ώ`,
+#   `Ϊ Ϋ`, and final sigma `ς` to `Σ`); Cyrillic (`U+0400..U+052F`: the basic
+#   and extended letters, `Ѐ..Џ`, the historic letters and the Cyrillic
+#   Supplement). Every other code point maps to itself, which includes
+#   Latin Extended-B and later, Armenian, Georgian and Greek Extended.
+# - **No special casing.** `ß` is unchanged by `to_upper` (the full mapping is
+#   `SS`, which changes the length), and `Σ` always lowers to `σ`, never to the
+#   final `ς`. Turkish dotted and dotless `i` follow the root locale, except
+#   that `İ` lowers to `i`.
+# - **Offsets and widths.** `chars_count` and every width (`pad_*`, `center`,
+#   `wrap`) count code points, not bytes and not grapheme clusters: a wide CJK
+#   character or an emoji is one column here. `rfind` returns a **byte** offset,
+#   like `String.find`.
+# - **`trim_start` and `trim_end` are `String.trim`'s halves**: ASCII whitespace
+#   only (space, tab, CR, LF, FF, VT). `split_whitespace`, `wrap` and
+#   `title_case` use the wider Unicode set (`is_whitespace`).
+# - **`title_case`**: the first letter of each word upper, the rest of the word
+#   lower. A word ends at whitespace or ASCII punctuation, but an apostrophe
+#   (`'`) does not end one: `o'neil` is `O'neil`.
+# - **`graphemes` is an approximation**, not UAX #29: a cluster is a base code
+#   point followed by combining marks (`U+0300..U+036F` and the other combining
+#   blocks), variation selectors, emoji skin-tone modifiers, and any
+#   zero-width-joiner sequence; CR LF is one cluster, and two regional
+#   indicators (a flag) are one. Hangul syllable composition and Indic
+#   conjuncts are not handled.
+# - **`pad_start`, `pad_end` and `center` take a fill string** whose code points
+#   are repeated as needed; an empty fill, or a width at or below the length,
+#   returns the text unchanged. `center` puts the odd extra column on the right.
+# - **`wrap(text, width)`** breaks on whitespace, greedily, and joins the words
+#   of a line with one space; a word longer than `width` stays whole on its own
+#   line (never split). Runs of whitespace, newlines included, are single
+#   separators; an empty text wraps to no lines.
+# - **`levenshtein`** is the edit distance over code points (insert, delete,
+#   substitute, each cost 1), case-sensitive.
+# - **`equals_ignore_case`** compares the `to_lower` mappings of both sides.
+
+use encoding (code_points, from_code_points)
+
+# --- code points --------------------------------------------------------------
+
+def points_of(text: &String) -> Array[Int]:
+    let raw be code_points(text)
+    let mutable out be Array[Int].new()
+    for p in raw:
+        out.push(p as Int)
+    out
+
+def text_of_points(points: &Array[Int]) -> String:
+    let mutable raw be Array[U32].new()
+    for p in points:
+        raw.push(p as U32)
+    let text, bad be from_code_points(&raw)
+    if bad?:
+        panic("string: built code points that are not Unicode scalar values")
+    text
+
+def text_of_range(points: &Array[Int], from: Int, to: Int) -> String:
+    let mutable part be Array[Int].new()
+    for i in from..to:
+        part.push(points[i])
+    text_of_points(&part)
+
+# --- case mapping -------------------------------------------------------------
+
+# The simple lower-case mapping of one code point (see the header's coverage).
+public def lower_of(c: Int) -> Int:
+    if c < 128:
+        if c >= 65 and c <= 90:
+            return c + 32
+        return c
+    if c < 256:
+        if c >= 192 and c <= 222 and c is not 215:
+            return c + 32
+        return c
+    if c < 384:
+        if c is 304:
+            return 105
+        if c <= 311:
+            if c % 2 is 0:
+                return c + 1
+            return c
+        if c >= 313 and c <= 328:
+            if c % 2 is 1:
+                return c + 1
+            return c
+        if c >= 330 and c <= 375:
+            if c % 2 is 0:
+                return c + 1
+            return c
+        if c is 376:
+            return 255
+        if c >= 377 and c <= 382:
+            if c % 2 is 1:
+                return c + 1
+            return c
+        return c
+    if c < 880:
+        return c
+    if c < 1024:
+        if c is 902:
+            return 940
+        if c >= 904 and c <= 906:
+            return c + 37
+        if c is 908:
+            return 972
+        if c is 910 or c is 911:
+            return c + 63
+        if c >= 913 and c <= 929:
+            return c + 32
+        if c >= 931 and c <= 939:
+            return c + 32
+        return c
+    if c < 1280:
+        if c <= 1039:
+            return c + 80
+        if c <= 1071:
+            return c + 32
+        if c >= 1120 and c <= 1153:
+            if c % 2 is 0:
+                return c + 1
+            return c
+        if c >= 1162 and c <= 1215:
+            if c % 2 is 0:
+                return c + 1
+            return c
+        if c is 1216:
+            return 1231
+        if c >= 1217 and c <= 1230:
+            if c % 2 is 1:
+                return c + 1
+            return c
+        if c >= 1232:
+            if c % 2 is 0:
+                return c + 1
+            return c
+        return c
+    if c <= 1327:
+        if c % 2 is 0:
+            return c + 1
+        return c
+    c
+
+# The simple upper-case mapping of one code point.
+public def upper_of(c: Int) -> Int:
+    if c < 128:
+        if c >= 97 and c <= 122:
+            return c - 32
+        return c
+    if c < 256:
+        if c is 181:
+            return 924
+        if c >= 224 and c <= 254 and c is not 247:
+            return c - 32
+        if c is 255:
+            return 376
+        return c
+    if c < 384:
+        if c is 305:
+            return 73
+        if c is 383:
+            return 83
+        if c <= 311:
+            if c % 2 is 1:
+                return c - 1
+            return c
+        if c >= 313 and c <= 328:
+            if c % 2 is 0:
+                return c - 1
+            return c
+        if c >= 330 and c <= 375:
+            if c % 2 is 1:
+                return c - 1
+            return c
+        if c >= 378 and c <= 382:
+            if c % 2 is 0:
+                return c - 1
+            return c
+        return c
+    if c < 880:
+        return c
+    if c < 1024:
+        if c is 940:
+            return 902
+        if c >= 941 and c <= 943:
+            return c - 37
+        if c >= 945 and c <= 961:
+            return c - 32
+        if c is 962:
+            return 931
+        if c >= 963 and c <= 971:
+            return c - 32
+        if c is 972:
+            return 908
+        if c is 973 or c is 974:
+            return c - 63
+        return c
+    if c < 1280:
+        if c >= 1104 and c <= 1119:
+            return c - 80
+        if c >= 1072 and c <= 1103:
+            return c - 32
+        if c >= 1121 and c <= 1153:
+            if c % 2 is 1:
+                return c - 1
+            return c
+        if c >= 1163 and c <= 1215:
+            if c % 2 is 1:
+                return c - 1
+            return c
+        if c is 1231:
+            return 1216
+        if c >= 1218 and c <= 1230:
+            if c % 2 is 0:
+                return c - 1
+            return c
+        if c >= 1233:
+            if c % 2 is 1:
+                return c - 1
+            return c
+        return c
+    if c <= 1327:
+        if c % 2 is 1:
+            return c - 1
+        return c
+    c
+
+# The text with every code point mapped to its upper-case form.
+public def to_upper(text: &String) -> String:
+    let points be points_of(text)
+    let mutable out be Array[Int].new()
+    for p in points:
+        out.push(upper_of(p))
+    text_of_points(&out)
+
+# The text with every code point mapped to its lower-case form.
+public def to_lower(text: &String) -> String:
+    let points be points_of(text)
+    let mutable out be Array[Int].new()
+    for p in points:
+        out.push(lower_of(p))
+    text_of_points(&out)
+
+# Whether `a` and `b` are the same text once both are lower-cased.
+public def equals_ignore_case(a: &String, b: &String) -> Bool:
+    let left be points_of(a)
+    let right be points_of(b)
+    if left.length() is not right.length():
+        return false
+    for i in 0..left.length():
+        if lower_of(left[i]) is not lower_of(right[i]):
+            return false
+    true
+
+# --- classes ------------------------------------------------------------------
+
+# Unicode White_Space.
+public def is_whitespace(c: Int) -> Bool:
+    if c >= 9 and c <= 13:
+        return true
+    if c >= 8192 and c <= 8202:
+        return true
+    c is 32 or c is 133 or c is 160 or c is 5760 or c is 8232 or c is 8233 or c is 8239 or c is 8287 or c is 12288
+
+def is_word_break(c: Int) -> Bool:
+    if is_whitespace(c):
+        return true
+    if c is 39:
+        return false
+    (c >= 33 and c <= 47) or (c >= 58 and c <= 64) or (c >= 91 and c <= 96) or (c >= 123 and c <= 126)
+
+# Each word with its first letter upper and the rest lower.
+public def title_case(text: &String) -> String:
+    let points be points_of(text)
+    let mutable out be Array[Int].new()
+    let mutable starting be true
+    for p in points:
+        let c be p
+        if is_word_break(c):
+            out.push(c)
+            starting be true
+        else:
+            if starting:
+                out.push(upper_of(c))
+            else:
+                out.push(lower_of(c))
+            starting be false
+    text_of_points(&out)
+
+# --- measures and construction ------------------------------------------------
+
+# The number of code points in `text`. O(n).
+public def chars_count(text: &String) -> Int:
+    let mutable count be 0
+    for b in text.bytes():
+        if ((b as Int) & 192) is not 128:
+            count be count + 1
+    count
+
+# `text` appended to itself `times` times; empty for a count at or below zero.
+public def repeat(text: &String, times: Int) -> String:
+    let mutable out be String.new()
+    for _i in 0..times:
+        out.push_str(text)
+    out
+
+# Appends one character.
+public def push_char(out: &mut String, c: Char):
+    let mutable one be Array[Int].new()
+    one.push(c as Int)
+    out.push_str(&text_of_points(&one))
+
+# --- trimming and searching ---------------------------------------------------
+
+def is_ascii_space(b: Int) -> Bool:
+    b is 32 or (b >= 9 and b <= 13)
+
+# `text` without its leading ASCII whitespace.
+public def trim_start(text: &String) -> String:
+    let bytes be text.bytes()
+    let mutable i be 0
+    loop:
+        if i >= bytes.length():
+            break
+        if not is_ascii_space(bytes[i] as Int):
+            break
+        i be i + 1
+    let tail, _bad be text.slice(i..bytes.length())
+    tail
+
+# `text` without its trailing ASCII whitespace.
+public def trim_end(text: &String) -> String:
+    let bytes be text.bytes()
+    let mutable end be bytes.length()
+    loop:
+        if end <= 0:
+            break
+        if not is_ascii_space(bytes[end - 1] as Int):
+            break
+        end be end - 1
+    let head, _bad be text.slice(0..end)
+    head
+
+# The byte offset of the last occurrence of `needle`, or `null`. An empty
+# needle is found at the end.
+public def rfind(text: &String, needle: &String) -> Int?:
+    let hay be text.bytes()
+    let pin be needle.bytes()
+    let mutable at be hay.length() - pin.length()
+    loop:
+        if at < 0:
+            break
+        let mutable same be true
+        for j in 0..pin.length():
+            if hay[at + j] is not pin[j]:
+                same be false
+                break
+        if same:
+            return at
+        at be at - 1
+    null
+
+# --- splitting ----------------------------------------------------------------
+
+# The maximal runs of non-whitespace (`is_whitespace`), in order.
+public def split_whitespace(text: &String) -> Array[String]:
+    let points be points_of(text)
+    let mutable words be Array[String].new()
+    let mutable start be -1
+    for i in 0..points.length():
+        if is_whitespace(points[i]):
+            if start >= 0:
+                words.push(text_of_range(&points, start, i))
+                start be -1
+        else:
+            if start < 0:
+                start be i
+    if start >= 0:
+        words.push(text_of_range(&points, start, points.length()))
+    words
+
+# `text` broken into lines of at most `width` code points where a word allows.
+public def wrap(text: &String, width: Int) -> Array[String]:
+    let mutable lines be Array[String].new()
+    let mutable line be String.new()
+    let mutable used be 0
+    let words be split_whitespace(text)
+    for word in words:
+        let size be chars_count(word)
+        if used > 0 and used + 1 + size > width:
+            lines.push(line)
+            line be String.new()
+            used be 0
+        if used > 0:
+            line.push_str(" ")
+            used be used + 1
+        line.push_str(word)
+        used be used + size
+    if used > 0:
+        lines.push(line)
+    lines
+
+def is_regional(c: Int) -> Bool:
+    c >= 127462 and c <= 127487
+
+def is_extender(c: Int) -> Bool:
+    (c >= 768 and c <= 879) or (c >= 6832 and c <= 6911) or (c >= 7616 and c <= 7679) or (c >= 8400 and c <= 8447) or (c >= 65024 and c <= 65039) or (c >= 65056 and c <= 65071) or (c >= 127995 and c <= 127999)
+
+# The grapheme-like clusters of `text` (see the header: an approximation).
+public def graphemes(text: &String) -> Array[String]:
+    let points be points_of(text)
+    let mutable out be Array[String].new()
+    let mutable i be 0
+    loop:
+        if i >= points.length():
+            break
+        let start be i
+        let first be points[i]
+        i be i + 1
+        if first is 13 and i < points.length() and points[i] is 10:
+            i be i + 1
+        else:
+            if is_regional(first) and i < points.length() and is_regional(points[i]):
+                i be i + 1
+            loop:
+                if i >= points.length():
+                    break
+                if is_extender(points[i]):
+                    i be i + 1
+                else:
+                    if points[i] is 8205 and i + 1 < points.length():
+                        i be i + 2
+                    else:
+                        break
+        out.push(text_of_range(&points, start, i))
+    out
+
+# --- padding ------------------------------------------------------------------
+
+def filler(fill: &Array[Int], count: Int) -> String:
+    let mutable out be Array[Int].new()
+    for i in 0..count:
+        out.push(fill[i % fill.length()])
+    text_of_points(&out)
+
+# `text` with `fill` repeated in front until it is `width` code points long.
+public def pad_start(text: &String, width: Int, fill: &String) -> String:
+    let fills be points_of(fill)
+    let have be chars_count(text)
+    if fills.length() is 0 or width <= have:
+        return f"{text}"
+    let mutable out be filler(&fills, width - have)
+    out.push_str(text)
+    out
+
+# `text` with `fill` repeated after it until it is `width` code points long.
+public def pad_end(text: &String, width: Int, fill: &String) -> String:
+    let fills be points_of(fill)
+    let have be chars_count(text)
+    if fills.length() is 0 or width <= have:
+        return f"{text}"
+    let mutable out be f"{text}"
+    out.push_str(&filler(&fills, width - have))
+    out
+
+# `text` centred in `width` code points; the odd extra column is on the right.
+public def center(text: &String, width: Int, fill: &String) -> String:
+    let fills be points_of(fill)
+    let have be chars_count(text)
+    if fills.length() is 0 or width <= have:
+        return f"{text}"
+    let total be width - have
+    let left be total / 2
+    let mutable out be filler(&fills, left)
+    out.push_str(text)
+    out.push_str(&filler(&fills, total - left))
+    out
+
+# --- distance -----------------------------------------------------------------
+
+# The Levenshtein edit distance between `a` and `b`, over code points.
+public def levenshtein(a: &String, b: &String) -> Int:
+    let left be points_of(a)
+    let right be points_of(b)
+    let mutable previous be Array[Int].new()
+    for j in 0..right.length() + 1:
+        previous.push(j)
+    for i in 0..left.length():
+        let mutable current be Array[Int].new()
+        current.push(i + 1)
+        for j in 0..right.length():
+            let mutable cost be 1
+            if left[i] is right[j]:
+                cost be 0
+            let mutable best be previous[j] + cost
+            if previous[j + 1] + 1 < best:
+                best be previous[j + 1] + 1
+            if current[j] + 1 < best:
+                best be current[j] + 1
+            current.push(best)
+        previous be current
+    previous[right.length()]
