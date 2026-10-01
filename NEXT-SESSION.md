@@ -1,4 +1,4 @@
-# Traspaso — estado al 2026-09-30
+# Traspaso — estado al 2026-10-01
 
 > **Lo primero, porque cuesta horas cada vez.** Los mensajes de rechazo de este
 > compilador envejecen peor que el código que los rodea. Nadie los relee cuando
@@ -296,22 +296,85 @@ Para llegar hubo que arreglar, cada uno con su prueba:
   era otro tipo que en el código del usuario; `Write.write` se confundía con
   la función libre `write`.
 
-Sigue abierto, fuera de la compuerta: `match` sobre un `&Box[Expr]` no ve a
-través del `Box` (un método sí). `String.parse_int`, `String.parse_float` y
-`TextError.message()` ya bajan y corren (`science-rt/src/text.rs`,
-`science-codegen-llvm/tests/text.rs`); `TextError` es un byte sin payload, como
-`IoError`, y no acepta espacios alrededor (§6.11 hace `trim()` antes). De paso
-salió a la luz que un agregado devuelto en registros (`science_write_file`) se
-declaraba con el tipo del struct y LLVM lo reparte un registro por miembro,
-distinto de C: `emit.rs` `c_return_ty` lo declara ahora en los registros de C.
-`print(err)` sobre un `TextError` o un `IoError` sigue rechazado (no hay
-`display`).
-
 **Compuerta C2, etapa 5 — cerrada en `18550da`.** `&Array[T]` → `ffi.Span[T]`
 existe, y según ese commit `cblas_ddot` corre contra el BLAS de Accelerate (no lo volví a medir).
 
-Lo demás que quedó abierto está nombrado donde vive, no acá: una cadena guardada
-en variable y un eslabón después de `sorted(by:)` se rechazan diciendo por qué;
-las AMENDMENT 13 y 15 de `collections-and-chains.md` no están; `Ord` sigue sin
-un `Ordering` que ninguna nota especifica; y `a is a` da `SC0334`, que es una
-limitación preexistente de `science-regions` que `is` volvió alcanzable.
+## La prioridad cambió: lenguaje completo, no self-hosting
+
+El usuario lo dijo explícito: el auto-hospedaje no importa ahora; importa un
+lenguaje completo, funcionando sobre LLVM, con la biblioteca estándar de
+`docs/DREAM.md` (Parte IV; fase 1 de §37, después `scargo`, después numérico).
+Las compuertas C2 (derive), C3 (SHA-256), D (formatos de dump) y E2 (migración)
+de `self-hosting.md` quedan en pausa.
+
+### La fase 1 de la biblioteca, ya en `master`
+
+Cada módulo de nivel 2 es Science empaquetado en
+`crates/science-resolve/stdlib/*.science` y se alcanza con `use nombre`; lo que
+cada uno decide por su cuenta está en su cabecera. Lo que llama al runtime pasa
+por `unsafe extern "C" library "science-rt":` con escalares C y `ffi.Span[U8]`, y
+esos símbolos **no** van en `RUNTIME`: están exceptuados por nombre en la lista
+plana `LIBRARY` de `crates/science-codegen-llvm/tests/symbols.rs`, que verifica
+que algún módulo empaquetado los declare.
+
+- **Preludio (nivel 1):** `math` de §8 entero sobre `F64`/`F32` (35 métodos) y
+  siete sobre `Int`, con `F64.PI` y compañía (`965dc02`); los diecinueve métodos
+  de `String` de §6.9, con `trim`/`slice` devolviendo **copias propias** en vez
+  del préstamo que pide §6.9 — una desviación documentada en el bloque `String`
+  de `builtins.rs`, porque un pedazo de un `String` no tiene cabecera a la que
+  apuntar —; `String.from_bytes`; `parse_int`/`parse_float`/`TextError`;
+  `print_error`/`write_error`/`flush`; `print(err)` sobre `IoError`/`TextError`;
+  `Map`/`Set` iterables en orden de inserción (`for entry in m:` liga
+  `&Entry[K, V]`); `keep`, `skip` y seis terminales de cadena; `Write`.
+- **Nivel 2:** `io` (`File`, `BufferedWriter`), `os` (`args`, `env`), `fs`
+  (directorios, `list_directory` ordenado), `collections` (`Deque`), `time`
+  (`Duration`, `Monotonic`, `Instant` UTC, RFC 3339), `complex` (con `exp`,
+  `ln`, `sqrt`, `pow`, trigonometría, cortes de rama de C99 Annex G) y `random`
+  (`Key` reproducible con Threefry-2x64-20, `Stream` con xoshiro256**).
+- **Arreglos del núcleo encontrados en el camino**, cada uno con su prueba: la
+  inferencia que daba `&Int` a un `let` reasignado desde un loop; un patrón
+  sobre un registro genérico armado con literales; Decision 28 AMENDMENT 6
+  (`match` y argumentos `&T` a través de un `Box`, solo lectura); la convención
+  de llamada de C para pares devueltos en registros; stdout con el buffering de
+  §4.2 (77 `write` en vez de un millón en un pipe); el parser que seguía un bloque
+  con un `-1` de la línea siguiente; operadores sobre `&&Int`.
+
+### Cómo se trabajó, y conviene repetirlo
+
+Muchos agentes en paralelo, cada uno en su worktree, integrados por
+**cherry-pick** sobre `master` (nunca merge). Lo que costó aprenderlo:
+
+- **Los agentes arrancan desde una base vieja** si no se les dice: la primera
+  instrucción de cada uno es `git merge --ff-only master`.
+- **Los conteos fijados chocan siempre** (`RUNTIME.len()`, la lista `sret` que
+  ahora depende de la plataforma, los 32 snapshots de `science-resolve`). Se
+  resuelven sumando y conservando los dos párrafos; los snapshots se toman de
+  `master` y se re-bendicen verificando que solo cambien los `#id`.
+- **Dos agentes pueden escribir la misma pieza** — `String.from_bytes` llegó
+  tres veces. Al integrar, quedarse con la de `master` y comprobar que las
+  pruebas del otro pasan contra ella.
+- **Bajo carga (load ~90) todo test con reloj de pared miente**; ningún agente
+  debe correr la suite completa en segundo plano y esperarla — eso los cuelga
+  y el watchdog los mata sin commitear. Rescate: commit WIP en su rama y
+  retomarlo con `SendMessage`.
+- **Una prueba que lee archivos del repo en tiempo de ejecución** (el corpus de
+  regiones lee `examples/`) se rompe si el árbol cambia a mitad de una corrida.
+
+### Lo que sigue abierto
+
+En curso al cerrar este traspaso (agentes en sus ramas): un iterador
+`Lines`/`Chars` guardado en una variable lee memoria liberada
+(`let it be "x\ny".lines()` y luego `for l in it:`); el uso tras movimiento no
+se reporta para un tipo que no posee nada (`random` lo esquiva con un `Drop`
+vacío en `Key`); especificaciones de formato en f-strings (`{x:.2}` es
+`SC0173` hoy); `Ord`/`Ordering` (`<` sobre tipos propios); `Hash` y claves de
+`Map`/`Set` que sean registros o tuplas; la API completa de `Array`; lectura
+(`read_line`, `File.open`, `BufferedReader`); `path`; y `scargo`.
+
+Sin dueño todavía: `let mutable x be null` seguido de `x be 5` llega al backend
+como `SC0400` (decidir si infiere `I64?` o se rechaza); un `loop:` que solo sale
+por `return` se tipa `()` y no puede cerrar una función; operadores mixtos
+(`z * 2.0` con `Complex`) necesitan un `Mul[Rhs]`; métodos de `math` sobre los
+enteros angostos; `numbered()`, `Map.keys()/values()` y los demás eslabones de
+cadena; un tipo vista de `String` si se quiere volver a las firmas de §6.9; y
+Windows y Linux, que casi no se probaron — todo se ejecutó en este Mac.
