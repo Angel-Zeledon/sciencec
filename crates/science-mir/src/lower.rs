@@ -5685,7 +5685,45 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, Place::local(temp), rvalue, span);
                 (Operand::Move(Place::local(temp)), block)
             }
-            _ => self.operand(expr, block),
+            // **An exclusive borrow already held in a place is reborrowed, not
+            // moved.** `bump(c)` with `c: &mut Counter` used to pass `c` itself
+            // — a `Move`, since `&mut T` is not `Copy` — and once a use after
+            // move was reported for every non-`Copy` value, the second
+            // `bump(c)` in a loop was `SC0301`: a program that is plainly
+            // fine, and the shape every `&mut` parameter handed on takes.
+            // Rust's answer is the implicit reborrow, and this is it: a fresh
+            // exclusive loan of `*c` for the duration of the call, which the
+            // region engine checks like any other, so `c` is usable again the
+            // moment the callee returns and two overlapping uses are still
+            // refused.
+            _ => {
+                let revealed = self.revealed(ty);
+                if let TyKind::Borrowed { mutable: true, inner } = *self.context.types.kind(revealed)
+                {
+                    // `as_place` may emit statements (an index's bounds
+                    // check), so the place it hands back is used whichever
+                    // way the question below goes, never lowered twice.
+                    if let Some((place, block)) = self.as_place(expr, block) {
+                        // When the place *holds* the borrow it is reborrowed
+                        // through one `Deref`. A field read through `mutable
+                        // self` — `print(self.tag)` — is typed `&mut String`
+                        // by Decision 27 while its place is the `String`
+                        // itself, and the borrow to take is of that place.
+                        let place_ty = self.revealed(self.place_ty(&place));
+                        let holds = matches!(
+                            self.context.types.kind(place_ty),
+                            TyKind::Borrowed { mutable: true, .. }
+                        );
+                        let target =
+                            if holds { place.project(Projection::Deref { ty: inner }) } else { place };
+                        let temp = self.temp(ty, span, block);
+                        let block =
+                            self.borrow_place(Place::local(temp), true, target, block, span, true);
+                        return (Operand::Move(Place::local(temp)), block);
+                    }
+                }
+                self.operand(expr, block)
+            }
         }
     }
 
