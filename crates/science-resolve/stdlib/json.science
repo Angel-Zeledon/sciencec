@@ -1,0 +1,743 @@
+# json — `DREAM.md` §19.4, Level 2: `use json`.
+#
+# A JSON value, a strict RFC 8259 parser with positions in its errors, and a
+# compact and a pretty printer. Written entirely in Science and bundled the way
+# `io` is (`science_resolve::stdlib`); the only library it leans on is
+# `encoding`, for the code point of a `\u` escape. `stdlib-standard.md` §6 and
+# `data-io.md` §3 place JSON at `data.json`, where it is to read from and write
+# to a `Path` under the `Frame` abstractions; none of that exists yet, so this
+# is the text-to-value layer those will sit on, and `use json` is what the
+# request for "a JSON module" gets until `data.json` is. §6.2 asks that the
+# number model be pinned as a contract, and it is, below.
+#
+# - **A value is a `Json` choice**: `Null`, `Boolean(Bool)`, `Number(F64)`,
+#   `Text(String)`, `List(Array[Json])` and `Object(Array[Member])`. The last
+#   four are not named `Bool`, `String` and `Array` because a variant and a
+#   type share a name's scope and `Boolean(Bool)` would be ambiguous to read
+#   whatever the compiler thought of it.
+# - **An object is an array of `Member`s, in the order written**, not a map: a
+#   document that parses and prints must not reorder, and the prelude's `Map`
+#   has no insertion order. Lookup is a linear scan, which is the right cost
+#   for the sizes JSON has. **A key that occurs twice is kept twice**, as
+#   written, and `get` answers the *last*, as JavaScript and Python do
+#   (RFC 8259 §4 leaves it unspecified). `set` replaces the last one.
+# - **Number model (`stdlib-standard.md` §6.2).** Every number is an `F64`:
+#   `1` and `1.0` and `1e0` parse to the same value and are not
+#   distinguishable. An integer literal above 2^53 is rounded to the nearest
+#   `F64`, correctly (`9007199254740993` is `9007199254740992`); a literal that
+#   overflows `F64` (`1e999`) is an **error**, not infinity, and one that
+#   underflows is `0` or a subnormal as `parse_float` says. `-0` is negative
+#   zero. On output an integral value of magnitude up to 2^53 is written
+#   without a fractional part (`3`, not `3.0`), every other number as `print`
+#   writes an `F64` — the shortest text that reads back as the same value — and
+#   `NaN` and the infinities, which JSON cannot spell, are written as `null`
+#   (JavaScript's choice). A program that cannot lose a distinction keeps the
+#   number as `Text`.
+# - **The parser is strict**: no comments, no trailing commas, no leading zeros
+#   (`01`), no `+1`, no `.5` or `5.`, no single quotes, no `NaN`, no control
+#   character (below U+0020) inside a string, no lone surrogate escape, and
+#   nothing but whitespace — space, tab, LF, CR — after the value. A leading
+#   UTF-8 byte-order mark is skipped (RFC 8259 §8.1 allows ignoring it).
+#   Nesting deeper than 512 is an error, so hostile input cannot exhaust the
+#   stack.
+# - **Errors say where**: `JsonError` has the reason, the byte `offset`, and the
+#   1-based `line` and `column` of the offending character, the column counted
+#   in characters (Unicode scalar values) and not bytes. At the end of the
+#   input the position is one past the last character.
+# - **Output is UTF-8 and escapes only what must be escaped**: `"` `\`, and
+#   the control characters below U+0020 (as `\b \f \n \r \t` where they exist
+#   and `\u00XX` otherwise). Everything else, non-ASCII included, is written as
+#   it is, so a printed document reads back to an equal value.
+# - `pretty(value, indent)` puts each element on its own line, `indent` spaces
+#   a level, `": "` after a key, and `[]` and `{}` for empty ones.
+# - **Equality is structural and order-sensitive for objects** (`{"a":1,"b":2}`
+#   is not `{"b":2,"a":1}`), because the order is part of the value here.
+# - `pointer(text)` is RFC 6901's JSON Pointer, `"/a/0/b"`, with `~0` and `~1`.
+
+use encoding (from_code_points)
+
+# --- Json ---------------------------------------------------------------------
+
+# One `key: value` pair of an object.
+public type Member:
+    key: String
+    value: Json
+
+# A JSON value (see the header).
+public choice Json:
+    Null
+    Boolean(Bool)
+    Number(F64)
+    Text(String)
+    List(Array[Json])
+    Object(Array[Member])
+
+# --- JsonError ----------------------------------------------------------------
+
+# Why a text is not JSON, and where: `offset` is the byte offset, `line` and
+# `column` are 1-based and the column is in characters.
+public type JsonError:
+    reason: String
+    offset: Int
+    line: Int
+    column: Int
+
+JsonError implements Error:
+    def message(self) -> String:
+        f"{self.reason} at line {self.line}, column {self.column}"
+
+# --- Parsing ------------------------------------------------------------------
+
+# Where the parser is, and the first failure it met. A failure is recorded and
+# every parse function returns at once; the first one stays.
+type Cursor:
+    pos: Int
+    depth: Int
+    failed: Bool
+    reason: String
+    at: Int
+
+def fail(c: &mut Cursor, reason: String, at: Int):
+    if not c.failed:
+        c.failed be true
+        c.reason be reason
+        c.at be at
+
+# `fail` at the cursor, and at the character before it: a borrow of `c` cannot
+# be passed beside a read of `c`, so the two positions that are asked for most
+# have names.
+def fail_here(c: &mut Cursor, reason: String):
+    let at be c.pos
+    fail(c, reason, at)
+
+def fail_before(c: &mut Cursor, reason: String):
+    let at be c.pos - 1
+    fail(c, reason, at)
+
+# A `String` from bytes this file copied out of a `String`, so valid UTF-8.
+def text_of(bytes: &Array[U8]) -> String:
+    let text, bad be String.from_bytes(bytes)
+    if bad?:
+        panic("json: built bytes that are not UTF-8")
+    text
+
+def skip_space(bytes: &Array[U8], c: &mut Cursor):
+    loop:
+        if c.pos >= bytes.length():
+            break
+        let b be bytes[c.pos] as Int
+        if b is 32 or b is 9 or b is 10 or b is 13:
+            c.pos be c.pos + 1
+        else:
+            break
+
+def is_digit(b: Int) -> Bool:
+    b >= 48 and b <= 57
+
+def parse_literal(bytes: &Array[U8], c: &mut Cursor, word: &String, value: Json) -> Json:
+    let expected be word.bytes()
+    for k in 0..expected.length():
+        if c.pos + k >= bytes.length() or bytes[c.pos + k] is not expected[k]:
+            fail_here(c, "invalid literal")
+            return Json.Null
+    c.pos be c.pos + expected.length()
+    value
+
+def parse_number(bytes: &Array[U8], c: &mut Cursor) -> Json:
+    let start be c.pos
+    let length be bytes.length()
+    if bytes[c.pos] is 45:
+        c.pos be c.pos + 1
+    if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+        fail_here(c, "invalid number")
+        return Json.Null
+    if bytes[c.pos] is 48:
+        c.pos be c.pos + 1
+        if c.pos < length and is_digit(bytes[c.pos] as Int):
+            fail_here(c, "a number may not have a leading zero")
+            return Json.Null
+    else:
+        loop:
+            if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+                break
+            c.pos be c.pos + 1
+    if c.pos < length and bytes[c.pos] is 46:
+        c.pos be c.pos + 1
+        if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+            fail_here(c, "a fraction needs digits")
+            return Json.Null
+        loop:
+            if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+                break
+            c.pos be c.pos + 1
+    if c.pos < length and (bytes[c.pos] is 101 or bytes[c.pos] is 69):
+        c.pos be c.pos + 1
+        if c.pos < length and (bytes[c.pos] is 43 or bytes[c.pos] is 45):
+            c.pos be c.pos + 1
+        if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+            fail_here(c, "an exponent needs digits")
+            return Json.Null
+        loop:
+            if c.pos >= length or not is_digit(bytes[c.pos] as Int):
+                break
+            c.pos be c.pos + 1
+    let mutable raw be Array[U8].new()
+    for i in start..c.pos:
+        raw.push(bytes[i])
+    let value, bad be text_of(&raw).parse_float()
+    if bad?:
+        fail(c, "number out of range", start)
+        return Json.Null
+    Json.Number(value)
+
+# The value of four hex digits at `at`, or `-1`.
+def hex4(bytes: &Array[U8], at: Int) -> Int:
+    if at + 4 > bytes.length():
+        return -1
+    let mutable value be 0
+    for k in 0..4:
+        let b be bytes[at + k] as Int
+        let mutable digit be -1
+        if b >= 48 and b <= 57:
+            digit be b - 48
+        if b >= 97 and b <= 102:
+            digit be b - 87
+        if b >= 65 and b <= 70:
+            digit be b - 55
+        if digit < 0:
+            return -1
+        value be value * 16 + digit
+    value
+
+# Reads a string whose opening quote is at `c.pos`, leaving `c.pos` after the
+# closing one.
+def parse_string(bytes: &Array[U8], c: &mut Cursor) -> String:
+    let start be c.pos
+    c.pos be c.pos + 1
+    let mutable out be Array[U8].new()
+    loop:
+        if c.pos >= bytes.length():
+            fail(c, "unterminated string", start)
+            return ""
+        let b be bytes[c.pos] as Int
+        if b is 34:
+            c.pos be c.pos + 1
+            break
+        if b < 32:
+            fail_here(c, "a control character in a string must be escaped")
+            return ""
+        if b is not 92:
+            out.push(b as U8)
+            c.pos be c.pos + 1
+            continue
+        let slash be c.pos
+        if slash + 1 >= bytes.length():
+            fail(c, "unterminated string", start)
+            return ""
+        let e be bytes[slash + 1] as Int
+        c.pos be slash + 2
+        if e is 34 or e is 92 or e is 47:
+            out.push(e as U8)
+        else if e is 98:
+            out.push(8)
+        else if e is 102:
+            out.push(12)
+        else if e is 110:
+            out.push(10)
+        else if e is 114:
+            out.push(13)
+        else if e is 116:
+            out.push(9)
+        else if e is 117:
+            let unit be hex4(bytes, slash + 2)
+            if unit < 0:
+                fail(c, "a \\u escape needs four hex digits", slash)
+                return ""
+            c.pos be slash + 6
+            let mutable scalar be unit
+            if unit >= 55296 and unit <= 56319:
+                let low be if_low(bytes, slash + 6)
+                if low < 0:
+                    fail(c, "a high surrogate escape must be followed by a low one", slash)
+                    return ""
+                scalar be 65536 + ((unit - 55296) << 10) + (low - 56320)
+                c.pos be slash + 12
+            else if unit >= 56320 and unit <= 57343:
+                fail(c, "a low surrogate escape without a high one", slash)
+                return ""
+            let mutable one be Array[U32].new()
+            one.push(scalar as U32)
+            let piece, bad be from_code_points(&one)
+            if bad?:
+                fail(c, "not a Unicode scalar value", slash)
+                return ""
+            for byte in piece.bytes():
+                out.push(byte)
+        else:
+            fail(c, "unknown escape", slash)
+            return ""
+    text_of(&out)
+
+# The low surrogate of a `\uDC00`-style escape at `at`, or `-1` if there is not
+# one.
+def if_low(bytes: &Array[U8], at: Int) -> Int:
+    if at + 1 >= bytes.length() or bytes[at] is not 92 or bytes[at + 1] is not 117:
+        return -1
+    let unit be hex4(bytes, at + 2)
+    if unit >= 56320 and unit <= 57343:
+        return unit
+    -1
+
+def parse_array(bytes: &Array[U8], c: &mut Cursor) -> Json:
+    c.pos be c.pos + 1
+    let mutable items be Array[Json].new()
+    skip_space(bytes, c)
+    if c.pos < bytes.length() and bytes[c.pos] is 93:
+        c.pos be c.pos + 1
+        return Json.List(items)
+    loop:
+        let item be parse_value(bytes, c)
+        if c.failed:
+            return Json.Null
+        items.push(item)
+        skip_space(bytes, c)
+        if c.pos >= bytes.length():
+            fail_here(c, "unexpected end of input in an array")
+            return Json.Null
+        let b be bytes[c.pos] as Int
+        c.pos be c.pos + 1
+        if b is 93:
+            break
+        if b is not 44:
+            fail_before(c, "expected ',' or ']'")
+            return Json.Null
+    Json.List(items)
+
+def parse_object(bytes: &Array[U8], c: &mut Cursor) -> Json:
+    c.pos be c.pos + 1
+    let mutable members be Array[Member].new()
+    skip_space(bytes, c)
+    if c.pos < bytes.length() and bytes[c.pos] is 125:
+        c.pos be c.pos + 1
+        return Json.Object(members)
+    loop:
+        skip_space(bytes, c)
+        if c.pos >= bytes.length():
+            fail_here(c, "unexpected end of input in an object")
+            return Json.Null
+        if bytes[c.pos] is not 34:
+            fail_here(c, "expected a string key")
+            return Json.Null
+        let key be parse_string(bytes, c)
+        if c.failed:
+            return Json.Null
+        skip_space(bytes, c)
+        if c.pos >= bytes.length() or bytes[c.pos] is not 58:
+            fail_here(c, "expected ':' after a key")
+            return Json.Null
+        c.pos be c.pos + 1
+        let value be parse_value(bytes, c)
+        if c.failed:
+            return Json.Null
+        members.push(Member(key: key, value: value))
+        skip_space(bytes, c)
+        if c.pos >= bytes.length():
+            fail_here(c, "unexpected end of input in an object")
+            return Json.Null
+        let b be bytes[c.pos] as Int
+        c.pos be c.pos + 1
+        if b is 125:
+            break
+        if b is not 44:
+            fail_before(c, "expected ',' or '}'")
+            return Json.Null
+    Json.Object(members)
+
+def parse_value(bytes: &Array[U8], c: &mut Cursor) -> Json:
+    skip_space(bytes, c)
+    if c.pos >= bytes.length():
+        fail_here(c, "unexpected end of input")
+        return Json.Null
+    let b be bytes[c.pos] as Int
+    if b is 123 or b is 91:
+        if c.depth >= 512:
+            fail_here(c, "nesting is too deep")
+            return Json.Null
+        c.depth be c.depth + 1
+        let mutable inner be Json.Null
+        if b is 123:
+            inner be parse_object(bytes, c)
+        else:
+            inner be parse_array(bytes, c)
+        c.depth be c.depth - 1
+        return inner
+    if b is 34:
+        return Json.Text(parse_string(bytes, c))
+    if b is 116:
+        return parse_literal(bytes, c, "true", Json.Boolean(true))
+    if b is 102:
+        return parse_literal(bytes, c, "false", Json.Boolean(false))
+    if b is 110:
+        return parse_literal(bytes, c, "null", Json.Null)
+    if b is 45 or is_digit(b):
+        return parse_number(bytes, c)
+    fail_here(c, "unexpected character")
+    Json.Null
+
+# The 1-based line and column of byte `offset`, the column in characters.
+def position(bytes: &Array[U8], offset: Int) -> (Int, Int):
+    let mutable line be 1
+    let mutable column be 1
+    let mutable i be 0
+    loop:
+        if i >= offset or i >= bytes.length():
+            break
+        let b be bytes[i] as Int
+        if b is 10:
+            line be line + 1
+            column be 1
+        else:
+            if b & 192 is not 128:
+                column be column + 1
+        i be i + 1
+    (line, column)
+
+# `text` as a JSON value, or the first thing wrong with it. On an error the
+# value is `Null`.
+public def parse(text: &String) -> (Json, JsonError?):
+    let bytes be text.bytes()
+    let mutable c be Cursor(pos: 0, depth: 0, failed: false, reason: "", at: 0)
+    if bytes.length() >= 3 and bytes[0] is 239 and bytes[1] is 187 and bytes[2] is 191:
+        c.pos be 3
+    let value be parse_value(bytes, &mut c)
+    if not c.failed:
+        skip_space(bytes, &mut c)
+        if c.pos < bytes.length():
+            fail_here(&mut c, "unexpected characters after the value")
+    if c.failed:
+        let line, column be position(bytes, c.at)
+        return (Json.Null, JsonError(reason: c.reason.clone(), offset: c.at, line: line, column: column))
+    (value, null)
+
+# --- Printing -----------------------------------------------------------------
+
+def push_text(out: &mut Array[U8], text: &String):
+    for byte in text.bytes():
+        out.push(byte)
+
+def push_hex_digit(out: &mut Array[U8], digit: Int):
+    if digit < 10:
+        out.push((48 + digit) as U8)
+    else:
+        out.push((87 + digit) as U8)
+
+def push_quoted(out: &mut Array[U8], text: &String):
+    out.push(34)
+    for byte in text.bytes():
+        let b be byte as Int
+        if b is 34:
+            push_text(out, "\\\"")
+        else if b is 92:
+            push_text(out, "\\\\")
+        else if b is 10:
+            push_text(out, "\\n")
+        else if b is 13:
+            push_text(out, "\\r")
+        else if b is 9:
+            push_text(out, "\\t")
+        else if b is 8:
+            push_text(out, "\\b")
+        else if b is 12:
+            push_text(out, "\\f")
+        else if b < 32:
+            push_text(out, "\\u00")
+            push_hex_digit(out, b >> 4)
+            push_hex_digit(out, b & 15)
+        else:
+            out.push(byte)
+    out.push(34)
+
+# A number as JSON text (see the header).
+def number_text(x: F64) -> String:
+    if x.is_nan() or x.is_infinite():
+        return "null"
+    if x is 0.0:
+        if 1.0 / x < 0.0:
+            return "-0"
+        return "0"
+    if x.abs() <= 9007199254740992.0 and x.floor() is x:
+        return f"{x as Int}"
+    f"{x}"
+
+def push_newline(out: &mut Array[U8], indent: Int, level: Int):
+    out.push(10)
+    for i in 0..indent * level:
+        out.push(32)
+
+# Appends `value`; `indent` below zero is the compact form.
+def write_value(out: &mut Array[U8], value: &Json, indent: Int, level: Int):
+    match value:
+        Null:
+            push_text(out, "null")
+        Boolean(b):
+            if b:
+                push_text(out, "true")
+            else:
+                push_text(out, "false")
+        Number(x):
+            push_text(out, &number_text(x))
+        Text(t):
+            push_quoted(out, t)
+        List(items):
+            if items.is_empty():
+                push_text(out, "[]")
+                return
+            out.push(91)
+            for i in 0..items.length():
+                if i > 0:
+                    out.push(44)
+                if indent >= 0:
+                    push_newline(out, indent, level + 1)
+                write_value(out, &items[i], indent, level + 1)
+            if indent >= 0:
+                push_newline(out, indent, level)
+            out.push(93)
+        Object(members):
+            if members.is_empty():
+                push_text(out, "{}")
+                return
+            out.push(123)
+            for i in 0..members.length():
+                if i > 0:
+                    out.push(44)
+                if indent >= 0:
+                    push_newline(out, indent, level + 1)
+                push_quoted(out, &members[i].key)
+                out.push(58)
+                if indent >= 0:
+                    out.push(32)
+                write_value(out, &members[i].value, indent, level + 1)
+            if indent >= 0:
+                push_newline(out, indent, level)
+            out.push(125)
+
+# `value` as compact JSON text, with no whitespace.
+public def stringify(value: &Json) -> String:
+    let mutable out be Array[U8].new()
+    write_value(&mut out, value, -1, 0)
+    text_of(&out)
+
+# `value` as indented JSON text, `indent` spaces a level (see the header).
+public def pretty(value: &Json, indent: Int) -> String:
+    let mutable out be Array[U8].new()
+    write_value(&mut out, value, indent, 0)
+    text_of(&out)
+
+# --- Accessors ----------------------------------------------------------------
+
+# An empty object, to `set` members on.
+public def object() -> Json:
+    Json.Object(Array[Member].new())
+
+# An empty list, to `push` elements onto.
+public def list() -> Json:
+    Json.List(Array[Json].new())
+
+# --- Methods ---------------------------------------------------------------------------------------------------------
+
+Json has:
+    public def is_null(self) -> Bool:
+        match self:
+            Null: true
+            _: false
+
+    public def as_bool(self) -> Bool?:
+        match self:
+            Boolean(b): b
+            _: null
+
+    public def as_f64(self) -> F64?:
+        match self:
+            Number(x): x
+            _: null
+
+    # The number as an `Int`, when it is integral and in range.
+    public def as_int(self) -> Int?:
+        match self:
+            Number(x):
+                if x.floor() is x and x.abs() < 9007199254740992.0:
+                    return x as Int
+                null
+            _: null
+
+    public def as_text(self) -> String?:
+        match self:
+            Text(t): t.clone()
+            _: null
+
+    # The element count of a list or the member count of an object, `0` for
+    # anything else.
+    public def length(self) -> Int:
+        match self:
+            List(items): items.length()
+            Object(members): members.length()
+            _: 0
+
+    # The element of a list at `index`, or `null` when out of range or not a
+    # list.
+    public def at(self, index: Int) -> (&Json)?:
+        match self:
+            List(items): items.get(index)
+            _: null
+
+    # The value of the member called `key` — the last, if it occurs more than
+    # once — or `null` when there is none or this is not an object.
+    public def get(self, key: &String) -> (&Json)?:
+        match self:
+            Object(members):
+                let mutable i be members.length()
+                loop:
+                    if i is 0:
+                        break
+                    i be i - 1
+                    if members[i].key is key:
+                        return &members[i].value
+                null
+            _: null
+
+    public def contains_key(self, key: &String) -> Bool:
+        self.get(key)?
+
+    # The keys of an object in order, repeats included; empty for anything
+    # else.
+    public def keys(self) -> Array[String]:
+        let mutable out be Array[String].new()
+        match self:
+            Object(members):
+                for member in members:
+                    out.push(member.key.clone())
+            _: ()
+        out
+
+    # RFC 6901: `"/a/0"` is the member `a`, then the element `0`. `""` is the
+    # value itself; a path that leads nowhere is `null`.
+    public def pointer(self, path: &String) -> (&Json)?:
+        if path.is_empty():
+            return self
+        if not path.starts_with("/"):
+            return null
+        let mutable tokens be Array[String].new()
+        let mutable first be true
+        for raw in path.split("/"):
+            if first:
+                first be false
+                continue
+            tokens.push(raw.replace("~1", "/").replace("~0", "~"))
+        self.walk(&tokens, 0)
+
+    def walk(self, tokens: &Array[String], index: Int) -> (&Json)?:
+        if index >= tokens.length():
+            return self
+        let next be self.step(&tokens[index])
+        if not next?:
+            return null
+        next.walk(tokens, index + 1)
+
+    # One step of a pointer: the member `token` of an object, or the element
+    # `token` of a list when it is a canonical non-negative integer.
+    def step(self, token: &String) -> (&Json)?:
+        match self:
+            Object(_): self.get(token)
+            List(_):
+                let index, bad be token.parse_int()
+                if bad? or index < 0 or f"{index}" is not token:
+                    return null
+                self.at(index)
+            _: null
+
+    # Appends to a list; does nothing to anything else.
+    public def push(mutable self, value: Json):
+        match self:
+            List(items): items.push(value)
+            _: ()
+
+    # Sets `key` on an object: the last member of that name is replaced and
+    # none is added, or a member is appended. Does nothing to anything else.
+    public def set(mutable self, key: &String, value: Json):
+        match self:
+            Object(members):
+                let mutable i be members.length()
+                loop:
+                    if i is 0:
+                        break
+                    i be i - 1
+                    if members[i].key is key:
+                        let _old be members.replace(i, Member(key: key.clone(), value: value))
+                        return
+                members.push(Member(key: key.clone(), value: value))
+            _: ()
+
+Member implements Clone:
+    def clone(self) -> Member:
+        Member(key: self.key.clone(), value: self.value.clone())
+
+Json implements Clone:
+    def clone(self) -> Json:
+        match self:
+            Null: Json.Null
+            Boolean(b): Json.Boolean(b)
+            Number(x): Json.Number(x)
+            Text(t): Json.Text(t.clone())
+            List(items):
+                let mutable copy be Array[Json].new()
+                for item in items:
+                    copy.push(item.clone())
+                Json.List(copy)
+            Object(members):
+                let mutable copy be Array[Member].new()
+                for member in members:
+                    copy.push(member.clone())
+                Json.Object(copy)
+
+# Structural equality (see the header): numbers by value, so `NaN` is not equal
+# to itself, as everywhere else in the language.
+Json implements Eq:
+    def eq(self, other: &Json) -> Bool:
+        match self:
+            Null: other.is_null()
+            Boolean(a):
+                match other:
+                    Boolean(b): a is b
+                    _: false
+            Number(a):
+                match other:
+                    Number(b): a is b
+                    _: false
+            Text(a):
+                match other:
+                    Text(b): a is b
+                    _: false
+            List(a):
+                match other:
+                    List(b):
+                        if a.length() is not b.length():
+                            return false
+                        for i in 0..a.length():
+                            if a[i] is not b[i]:
+                                return false
+                        true
+                    _: false
+            Object(a):
+                match other:
+                    Object(b):
+                        if a.length() is not b.length():
+                            return false
+                        for i in 0..a.length():
+                            if a[i].key is not b[i].key or a[i].value is not b[i].value:
+                                return false
+                        true
+                    _: false
+
+Json implements Display:
+    def display(self, into: &mut Formatter):
+        into.raw(&stringify(self))
