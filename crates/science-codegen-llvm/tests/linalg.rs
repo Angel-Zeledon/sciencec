@@ -55,7 +55,7 @@ fn prints(name: &str, source: &str) -> String {
 fn program(body: &str) -> String {
     format!(
         "use ndarray (NdArray)
-use linalg (identity, transpose, matmul, dot, trace, determinant, lu, solve, inverse, cholesky, qr, norm_frobenius, norm_1, norm_inf, norm_2, LinalgError)
+use linalg (identity, transpose, matmul, dot, trace, determinant, lu, solve, inverse, cholesky, qr, norm_frobenius, norm_1, norm_inf, norm_2, LinalgError, eigh, eig, svd, rank, cond, pinv, lstsq, slogdet, norm, Norm, Lstsq)
 
 def emit(label: String, a: &NdArray):
     let mutable line be label
@@ -114,6 +114,30 @@ def report(label: String, err: LinalgError?):
 
 def residual(a: &NdArray, b: &NdArray) -> F64:
     norm_frobenius(a - b)
+
+def diag(values: &NdArray) -> NdArray:
+    let n be values.data.length()
+    let mutable result be NdArray.zeros(&[n, n])
+    for i in 0..n:
+        result.data[i * n + i] be values.data[i]
+    result
+
+def ascending(values: &NdArray) -> F64:
+    for i in 1..values.data.length():
+        if values.data[i - 1] > values.data[i]:
+            return 0.0
+    1.0
+
+def descending(values: &NdArray) -> F64:
+    for i in 1..values.data.length():
+        if values.data[i - 1] < values.data[i]:
+            return 0.0
+    1.0
+
+def gram(v: &NdArray) -> F64:
+    let vt be must(transpose(v))
+    let k: Int be v.dims[1]
+    residual(must(matmul(vt, v)), identity(k))
 
 {}",
         if body.starts_with("def ") { body.to_string() } else { format!("def main():\n{body}") }
@@ -652,4 +676,469 @@ fn norms() {
     exactly(&out, "bad", &[555.0]); // BAD_RANK = 5, three times
     small(&out, "trace_id");
     exactly(&out, "transpose_id", &[0.0]);
+}
+
+/// Order-insensitive comparison: both sides sorted, then within `tolerance`.
+fn near_sorted(out: &str, label: &str, want: &[f64], tolerance: f64) {
+    let mut got = row(out, label);
+    let mut want = want.to_vec();
+    got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(got.len(), want.len(), "`{label}`: {got:?} vs {want:?}");
+    for (g, w) in got.iter().zip(&want) {
+        assert!((g - w).abs() <= tolerance, "`{label}`: got {got:?}, want {want:?}");
+    }
+}
+
+/// Zero to `1e-10`, the bound the spectral identities are held to.
+fn tiny(out: &str, label: &str) {
+    let got = row(out, label);
+    assert_eq!(got.len(), 1, "`{label}`");
+    assert!(got[0].abs() <= 1e-10, "`{label}` should be ~0, got {:e}", got[0]);
+}
+
+#[test]
+fn eigh_decomposes_symmetric_matrices() {
+    let out = prints(
+        "eigh",
+        &program(
+            "def check(label: String, a: &NdArray):
+    let f, err be eigh(a)
+    if err?:
+        panic(err.message())
+    let av be must(matmul(a, f.vectors))
+    let vl be must(matmul(f.vectors, diag(f.values)))
+    scalar(f\"{label}_av\", residual(av, vl))
+    scalar(f\"{label}_orth\", gram(f.vectors))
+    scalar(f\"{label}_asc\", ascending(f.values))
+    emit(f\"{label}_values\", f.values)
+
+def main():
+    check(\"a\", matrix([4.0, 1.0, 2.0, 1.0, 3.0, 0.0, 2.0, 0.0, 5.0], 3, 3))
+    check(\"c\", matrix([2.0, -1.0, 0.0, 0.0, 1.0, -1.0, 2.0, -1.0, 0.0, 0.0, 0.0, -1.0, 3.0, -1.0, 0.0, 0.0, 0.0, -1.0, 2.0, -1.0, 1.0, 0.0, 0.0, -1.0, 4.0], 5, 5))
+    check(\"repeated\", matrix([2.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 1.0], 3, 3))
+    check(\"dense_repeated\", matrix([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 3, 3))
+    check(\"eye\", identity(4))
+    check(\"zero\", NdArray.zeros(&[3, 3]))
+    check(\"one\", matrix([7.0], 1, 1))
+    check(\"scaled\", matrix([1e8, 3e7, 3e7, 2e8], 2, 2))
+    let _f1, e1 be eigh(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3))
+    scalar(\"notsq\", kind_of(e1) as F64)
+    let _f2, e2 be eigh(matrix([1.0, 2.0, 3.0, 4.0], 2, 2))
+    scalar(\"notsym\", kind_of(e2) as F64)
+    let _f3, e3 be eigh(vector([1.0, 2.0]))
+    scalar(\"vec\", kind_of(e3) as F64)
+",
+        ),
+    );
+    for label in ["a", "c", "repeated", "dense_repeated", "eye", "zero", "one", "scaled"] {
+        let scale = if label == "scaled" { 1e8 } else { 1.0 };
+        let av = row(&out, &format!("{label}_av"))[0];
+        assert!(av.abs() <= 1e-10 * scale, "`{label}` A*V - V*L = {av:e}");
+        tiny(&out, &format!("{label}_orth"));
+        exactly(&out, &format!("{label}_asc"), &[1.0]);
+    }
+    // numpy.linalg.eigh.
+    near(&out, "a_values", &[1.8548973087995773, 3.476023602918134, 6.6690790882822855], 1e-12);
+    near(
+        &out,
+        "c_values",
+        &[0.6201218766157858, 1.0000000000000007, 2.7086331097644316, 3.7510241439497927, 4.920220869669986],
+        1e-12,
+    );
+    near(&out, "repeated_values", &[1.0, 2.0, 2.0], 1e-14);
+    near(&out, "dense_repeated_values", &[0.0, 0.0, 3.0], 1e-14);
+    near(&out, "zero_values", &[0.0, 0.0, 0.0], 0.0);
+    near(&out, "one_values", &[7.0], 0.0);
+    // [[1e8,3e7],[3e7,2e8]]: trace 3e8, det 2e16 - 9e14 = 1.91e16.
+    let s = row(&out, "scaled_values");
+    assert!((s[0] + s[1] - 3e8).abs() <= 1e-4 && (s[0] * s[1] - 1.91e16).abs() <= 1e6, "{s:?}");
+    kind(&out, "notsq", 0.0);
+    kind(&out, "notsym", 2.0);
+    kind(&out, "vec", 0.0);
+}
+
+#[test]
+fn svd_reconstructs_and_orders() {
+    let out = prints(
+        "svd",
+        &program(
+            "def check(label: String, a: &NdArray):
+    let d, err be svd(a)
+    if err?:
+        panic(err.message())
+    let k: Int be d.s.data.length()
+    scalar(f\"{label}_k\", (d.u.dims[0] * 100 + d.u.dims[1] * 10 + d.vt.dims[0]) as F64)
+    scalar(f\"{label}_vtcols\", d.vt.dims[1] as F64)
+    let usv be must(matmul(must(matmul(d.u, diag(d.s))), d.vt))
+    scalar(f\"{label}_recon\", residual(usv, a))
+    scalar(f\"{label}_uorth\", gram(d.u))
+    scalar(f\"{label}_vorth\", gram(must(transpose(d.vt))))
+    scalar(f\"{label}_desc\", descending(d.s))
+    let mutable negative be 0.0
+    for i in 0..k:
+        if d.s.data[i] < 0.0:
+            negative be 1.0
+    scalar(f\"{label}_neg\", negative)
+    emit(f\"{label}_s\", d.s)
+
+def main():
+    check(\"tall\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 4, 2))
+    check(\"wide\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3))
+    check(\"square\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], 3, 3))
+    check(\"zero\", NdArray.zeros(&[3, 2]))
+    check(\"col\", matrix([3.0, 4.0, 0.0], 3, 1))
+    check(\"row\", matrix([3.0, 4.0, 0.0], 1, 3))
+    check(\"eye\", identity(3))
+    check(\"scaled\", matrix([1e-9, 2e-9, 3e-9, 4e-9], 2, 2))
+    check(\"rank1\", matrix([1.0, 2.0, 2.0, 4.0, 3.0, 6.0], 3, 2))
+    let _d, e be svd(vector([1.0, 2.0]))
+    scalar(\"vec\", kind_of(e) as F64)
+",
+        ),
+    );
+    for (label, shape, vtcols) in [
+        ("tall", 422.0, 2.0),
+        ("wide", 222.0, 3.0),
+        ("square", 333.0, 3.0),
+        ("zero", 322.0, 2.0),
+        ("col", 311.0, 1.0),
+        ("row", 111.0, 3.0),
+        ("eye", 333.0, 3.0),
+        ("scaled", 222.0, 2.0),
+        ("rank1", 322.0, 2.0),
+    ] {
+        exactly(&out, &format!("{label}_k"), &[shape]);
+        exactly(&out, &format!("{label}_vtcols"), &[vtcols]);
+        let scale = if label == "scaled" { 1e-9 } else { 1.0 };
+        let recon = row(&out, &format!("{label}_recon"))[0];
+        assert!(recon.abs() <= 1e-10 * scale, "`{label}` U S Vt - A = {recon:e}");
+        tiny(&out, &format!("{label}_uorth"));
+        tiny(&out, &format!("{label}_vorth"));
+        exactly(&out, &format!("{label}_desc"), &[1.0]);
+        exactly(&out, &format!("{label}_neg"), &[0.0]);
+    }
+    // numpy.linalg.svd.
+    near(&out, "tall_s", &[14.269095499261486, 0.6268282324175426], 1e-12);
+    near(&out, "wide_s", &[9.508032000695724, 0.7728696356734844], 1e-12);
+    let s = row(&out, "square_s");
+    assert!((s[0] - 16.84810335261421).abs() <= 1e-12 && (s[1] - 1.0683695145547092).abs() <= 1e-12, "{s:?}");
+    assert!(s[2] <= 1e-14, "the third singular value of [[1..9]] is ~0: {s:?}");
+    near(&out, "zero_s", &[0.0, 0.0], 0.0);
+    near(&out, "col_s", &[5.0], 1e-14);
+    near(&out, "eye_s", &[1.0, 1.0, 1.0], 1e-14);
+    kind(&out, "vec", 5.0);
+}
+
+#[test]
+fn rank_cond_pinv() {
+    let out = prints(
+        "rank_cond_pinv",
+        &program(
+            "def count(a: &NdArray) -> F64:
+    let r, err be rank(a)
+    if err?:
+        panic(err.message())
+    r as F64
+
+def condition(a: &NdArray) -> F64:
+    let c, err be cond(a)
+    if err?:
+        panic(err.message())
+    c
+
+def penrose(label: String, a: &NdArray, rcond: F64):
+    let p, err be pinv(a, rcond)
+    if err?:
+        panic(err.message())
+    scalar(f\"{label}_dims\", (p.dims[0] * 10 + p.dims[1]) as F64)
+    let apa be must(matmul(must(matmul(a, p)), a))
+    let pap be must(matmul(must(matmul(p, a)), p))
+    scalar(f\"{label}_apa\", residual(apa, a))
+    scalar(f\"{label}_pap\", residual(pap, p))
+    let ap be must(matmul(a, p))
+    let pa be must(matmul(p, a))
+    scalar(f\"{label}_sym1\", residual(ap, must(transpose(ap))))
+    scalar(f\"{label}_sym2\", residual(pa, must(transpose(pa))))
+    emit(f\"{label}\", p)
+
+def main():
+    scalar(\"rank_sing\", count(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], 3, 3)))
+    scalar(\"rank_eye\", count(identity(3)))
+    scalar(\"rank_zero\", count(NdArray.zeros(&[3, 4])))
+    scalar(\"rank_tall\", count(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 4, 2)))
+    scalar(\"rank_wide\", count(matrix([1.0, 2.0, 3.0, 2.0, 4.0, 6.0], 2, 3)))
+    scalar(\"rank_one\", count(matrix([1.0, 2.0, 2.0, 4.0], 2, 2)))
+    let _r, rerr be rank(vector([1.0]))
+    scalar(\"rank_vec\", kind_of(rerr) as F64)
+    scalar(\"cond12\", condition(matrix([1.0, 2.0, 3.0, 4.0], 2, 2)))
+    scalar(\"cond_eye\", condition(identity(3)))
+    scalar(\"cond_sing\", condition(matrix([1.0, 2.0, 2.0, 4.0], 2, 2)))
+    scalar(\"cond_zero\", condition(NdArray.zeros(&[2, 2])))
+    scalar(\"cond_diag\", condition(diag(vector([10.0, 1.0, 0.001]))))
+    scalar(\"cond_wide\", condition(matrix([3.0, 0.0, 0.0, 0.0, 4.0, 0.0], 2, 3)))
+    penrose(\"tall\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2), 1e-15)
+    penrose(\"wide\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3), 1e-15)
+    penrose(\"rank1\", matrix([1.0, 2.0, 2.0, 4.0], 2, 2), 1e-15)
+    penrose(\"sing3\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], 3, 3), 1e-10)
+    penrose(\"zero\", NdArray.zeros(&[2, 3]), 1e-15)
+    let inv be must(inverse(matrix([4.0, 7.0, 2.0, 6.0], 2, 2)))
+    let pi, perr be pinv(matrix([4.0, 7.0, 2.0, 6.0], 2, 2), 1e-15)
+    if perr?:
+        panic(perr.message())
+    scalar(\"inv_vs_pinv\", residual(inv, pi))
+    # A cutoff above the small singular value drops it.
+    let cut, cerr be pinv(matrix([3.0, 0.0, 0.0, 1e-3], 2, 2), 1e-2)
+    if cerr?:
+        panic(cerr.message())
+    emit(\"cut\", cut)
+",
+        ),
+    );
+    kind(&out, "rank_sing", 2.0);
+    kind(&out, "rank_eye", 3.0);
+    kind(&out, "rank_zero", 0.0);
+    kind(&out, "rank_tall", 2.0);
+    kind(&out, "rank_wide", 1.0);
+    kind(&out, "rank_one", 1.0);
+    kind(&out, "rank_vec", 5.0);
+    near(&out, "cond12", &[14.933034373659263], 1e-10);
+    near(&out, "cond_eye", &[1.0], 1e-14);
+    assert!(row(&out, "cond_sing")[0] > 1e15, "{out}");
+    assert!(row(&out, "cond_zero")[0].is_infinite(), "{out}");
+    near(&out, "cond_diag", &[10000.0], 1e-8);
+    near(&out, "cond_wide", &[4.0 / 3.0], 1e-14);
+    for (label, dims) in [("tall", 23.0), ("wide", 32.0), ("rank1", 22.0), ("sing3", 33.0), ("zero", 32.0)] {
+        exactly(&out, &format!("{label}_dims"), &[dims]);
+        for check in ["apa", "pap", "sym1", "sym2"] {
+            tiny(&out, &format!("{label}_{check}"));
+        }
+    }
+    // numpy.linalg.pinv([[1,2],[3,4],[5,6]]).
+    near(
+        &out,
+        "tall",
+        &[-1.3333333333333324, -0.3333333333333325, 0.6666666666666657, 1.0833333333333326, 0.33333333333333265, -0.41666666666666596],
+        1e-12,
+    );
+    // The pseudo-inverse of a rank-one matrix is A^T / ||A||_F^2.
+    near(&out, "rank1", &[0.04, 0.08, 0.08, 0.16], 1e-14);
+    exactly(&out, "zero", &[0.0; 6]);
+    tiny(&out, "inv_vs_pinv");
+    near(&out, "cut", &[1.0 / 3.0, 0.0, 0.0, 0.0], 1e-14);
+}
+
+#[test]
+fn least_squares() {
+    let out = prints(
+        "lstsq",
+        &program(
+            "def fit(a: &NdArray, b: &NdArray) -> Lstsq:
+    let f, err be lstsq(a, b)
+    if err?:
+        panic(err.message())
+    f
+
+def main():
+    let x be matrix([1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0], 4, 2)
+    let f be fit(x, vector([1.0, 3.0, 4.0, 8.0]))
+    emit(\"line\", f.x)
+    emit(\"line_res\", f.residuals)
+    scalar(\"line_rank\", f.rank as F64)
+    scalar(\"line_dims\", f.x.dims.length() as F64)
+    # Normal equations hold: A^T (A x - b) = 0.
+    let fitted be must(matmul(x, matrix([f.x.data[0], f.x.data[1]], 2, 1)))
+    let r be fitted - column([1.0, 3.0, 4.0, 8.0])
+    scalar(\"line_normal\", norm_frobenius(must(matmul(must(transpose(x)), r))))
+
+    let exact be fit(matrix([2.0, 1.0, 1.0, 3.0], 2, 2), vector([3.0, 5.0]))
+    emit(\"exact\", exact.x)
+    emit(\"exact_res\", exact.residuals)
+
+    let wide be fit(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3), vector([1.0, 2.0]))
+    emit(\"wide\", wide.x)
+    scalar(\"wide_rank\", wide.rank as F64)
+    scalar(\"wide_res\", wide.residuals.data[0])
+
+    let deficient be fit(matrix([1.0, 2.0, 2.0, 4.0, 3.0, 6.0], 3, 2), vector([1.0, 2.0, 4.0]))
+    emit(\"def\", deficient.x)
+    scalar(\"def_rank\", deficient.rank as F64)
+
+    let many be fit(x, matrix([1.0, 0.0, 3.0, 1.0, 4.0, 2.0, 8.0, 3.0], 4, 2))
+    scalar(\"many_dims\", (many.x.dims[0] * 10 + many.x.dims[1]) as F64)
+    emit(\"many\", many.x)
+    emit(\"many_res\", many.residuals)
+
+    let _g, e1 be lstsq(x, vector([1.0, 2.0, 3.0]))
+    scalar(\"mismatch\", kind_of(e1) as F64)
+    let _h, e2 be lstsq(vector([1.0, 2.0]), vector([1.0, 2.0]))
+    scalar(\"notmatrix\", kind_of(e2) as F64)
+",
+        ),
+    );
+    // numpy.linalg.lstsq(X, y): x = [0.7, 2.2], residuals = [1.8], rank 2.
+    near(&out, "line", &[0.7, 2.2], 1e-12);
+    near(&out, "line_res", &[1.8], 1e-12);
+    kind(&out, "line_rank", 2.0);
+    kind(&out, "line_dims", 1.0);
+    tiny(&out, "line_normal");
+    near(&out, "exact", &[0.8, 1.4], 1e-12);
+    near(&out, "exact_res", &[0.0], 1e-20);
+    // Minimum-norm solutions, as numpy's.
+    near(&out, "wide", &[-0.055555555555555816, 0.11111111111111115, 0.27777777777777807], 1e-12);
+    kind(&out, "wide_rank", 2.0);
+    tiny(&out, "wide_res");
+    near(&out, "def", &[0.24285714285714272, 0.48571428571428554], 1e-12);
+    kind(&out, "def_rank", 1.0);
+    kind(&out, "many_dims", 22.0);
+    // Column 0 is the same fit as `line`; column 1 is exact (y = 0, 1, 2, 3).
+    let m = row(&out, "many");
+    assert!((m[0] - 0.7).abs() <= 1e-12 && (m[2] - 2.2).abs() <= 1e-12, "{m:?}");
+    assert!(m[1].abs() <= 1e-12 && (m[3] - 1.0).abs() <= 1e-12, "{m:?}");
+    let res = row(&out, "many_res");
+    assert!((res[0] - 1.8).abs() <= 1e-12 && res[1].abs() <= 1e-20, "{res:?}");
+    kind(&out, "mismatch", 4.0);
+    kind(&out, "notmatrix", 5.0);
+}
+
+#[test]
+fn slogdet_and_norm() {
+    let out = prints(
+        "slogdet_norm",
+        &program(
+            "def sl(label: String, a: &NdArray):
+    let s, err be slogdet(a)
+    if err?:
+        panic(err.message())
+    scalar(f\"{label}_sign\", s.sign)
+    scalar(f\"{label}_log\", s.logabsdet)
+
+def nrm(label: String, a: &NdArray, order: Norm):
+    let value, err be norm(a, order)
+    if err?:
+        panic(err.message())
+    scalar(label, value)
+
+def main():
+    sl(\"neg\", matrix([1.0, 2.0, 3.0, 4.0], 2, 2))
+    sl(\"pos\", matrix([2.0, 1.0, 1.0, 4.0, 3.0, 3.0, 8.0, 7.0, 9.0], 3, 3))
+    sl(\"sing\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], 3, 3))
+    # det = 1e600: determinant overflows to inf, slogdet does not.
+    let big be diag(vector([1e200, 1e200, 1e200]))
+    sl(\"big\", big)
+    let d, _de be determinant(big)
+    scalar(\"big_det_infinite\", flag(d > 1e300))
+    sl(\"small\", diag(vector([1e-200, 1e-200, 1e-200])))
+    let _s, e1 be slogdet(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3))
+    scalar(\"notsq\", kind_of(e1) as F64)
+
+    let a be matrix([4.0, 1.0, 2.0, 1.0, 3.0, 0.0, 2.0, 0.0, 5.0], 3, 3)
+    nrm(\"fro\", a, Norm.Frobenius)
+    nrm(\"one\", a, Norm.One)
+    nrm(\"inf\", a, Norm.Infinity)
+    nrm(\"two\", a, Norm.Two)
+    nrm(\"nuc\", a, Norm.Nuclear)
+    let v be vector([3.0, -4.0, 12.0])
+    nrm(\"v_fro\", v, Norm.Frobenius)
+    nrm(\"v_one\", v, Norm.One)
+    nrm(\"v_inf\", v, Norm.Infinity)
+    nrm(\"v_two\", v, Norm.Two)
+    nrm(\"rect_two\", matrix([3.0, 0.0, 0.0, 0.0, 4.0, 0.0], 2, 3), Norm.Two)
+    let _n, e2 be norm(v, Norm.Nuclear)
+    scalar(\"v_nuclear\", kind_of(e2) as F64)
+    let _m, e3 be norm(a, Norm.Frobenius)
+    scalar(\"fro_ok\", kind_of(e3) as F64)
+",
+        ),
+    );
+    near(&out, "neg_sign", &[-1.0], 0.0);
+    near(&out, "neg_log", &[0.6931471805599455], 1e-14);
+    near(&out, "pos_sign", &[1.0], 0.0);
+    near(&out, "pos_log", &[4.0_f64.ln()], 1e-14);
+    near(&out, "sing_sign", &[0.0], 0.0);
+    assert_eq!(row(&out, "sing_log")[0], f64::NEG_INFINITY);
+    near(&out, "big_sign", &[1.0], 0.0);
+    near(&out, "big_log", &[600.0 * std::f64::consts::LN_10], 1e-9);
+    exactly(&out, "big_det_infinite", &[1.0]);
+    near(&out, "small_log", &[-600.0 * std::f64::consts::LN_10], 1e-9);
+    kind(&out, "notsq", 0.0);
+    // numpy.linalg.norm of [[4,1,2],[1,3,0],[2,0,5]].
+    near(&out, "fro", &[7.745966692414834], 1e-14);
+    near(&out, "one", &[7.0], 0.0);
+    near(&out, "inf", &[7.0], 0.0);
+    near(&out, "two", &[6.669079088282289], 1e-12);
+    near(&out, "nuc", &[12.0], 1e-12);
+    near(&out, "v_fro", &[13.0], 1e-14);
+    near(&out, "v_one", &[19.0], 0.0);
+    near(&out, "v_inf", &[12.0], 0.0);
+    near(&out, "v_two", &[13.0], 1e-14);
+    near(&out, "rect_two", &[4.0], 1e-14);
+    kind(&out, "v_nuclear", 5.0);
+    kind(&out, "fro_ok", -1.0);
+}
+
+#[test]
+fn eig_real_eigenvalues() {
+    let out = prints(
+        "eig",
+        &program(
+            "def check(label: String, a: &NdArray):
+    let f, err be eig(a)
+    if err?:
+        panic(err.message())
+    let av be must(matmul(a, f.vectors))
+    let vl be must(matmul(f.vectors, diag(f.values)))
+    scalar(f\"{label}_av\", residual(av, vl))
+    let n: Int be a.dims[0]
+    let mutable worst be 0.0
+    for k in 0..n:
+        let mutable length be 0.0
+        for i in 0..n:
+            length be length + f.vectors.data[i * n + k] * f.vectors.data[i * n + k]
+        let off be (length.sqrt() - 1.0).abs()
+        if off > worst:
+            worst be off
+    scalar(f\"{label}_unit\", worst)
+    emit(f\"{label}_values\", f.values)
+
+def main():
+    check(\"b\", matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0], 3, 3))
+    check(\"sym\", matrix([4.0, 1.0, 2.0, 1.0, 3.0, 0.0, 2.0, 0.0, 5.0], 3, 3))
+    check(\"upper\", matrix([2.0, 5.0, 7.0, 0.0, 3.0, 1.0, 0.0, 0.0, -4.0], 3, 3))
+    check(\"lower\", matrix([1.0, 0.0, 0.0, 2.0, 5.0, 0.0, 3.0, 4.0, 9.0], 3, 3))
+    check(\"companion\", matrix([0.0, 0.0, 6.0, 1.0, 0.0, -11.0, 0.0, 1.0, 6.0], 3, 3))
+    check(\"swap\", matrix([0.0, 1.0, 1.0, 0.0], 2, 2))
+    check(\"shear\", matrix([3.0, 1.0, 0.0, 3.0], 2, 2))
+    check(\"eye\", identity(3))
+    check(\"zero\", NdArray.zeros(&[3, 3]))
+    check(\"one\", matrix([-5.0], 1, 1))
+    check(\"four\", matrix([4.0, 1.0, -2.0, 2.0, 1.0, 2.0, 0.0, 1.0, 0.0, 1.0, 3.0, 3.0, 0.0, 0.0, 1.0, 5.0], 4, 4))
+    let _a, e1 be eig(matrix([0.0, -1.0, 1.0, 0.0], 2, 2))
+    scalar(\"rotation\", kind_of(e1) as F64)
+    let _b, e2 be eig(matrix([1.0, 2.0, 0.0, 0.0, 0.0, -3.0, 0.0, 3.0, 0.0], 3, 3))
+    scalar(\"mixed\", kind_of(e2) as F64)
+    let _c, e3 be eig(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3))
+    scalar(\"notsq\", kind_of(e3) as F64)
+",
+        ),
+    );
+    for label in ["b", "sym", "upper", "lower", "companion", "swap", "shear", "eye", "zero", "one", "four"] {
+        tiny(&out, &format!("{label}_av"));
+        tiny(&out, &format!("{label}_unit"));
+    }
+    // numpy.linalg.eigvals (order-insensitive).
+    near_sorted(&out, "b_values", &[-0.9057401795217573, 0.19824686339700862, 16.707493316124747], 1e-10);
+    near_sorted(&out, "sym_values", &[1.8548973087995773, 3.476023602918134, 6.6690790882822855], 1e-10);
+    near_sorted(&out, "upper_values", &[2.0, 3.0, -4.0], 1e-12);
+    near_sorted(&out, "lower_values", &[1.0, 5.0, 9.0], 1e-12);
+    near_sorted(&out, "companion_values", &[1.0, 2.0, 3.0], 1e-10);
+    near_sorted(&out, "swap_values", &[-1.0, 1.0], 1e-12);
+    near_sorted(&out, "shear_values", &[3.0, 3.0], 1e-12);
+    near_sorted(&out, "eye_values", &[1.0, 1.0, 1.0], 1e-14);
+    near_sorted(&out, "zero_values", &[0.0, 0.0, 0.0], 0.0);
+    near_sorted(&out, "one_values", &[-5.0], 0.0);
+    near_sorted(&out, "four_values", &[1.1080455593360838, 2.827519906867343, 4.000000000000001, 6.064434533796575], 1e-9);
+    kind(&out, "rotation", 6.0);
+    kind(&out, "mixed", 6.0);
+    kind(&out, "notsq", 0.0);
 }
