@@ -291,12 +291,12 @@
 //! - **A move through a call whose signature is not visible.** `science-mir`'s
 //!   `lower` §5 marks those arguments `Copy` deliberately, so neither `SC0334`
 //!   nor [`moved`] can see them.
-//! - **A conditional move, a partial move, and a move of a value that owns
-//!   nothing.** Three cases rule 3 forbids and [`moved`]'s §3 declines, each
-//!   for its own stated reason and each with a program in `tests/moved.rs`.
-//!   The middle one is `science-mir`'s whole-local move tracking met by the
-//!   first consumer that cannot live with it, and it is the only one of the
-//!   three whose fix is in another crate.
+//! - **A partial move.** A case rule 3 forbids and [`moved`]'s §3 declines,
+//!   with a program in `tests/moved.rs`: `science-mir`'s whole-local move
+//!   tracking met by the first consumer that cannot live with it, whose fix is
+//!   in another crate. This entry used to list a conditional move and a move of
+//!   a value that owns nothing beside it; both are reported now, and
+//!   [`moved`]'s §3 says why each refusal was wrong.
 //! - **Move paths.** `science-mir`'s `moves` §3 tracks per local, so a partial
 //!   move of one field is a move of the whole value here too.
 //! - **`unsafe`.** Decision 10's escape hatch needs a marker MIR does not carry
@@ -439,10 +439,15 @@
 //!     Neither note is wrong; both are incomplete in the same way, and the
 //!     entry worth recording is the shape: **a conservatism has a direction
 //!     only relative to a consumer, and the second consumer can be on the other
-//!     side of it.** [`moved`]'s §3 items 3 and 4 are what this crate does
-//!     about it, and both are refusals to report rather than changes to the
-//!     analysis, because changing the analysis would move the cost back onto
-//!     drop elaboration where it was already priced.
+//!     side of it.** [`moved`]'s §3 item 2 is what this crate does about the
+//!     second, a refusal to report rather than a change to the analysis,
+//!     because changing the analysis would move the cost back onto drop
+//!     elaboration where it was already priced. Its answer to the first — a
+//!     refusal to report any move of a type that owns nothing — is withdrawn:
+//!     a record of scalars that does not declare `Copy` is moved by rule 2, so
+//!     `DefTable.alloc` was a real use after move, and the example now
+//!     declares `DefId implements Copy` the way the real compiler's `DefId`
+//!     derives it.
 //! 14. **`region-inference.md` §12's *"not claimed and not reused"* was read as
 //!     *"not checkable here"* for as long as there was nothing to check with.**
 //!     The sentence is about which note **allocates** `SC0301`; nothing in it

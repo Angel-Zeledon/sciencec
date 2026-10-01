@@ -27,12 +27,15 @@
 //! program correct; this file is about the second, which is every program where
 //! the move is real.
 //!
-//! # The four conditions, and the three tests that pin what is not reported
+//! # The two conditions, the test that pins what is not reported, and the two
+//! refusals that were withdrawn
 //!
 //! [`crate::moved`]'s §3 states them. A check that only demonstrated its true
 //! positives would be a check nobody could tell had a false-positive rate, so
-//! each declined case is a test with the program in it: a conditional move, a
-//! move out of a field, and a value that owns nothing.
+//! the declined case is a test with the program in it: a move out of a field.
+//! A conditional move and a move of a value that owns nothing used to be
+//! declined too, and each now has the program that is refused beside the
+//! nearest program that is not.
 
 mod support;
 
@@ -120,20 +123,61 @@ fn printing_a_binding_twice_is_not_a_move() {
     assert_eq!(codes("let s be \"hola\"\nprint(s)\nprint(s)\n"), Vec::<u16>::new());
 }
 
-/// **§3 item 1: a move on one path only is not reported.**
+/// **A move on one path only is reported**, which `moved`'s §3 used to
+/// decline.
 ///
-/// The analysis says [`science_mir::moves::State::Maybe`] here, which is
-/// exactly the state Decision 26 generates a drop flag for — so the same lattice
-/// value is reached by programs that are correct, and this check declines it.
-/// rustc reports this program; the cost is stated at `moved`'s §3 and this is
-/// the program it is stated about.
+/// The analysis says [`science_mir::moves::State::Maybe`] at the `print`, the
+/// state Decision 26 generates a drop flag for. At a *drop* that state is
+/// reached by correct programs; at a use it means a path on which `s` is gone,
+/// and rustc refuses this program for the same reason.
 #[test]
-fn a_conditional_move_is_not_reported() {
+fn a_conditional_move_is_reported() {
     let source = "let flag be true\nlet s be \"h\"\nif flag:\n    let t be s\nprint(s)\n";
+    assert_eq!(codes(source), vec![301]);
+    assert!(
+        rendered(source).contains("`s` is moved here"),
+        "the move inside the `if` should be named:\n{}",
+        rendered(source)
+    );
+}
+
+/// **The same shape, with the name given back on the path that moved it, is
+/// not.** Both arms leave `s` holding a value, so the join is `Init` and the
+/// `Maybe` that would have been reported never forms.
+#[test]
+fn a_conditional_move_followed_by_a_new_value_on_that_path_is_not_reported() {
+    let source = "\
+let flag be true
+let mutable s be \"h\"
+if flag:
+    let t be s
+    s be \"otra\"
+print(s)
+";
     assert_eq!(codes(source), Vec::<u16>::new());
 }
 
-/// **§3 item 3: a move out of a field is not reported against the whole
+/// **A move carried around a loop's back edge is reported, against the one
+/// line that does it.** The second iteration moves what the first already
+/// moved; the move and the use are the same expression, so the message has one
+/// label that names the loop rather than two on one caret.
+#[test]
+fn a_move_in_a_loop_body_is_reported_against_the_loop() {
+    let source = "\
+def main() -> ():
+    let s be \"h\"
+    for i in 0..3:
+        let t be s
+";
+    assert_eq!(codes(source), vec![301]);
+    assert!(
+        rendered(source).contains("`s` is moved here, in an earlier iteration of the loop"),
+        "a loop-carried move should say so:\n{}",
+        rendered(source)
+    );
+}
+
+/// **§3 item 2: a move out of a field is not reported against the whole
 /// value.**
 ///
 /// `science-mir`'s `moves` §3 tracks whole locals, so moving `d.title` marks
@@ -157,17 +201,41 @@ def main() -> ():
     assert_eq!(codes(source), Vec::<u16>::new());
 }
 
-/// **§3 item 4: a value that owns nothing is not reported.**
+/// **A value that owns nothing is reported**, which `moved`'s §3 used to
+/// decline.
 ///
-/// Whether a user record is `Copy` is Decision 11's implementation lookup and
-/// this compiler has none, so `science-mir`'s `lower` §5 calls every operand of
-/// a non-primitive type a move. A record of scalars frees nothing and dangles
-/// nothing when it is moved, so refusing this program would be charging the
-/// author for a `Copy` the language would derive — which is what
-/// `examples/21_compiler_shapes.science`'s `DefTable.alloc` does with a
-/// `DefId`, and it is the program this condition was found on.
+/// §6.1 rule 2 moves every value that is not `Copy`; nothing in it asks what
+/// the value owns. A record of two `U64`s that declares nothing is moved into
+/// `take`, and the second call uses what the first consumed. This is the
+/// program the refusal let through, and `examples/21_compiler_shapes.science`'s
+/// `DefTable.alloc` was the same mistake until its `DefId` declared `Copy`.
 #[test]
-fn a_record_of_scalars_is_not_reported() {
+fn a_record_of_scalars_that_is_not_copy_is_reported() {
+    let source = "\
+type Key:
+    a: U64
+    b: U64
+
+def take(k: Key) -> U64:
+    k.a
+
+def main() -> ():
+    let k be Key(a: 1u64, b: 2u64)
+    print(take(k))
+    print(take(k))
+";
+    assert_eq!(codes(source), vec![301]);
+    assert!(
+        rendered(source).contains("...and moved again here, after the move"),
+        "the second call should be named as a move:\n{}",
+        rendered(source)
+    );
+}
+
+/// **A record of scalars bound to a second name and then used is reported
+/// too** — the shape the withdrawn refusal's own test pinned as accepted.
+#[test]
+fn a_record_of_scalars_rebound_and_then_used_is_reported() {
     let source = "\
 type Id:
     index: Int
@@ -179,6 +247,66 @@ def main() -> ():
     let id be Id(index: 1)
     let copied be id
     print(f\"{take(id)}\")
+";
+    assert_eq!(codes(source), vec![301]);
+}
+
+/// **The same record, declared `Copy`, is not.** `science-mir`'s `lower` §5.1
+/// makes every read of it a copy, so there is no move for rule 3 to see — the
+/// negative half of the two tests above, and the fix the message recommends.
+#[test]
+fn a_record_of_scalars_that_is_copy_is_not_reported() {
+    let source = "\
+type Key:
+    a: U64
+    b: U64
+
+Key implements Copy
+
+def take(k: Key) -> U64:
+    k.a
+
+def main() -> ():
+    let k be Key(a: 1u64, b: 2u64)
+    let copied be k
+    print(take(k))
+    print(take(k))
+";
+    assert_eq!(codes(source), Vec::<u16>::new());
+}
+
+/// **A record of scalars moved and then given a new value is usable again**,
+/// for §5's reason and with nothing special about owning nothing.
+#[test]
+fn a_reassigned_record_of_scalars_is_usable_again() {
+    let source = "\
+type Key:
+    a: U64
+
+def take(k: Key) -> U64:
+    k.a
+
+def main() -> ():
+    let mutable k be Key(a: 1u64)
+    print(take(k))
+    k be Key(a: 2u64)
+    print(take(k))
+";
+    assert_eq!(codes(source), Vec::<u16>::new());
+}
+
+/// **Arithmetic through an exclusive borrow reads it; it does not move it.**
+///
+/// `counter + 1` on a `counter: &mut Int` is a `Coercion::Copy`
+/// load through the borrow, and `science-mir` used to lower it as a *move* of
+/// the borrow — which, once the owns-nothing refusal was gone, made
+/// `examples/01_functions.science`'s `bump` a use after move at its own write.
+#[test]
+fn arithmetic_through_an_exclusive_borrow_is_not_a_move() {
+    let source = "\
+def bump(counter: &mut Int) -> ():
+    counter be counter + 1
+    counter be counter + 1
 ";
     assert_eq!(codes(source), Vec::<u16>::new());
 }

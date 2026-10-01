@@ -65,7 +65,7 @@
 //! `Gone` the other way round: `Scopes.lookup` in
 //! `examples/21_compiler_shapes.science` compares `binding.name` and then reads
 //! `binding.definition`, and whole-local tracking hears the whole `binding` go.
-//! `science-regions`' `moved` §3 item 3 therefore abandons any local whose
+//! `science-regions`' `moved` §3 item 2 therefore abandons any local whose
 //! reaching move went through a projection, which loses the errors that are
 //! real. **The direction of a conservatism is relative to its consumer**, and
 //! the entry that closes both is move paths — the thing this section declined
@@ -108,7 +108,7 @@
 //! [`apply_terminator`] re-read at path granularity and not two new rules.
 //! [`crate::drops`] is the only reader; [`analyse`] and everything that
 //! already consumes it — `science-regions`' `moved` chief among them — is
-//! unchanged, so this local's own false-negative (§3 item 3, above) is not
+//! unchanged, so this local's own false-negative (`moved` §3 item 2) is not
 //! narrower today than it was before this paragraph.
 //!
 //! **What is pruned, not tracked.** A field this pass never enters —

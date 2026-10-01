@@ -88,11 +88,15 @@
 //! **That accounting is drop elaboration's and there is now a second
 //! consumer.** *"A drop flag on a local that does not need dropping"* is what
 //! calling a copy a move costs [`crate::drops`]; what it costs a **check** is a
-//! false positive. `science-regions`' `moved` §3 item 4 pays part of that bill
-//! on its own side — it reports rule 3 only where the type owns something —
-//! rather than asking this rule to reverse, because reversing it *wholesale*
-//! would move the cost back onto drop elaboration, where the direction above is
-//! right.
+//! false positive. `science-regions`' `moved` §3 used to pay part of that bill
+//! on its own side, by reporting rule 3 only where the type owns something. It
+//! no longer does: a record of scalars that does not declare `Copy` *is* moved
+//! by rule 2, so the "copy called a move" that bill paid for was, for a user
+//! record, a move called a move. What is left of the bill is this crate's own
+//! mistakes — a `Coercion::Copy` load through a `&mut` used to come out as a
+//! move of the borrow, and `ExprKind::Coerce`'s arm now reads it instead.
+//! Reversing this rule *wholesale* would still move the cost back onto drop
+//! elaboration, where the direction above is right.
 //!
 //! # 5.1. `T implements Copy` is asked, and this paragraph used to say it could
 //! not be
@@ -1717,6 +1721,23 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Coerce { operand, coercion } => {
                 let coercion = *coercion;
                 let (value, block) = self.operand(*operand, block);
+                // **`Coercion::Copy` is a load through the borrow, so the
+                // borrow is read and not consumed.** `assign.rs` §7's own
+                // sentence: *"this one is a load"*. A *shared* borrow already
+                // comes back from `operand` as a copy, because `is_copy` says
+                // so of `&T`; an *exclusive* one does not, because duplicating
+                // a `&mut` is aliasing it — which is true of the pointer and
+                // beside the point here, where nothing keeps the duplicate.
+                // Left a `Move`, `counter be counter + 1` on a
+                // `counter: &mut Int` (`examples/01_functions.science`'s
+                // `bump`) read as moving `counter` and then writing through
+                // it, and `science-regions`' `moved` reported `SC0301` against
+                // a line that moves nothing. §5's exception, the same
+                // `force_copy` the comparison operators take.
+                let value = match coercion {
+                    Coercion::Copy => force_copy(value),
+                    _ => value,
+                };
                 self.assign(block, dest, Rvalue::Coerce { operand: value, coercion, ty }, span);
                 block
             }

@@ -1,0 +1,19 @@
+# UI test: a record that owns nothing, used after it was moved (SC0301).
+#
+# `Key` holds two `U64`s and declares no `Copy`, so §6.1 rule 2 moves it into
+# `take` exactly as it would move a `String`. The check used to ask whether
+# the moved type owned something and stay silent when it did not; what a value
+# owns has nothing to do with whether rule 3 applies to it. `Key implements
+# Copy` is the fix the second note names.
+
+type Key:
+    a: U64
+    b: U64
+
+def take(k: Key) -> U64:
+    k.a
+
+def main():
+    let k be Key(a: 1u64, b: 2u64)
+    print(take(k))
+    print(take(k))

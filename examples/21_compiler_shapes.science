@@ -49,6 +49,12 @@
 type DefId:
     index: Int
 
+# The real `DefId` derives `Copy`, and so does this one. An id is handed out
+# and then used twice on purpose — stored in the `Def` it names and returned
+# to the caller — and without this line the first use would move it (§6.1
+# rule 2) and the second would be `SC0301`.
+DefId implements Copy
+
 choice DefKind:
     Module
     Function

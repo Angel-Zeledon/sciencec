@@ -1,0 +1,10 @@
+error[SC0301]: use of a moved value
+  --> tests/ui/regions/moved_record_of_scalars.science:19:11
+   |
+18 |     print(take(k))
+   |           ------- `k` is moved here
+19 |     print(take(k))
+   |           ^^^^^^^ ...and moved again here, after the move
+   |
+   = note: every value has one owner, and assigning, passing or returning it transfers that owner (§6.1 rules 1 and 2), so the name is empty afterwards (rule 3)
+   = note: borrow at the earlier use instead of moving, or give the second use a value of its own; a type that is not `Copy` is never copied implicitly

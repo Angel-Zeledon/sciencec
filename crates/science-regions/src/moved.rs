@@ -34,24 +34,39 @@
 //! would make every rule in that file able to intern a type, which is a
 //! capability none of them should have.
 //!
-//! # 3. What is reported, and the four ways it declines to
+//! **That reason has lapsed and the placement has not been revisited.** The
+//! question about a type was §3's *"the moved type owns something"*, which is
+//! withdrawn; this check now reads only the body, the analysis and the
+//! [`DefTable`] it names locals with. It still takes a [`Context`] because
+//! that is how it is handed the [`DefTable`], and moving it into `check_body`
+//! is a free change nobody has needed yet.
+//!
+//! # 3. What is reported, and the two ways it declines to
 //!
 //! **Decision. One `SC0301` per local, at the first point in the body's point
-//! order where the local's state is [`State::Gone`], the move that put it there
-//! can be named, that move was of the whole local, and the local's type owns
-//! something.**
+//! order where the local's state is [`State::Gone`] or [`State::Maybe`], the
+//! move that put it there can be named, and that move was of the whole
+//! local.** What the local's type owns is not asked: §6.1 rule 2 moves every
+//! value that is not `Copy`, and rule 3 forbids using every value that was
+//! moved.
 //!
-//! Four conditions, and each of them is a refusal to guess.
+//! **`Maybe` is reported, and it used to be the first refusal.** `Maybe` is
+//! *"it depends on the path"* — a move inside one arm of an `if`, or one
+//! carried around a loop's back edge. The refusal reasoned that Decision 26's
+//! drop flag exists for exactly that state, *"so the same state is reached by
+//! programs that are correct"*. It is — **at a drop**, and a drop is not a use
+//! (§5). At a *use*, `Maybe` together with item 1's walk means there is a path
+//! on which the value was moved and nothing gave the name a new one before the
+//! read, which is rule 3's mistake on that path; rustc reports both shapes.
+//! What the analysis cannot do is tell a path that runs from one that cannot —
+//! `if flag: take(k)` then `if not flag: take(k)` is refused, as it is in
+//! rustc — and that is the price, named here rather than discovered. Turning
+//! it on refused nothing in `examples/`, in the bundled modules, or in any
+//! end-to-end test.
 //!
-//! 1. **[`State::Gone`] and not [`State::Maybe`].** `Maybe` is *"it depends on
-//!    the path"* — a move inside one arm of an `if`, or one carried around a
-//!    loop's back edge. Both are genuine mistakes and rustc reports them; both
-//!    are also exactly what Decision 26's drop flag exists for, so the same
-//!    state is reached by programs that are correct. Reporting `Gone` only is
-//!    the direction [`science_mir::moves`]'s §3 already chose for its own
-//!    imprecision: lose errors rather than invent them. `tests/moved.rs`'s
-//!    `a_conditional_move_is_not_reported` is the program that gets away.
-//! 2. **A move that reaches the use, found by walking back from it.** `Gone` is
+//! Two conditions, and each of them is a refusal to guess.
+//!
+//! 1. **A move that reaches the use, found by walking back from it.** `Gone` is
 //!    also what the analysis says about a local that has *never held a value*:
 //!    the entry block starts every non-parameter at `Gone`, because
 //!    `StorageLive` gives a local room and not a value. A read with no reaching
@@ -59,7 +74,7 @@
 //!    code allocated to it — and saying `SC0301` about it would name a move the
 //!    program does not contain. [`move_site`] is the walk and returns `None`
 //!    rather than a guess.
-//! 3. **The move was of a whole local.** This is
+//! 2. **The move was of a whole local.** This is
 //!    [`science_mir::moves`]'s §3 — *"the analysis tracks whole locals, not move
 //!    paths … a move out of `doc.title` marks `doc` as moved"* — met by the
 //!    consumer that cannot live with it. That note prices its imprecision
@@ -73,29 +88,37 @@
 //!    That is a missed error whenever the two projections really are the same
 //!    one, and closing it is that note's `move paths` entry and not a change
 //!    here.
-//! 4. **The moved type owns something**, which is
-//!    [`science_mir::moves::needs_drop`]. `science-mir`'s `lower` §5 makes
-//!    every non-trivially-copyable operand a `Move` and argues the cost of
-//!    being wrong that way is *"at worst a drop flag on a local that does not
-//!    need dropping"* — **that pricing is for drop elaboration and it does not
-//!    hold here.** `examples/21_compiler_shapes.science`'s `DefTable.alloc` —
-//!    which builds a `Def` out of a `DefId` and then returns that same `DefId`,
-//!    a record of one `Int` — reaches this check as a use after move. Refusing
-//!    it would be charging the author for a `Copy` the language would derive. A
-//!    value that drops nothing is a bag of scalars: moving it frees nothing and
-//!    dangles nothing, so the only thing a missed report costs is the report.
 //!
-//!    **This condition used to be justified by a sentence that is no longer
-//!    true, and it survives the sentence.** The justification was *"whether a
-//!    user type is `Copy` is Decision 11's implementation lookup, which this
-//!    compiler does not have"*. It has one — `science-mir`'s `lower` §5.1 asks
-//!    it now, through the id `science-types`' `assign.rs` §7 was already
-//!    finding — so a type that *declares* `Copy` and owns nothing no longer
-//!    arrives here as a move at all. What is left for this condition is the
-//!    larger set it always really covered: a record of scalars that declares
-//!    **nothing**, which rule 2 does move and which `DefTable.alloc` is. So the
-//!    condition is unchanged, its reason is now *"a missed report costs only
-//!    the report"* alone, and the `Copy` half of it is answered upstream.
+//! **A fourth condition — *"the moved type owns something"*, asked of
+//! [`science_mir::moves::needs_drop`] — was here and is gone, and it was the
+//! wrong kind of refusal.** The other two decline because this check *cannot
+//! tell* whether the program is wrong. That one declined when the check could
+//! tell perfectly well and judged the mistake cheap: *"a value that drops
+//! nothing is a bag of scalars: moving it frees nothing and dangles nothing,
+//! so the only thing a missed report costs is the report"*. That is true of
+//! memory and false of the language. A record of two `U64`s that does not
+//! declare `Copy` is moved by rule 2 exactly as a `String` is, and a program
+//! that uses it twice is a program whose meaning changes the day the type
+//! gains a field that owns something — at which point it stops compiling at a
+//! line nobody touched. A rule that holds for one set of field types and not
+//! another is not the rule the core spec states.
+//!
+//! **What the condition was protecting is now declared where it belongs.** It
+//! was found on `examples/21_compiler_shapes.science`'s `DefTable.alloc`,
+//! which stores a `DefId` in the `Def` it builds and then returns the same
+//! `DefId`. That *is* a use after move under rule 2; what the example meant is
+//! the real compiler's `DefId`, which derives `Copy`, so the example now says
+//! `DefId implements Copy` and `science-mir`'s `lower` §5.1 makes every read of
+//! it a copy. The other false positive the condition was hiding was not the
+//! program's at all: `counter be counter + 1` on a `counter: &mut Int` lowered
+//! the `Coercion::Copy` load through the borrow as a *move* of the borrow, and
+//! `lower`'s `ExprKind::Coerce` arm now reads it instead.
+//!
+//! **What this does not change.** Drop elaboration still asks `needs_drop` and
+//! nothing else: a non-owning local that is moved still gets no drop and no
+//! flag, because [`science_mir::moves::analyse`] has always tracked every
+//! local and only `science_mir::drops`' *use* of it is filtered. The filter removed
+//! here was this check's own.
 //!
 //! # 4. A hole cannot manufacture one, and that is somebody else's decision
 //!
@@ -146,11 +169,7 @@ pub fn use_after_move(
     diagnostics: &mut Diagnostics,
 ) {
     let states = moves::analyse(body);
-    // §3's fourth condition, asked once per local rather than once per access:
-    // a body reads a local far more often than it declares one, and revealing
-    // an alias writes to the table.
-    let mut owns: Vec<Option<bool>> = vec![None; body.local_count()];
-    // §3's third condition. One `SC0301` per local, in point order, so that
+    // §3's decision: one `SC0301` per local, in point order, so that
     // which use is reported does not depend on how the blocks are numbered.
     let mut reported: Vec<Local> = Vec::new();
     for (block, _) in body.blocks() {
@@ -169,25 +188,13 @@ pub fn use_after_move(
                 if matches!(body.local_decl(local).kind, LocalKind::DropFlag(_)) {
                     continue;
                 }
-                if before[local.index()] != State::Gone {
+                if !matches!(before[local.index()], State::Gone | State::Maybe) {
                     continue;
                 }
-                // §3 items 2 and 3.
+                // §3 items 1 and 2.
                 let Some(moved) = move_site(body, analysis, point, local) else {
                     continue;
                 };
-                // §3 item 4.
-                let owning = *owns[local.index()].get_or_insert_with(|| {
-                    moves::needs_drop(
-                        context.decls,
-                        context.types,
-                        context.aliases,
-                        body.local_decl(local).ty,
-                    )
-                });
-                if !owning {
-                    continue;
-                }
                 reported.push(local);
                 diagnostics.push(narrative(context.defs, body, access, &moved, local));
             }
@@ -215,7 +222,7 @@ fn is_use(access: &Access) -> bool {
 /// because past one of those the local's history belongs to a different value.
 ///
 /// **A reaching move through a projection abandons the local**, which is §3
-/// item 3: whole-local tracking cannot say which part of the value is gone, and
+/// item 2: whole-local tracking cannot say which part of the value is gone, and
 /// a message that named the wrong field would be worse than no message.
 ///
 /// **Which move, when two paths each have one.** The one whose span starts
@@ -245,7 +252,7 @@ fn move_site(body: &Body, analysis: &BodyAnalysis, from: Point, local: Local) ->
                     }
                     halt = true;
                 }
-                // §3 item 3.
+                // §3 item 2.
                 AccessKind::Move => return None,
                 // A whole-local write, or the beginning or end of the storage:
                 // whatever was here before, it is not what `from` read.
@@ -303,12 +310,26 @@ fn narrative(
     local: Local,
 ) -> Diagnostic {
     let name = name_of(defs, body, &Place::local(local));
-    Diagnostic::error(codes::USE_AFTER_MOVE, "use of a moved value")
-        .with_label(Label::secondary(moved.span, format!("{name} is moved here")))
-        .with_label(Label::primary(
+    let headline = Diagnostic::error(codes::USE_AFTER_MOVE, "use of a moved value");
+    // **One span, when the move and the use are the same expression.** That
+    // happens only when a move reaches its own use around a loop's back edge —
+    // `for i in 0..3: let t be s` — and two labels on one caret would read
+    // *"moved here … and moved again here"* about a single `s`, which says
+    // nothing about why it is the second time. The loop is the why.
+    let labelled = if moved.span == access.span {
+        headline.with_label(Label::primary(
             access.span,
-            format!("...and {} here, after the move", used(access)),
+            format!("{name} is moved here, in an earlier iteration of the loop"),
         ))
+    } else {
+        headline
+            .with_label(Label::secondary(moved.span, format!("{name} is moved here")))
+            .with_label(Label::primary(
+                access.span,
+                format!("...and {} here, after the move", used(access)),
+            ))
+    };
+    labelled
         .with_note(
             "every value has one owner, and assigning, passing or returning it transfers \
              that owner (§6.1 rules 1 and 2), so the name is empty afterwards (rule 3)",

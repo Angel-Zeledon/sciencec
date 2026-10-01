@@ -77,13 +77,18 @@
 //!   case and every scalar through [`science_mir::mir::Operand::Copy`], which
 //!   this module never looks at.
 //! - **A move of a type that owns nothing, when this compiler can tell.**
-//!   [`moved`]'s §3 item 4 makes the identical exemption for the identical
-//!   reason and this module asks the identical query,
-//!   [`science_mir::moves::needs_drop`], before reporting anything.
-//!   `examples/21_compiler_shapes.science`'s `DefTable.alloc` is the program
-//!   that check is for: a record of one `Int` has a declaration this compiler
-//!   can walk, `needs_drop` walks it and answers `false`, and nothing here
-//!   fires.
+//!   This module asks [`science_mir::moves::needs_drop`] before reporting
+//!   anything: a record of one `Int` has a declaration this compiler can walk,
+//!   `needs_drop` walks it and answers `false`, and nothing here fires.
+//!
+//!   **[`moved`] used to make the identical exemption and no longer does** —
+//!   its §3 says why: a record of scalars that does not declare `Copy` is
+//!   moved by rule 2 whatever it owns. The same argument applies here and has
+//!   not been acted on, because this module's rule is a different one (moving
+//!   out of a borrow, not using after a move) and nothing has yet measured
+//!   what dropping the exemption would refuse. `examples/21_compiler_shapes`'
+//!   `DefId`, the program the exemption was written for, declares `Copy` now
+//!   and no longer needs it.
 //!
 //! # 5. What is refused and should not be — recorded rather than hidden
 //!
