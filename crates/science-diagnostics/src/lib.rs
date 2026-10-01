@@ -82,12 +82,46 @@ impl<T> Spanned<T> {
 /// Ranges are divided by phase; see §9 of the design spec:
 /// 0001-0099 lexical, 0100-0199 syntax, 0200-0299 resolution and types,
 /// 0300-0399 ownership and regions, 0400-0499 codegen and linking.
+///
+/// # The `SP` namespace
+///
+/// `package-manager.md` Decision 24 gives the manifest, resolution and the
+/// lockfile a namespace of their own, `SP0001`–`SP0999`, and says the shape is
+/// kept *"so `science-diagnostics`, the renderer and the UI-test harness need no
+/// change"*. That is nearly true: the renderer needs none, and the one thing
+/// that does is the prefix this `Display` writes.
+///
+/// **Decision. An `SP` code is a `Code` at or above [`Code::SP_BASE`], built
+/// with [`Code::sp`].** An `SC` code has four digits and so never reaches
+/// 10000; the range above it is unused by construction, and putting the
+/// second namespace there keeps `Code(pub u16)` — written at hundreds of call
+/// sites — exactly as it is.
+///
+/// **Rejected: a prefix field.** It is the honest shape and it would touch
+/// every `Code(…)` in the workspace for a namespace with one producer.
+///
+/// **Cost.** `Code(10_001)` and `Code::sp(1)` are the same value, so the
+/// representation leaks; nothing outside this file should write the former.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Code(pub u16);
 
+impl Code {
+    /// Where the `SP` namespace begins. See the type's documentation.
+    pub const SP_BASE: u16 = 10_000;
+
+    /// `SP{n:04}` — a package-layer code (`package-manager.md` §8).
+    pub const fn sp(n: u16) -> Code {
+        Code(Self::SP_BASE + n)
+    }
+}
+
 impl fmt::Display for Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SC{:04}", self.0)
+        if self.0 >= Self::SP_BASE {
+            write!(f, "SP{:04}", self.0 - Self::SP_BASE)
+        } else {
+            write!(f, "SC{:04}", self.0)
+        }
     }
 }
 

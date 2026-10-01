@@ -1824,3 +1824,77 @@ that is a cost Decision 6 imposes on a sibling rather than on itself.
 | 22 | `sciencec archive` is the source artefact for the methods section; `bundle` is the sibling's | §6.4 |
 | 23 | A toolchain works with no registry, no network and no writable global location | §6.5 |
 | 24 | A separate `SP0001`–`SP0999` diagnostic namespace; no `SC` code claimed | §8.1 |
+
+---
+
+## 13. What is implemented (2026-10-01), and where it departs
+
+The first implementation is `crates/science-package` (manifest, TOML, graph,
+search path, lock) driven by `crates/sciencec/src/package.rs`. It is §7.1 in
+full plus the one piece of §7.2 that is a directory walk — transitive `path`
+dependencies. Tested end to end by `crates/sciencec/tests/package.rs`.
+
+**The commands are `sciencec` subcommands, not a `scargo` binary.**
+`docs/DREAM.md` §28 names `scargo`; its own contrast note defers to this note,
+which spells every command `sciencec …` and argues the single binary in §11.
+
+| Command | Meaning |
+|---|---|
+| `sciencec new NAME` | `NAME/science.toml`, `src/main.science`, `src/greeting.science`, `tests/greeting.science`, `.gitignore` |
+| `sciencec check` / `build` / `test` | with **no file named**: the package around the working directory, found by walking up |
+| `sciencec run [FILE] [-- ARGS]` | build, then run with `ARGS`; the program's exit status is passed through (`128 + N` for a signal) |
+| `--module-path DIR` | step 3 of `stdlib-shape-and-packages.md` §6.3; `SCIENCE_PATH` is step 4 |
+
+**Decisions this implementation took, each where the note was silent or
+where it departs:**
+
+1. **A file named on the command line is a script, even inside a package —
+   it reads no manifest.** Decision 15 rule 1 says the named file is the
+   entry; §4.6's *"single-file package"* sentence leans toward giving it the
+   manifest above it, and that was not done: it would change what every file
+   under a manifest means, and this repository's root carries an untracked
+   `science.toml` that would have put a `science.lock` into the checkout on
+   every corpus build. A package command is one with no file named.
+2. **The root package is mounted at its own name too** (Decision 13 applied
+   to the root, not only to dependencies), so the entry, a test and a
+   dependent all write `use spectra.fit`. The crate root of the entry —
+   the entry's directory, the pre-manifest rule — still answers a bare
+   `use fit`.
+3. **A mounted name is final**: `use util.x` with a dependency `util` that has
+   no `x` is `SC0202`, never a fall-through to the crate root or the
+   toolchain.
+4. **Every package in the graph is mounted for every file**, because
+   `collect_crate`'s callback does not know which module asked. A root package
+   can `use` a package only a dependency declared. Recorded as a cost.
+5. **`target/<name>` for the executable, `target/tests/<stem>` for a test.**
+   §1.2 says the build directory is per project; it did not name it.
+6. **`science.lock` is written after the entry is found**, deterministically
+   and only when its text changes. It records each package's name, version and
+   `path+` source, and a `[build]` table with the `sciencec` version and the
+   host. **No content hash** (Decision 2 is F1, and its canonicalisation rules
+   must be specified before the first hash is written) and **no LLVM version or
+   optimisation level** (not known to the crate that writes it).
+7. **The TOML parser reads a subset** — no floats, date-times or multi-line
+   strings — and refuses the rest with `SP0001` naming the construct. Decision
+   12 makes it normative; a key that needs more grows it here first.
+8. **`SP` codes are `Code` values from 10000**, in `science-diagnostics`
+   (`Code::sp`), so `Code(pub u16)` is unchanged at its call sites.
+
+**Codes allocated from §8.2's free range:**
+
+| Code | Fires on |
+|---|---|
+| `SP0060` | a package command found no `science.toml` at or above the working directory |
+| `SP0061` | a `path` dependency names nothing, or a directory with no `science.toml` |
+| `SP0062` | a dependency's key is not the `name` in its own manifest (Decision 13) |
+| `SP0063` | a key this note designs and this build does not implement: `version` and `git` dependencies, `[[binary]]`, `[native.*]`, `[sidecar]`, `sidecar = true` |
+| `SP0064` | the package has no entry: `entry` names a missing file, or there is neither `entry` nor `src/main.science` |
+| `SP0065` | a known key holds the wrong kind of value |
+
+Implemented from §8.2: `SP0001`–`SP0006`, `SP0010`, `SP0013`.
+
+**Not done:** registry and `version` dependencies, `git` dependencies, MVS,
+content hashes, `--locked` / `--offline`, `fetch`, `vendor`, `archive`, `add`,
+`update`, `why`, `[[binary]]`, `[native.*]`, `[sidecar]`, and `bench` (DREAM
+§28 lists it; this note does not define it, and there is no benchmark item to
+run).

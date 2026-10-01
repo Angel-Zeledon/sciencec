@@ -49,6 +49,10 @@ science-mir.workspace = true
 science-regions.workspace = true
 science-parser.workspace = true
 science-resolve.workspace = true
+# `science-package` is the manifest, the package graph, the lock and the
+# module search path: `package-manager.md`'s F0 half, which `crate::package`
+# drives. It reads no `.science` file; that stays this crate's pipeline.
+science-package.workspace = true
 
 [dev-dependencies]
 # The UI suite for the phases after the lexer: `tests/ui.rs`.

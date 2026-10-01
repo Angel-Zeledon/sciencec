@@ -1,0 +1,13 @@
+[package]
+name = "science-package"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The manifest, the package graph and the lockfile: package-manager.md's F0 half."
+
+# One dependency, and it is the renderer's types. `package-manager.md` Decision
+# 12 makes the compiler's own TOML parser normative, so it is written here
+# rather than borrowed: a third-party parser's dialect would be the normative
+# one, and the workspace has exactly one third-party dependency today.
+[dependencies]
+science-diagnostics.workspace = true

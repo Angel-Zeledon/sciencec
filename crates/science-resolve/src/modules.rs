@@ -52,10 +52,12 @@
 //! `--module-path`, then `SCIENCE_PATH`, then the toolchain. This is a
 //! hard-wired root of exactly one entry. The door is not closed: [`open`] is a
 //! callback, so a caller that wants to try three directories tries three
-//! directories and nothing here changes. What is *not* built is the flag, the
-//! environment variable and the toolchain directory, because each of them is a
-//! decision about where packages live and that decision is the package
-//! manager's.
+//! directories and nothing here changes. **That is now what happens**:
+//! `science_package::search` is the ordered list — a package mounted at its
+//! name, the crate root, `--module-path`, `SCIENCE_PATH`, then the bundled
+//! toolchain modules — and `sciencec`'s driver asks it from inside `open`.
+//! This file did not change to allow it, which is the property the callback
+//! was for.
 //!
 //! [`open`]: collect_crate
 

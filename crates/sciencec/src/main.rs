@@ -15,6 +15,10 @@
 //! sciencec ast FILE          dump the syntax tree
 //! sciencec resolve FILE      dump the resolved crate
 //! sciencec tools --json FILE  the JSON Schema of every `tool` in the file
+//! sciencec run FILE [-- ARGS]  build the file, then run it
+//! sciencec new NAME          scaffold a package
+//! sciencec check | build | run | test   with no FILE: the package around
+//!                            the working directory (`crate::package`)
 //! ```
 //!
 //! # A file argument is an entry, and names a crate
@@ -53,6 +57,7 @@
 //! driver, which is exactly what this binary must not do.
 
 mod driver;
+mod package;
 mod tools;
 mod report;
 
@@ -82,7 +87,19 @@ Usage:
                               the same over every top-level function: a
                               measurement of the type mapping, and not a list
                               of callables anything should be offered
+    sciencec run FILE [-- ARGS...]
+                              build FILE, then run it with ARGS
     sciencec --version        print the version
+
+Packages (a directory with a `science.toml`):
+    sciencec new NAME         create the package NAME in ./NAME
+    sciencec check            check the package around the working directory
+    sciencec build            build it into target/
+    sciencec run [-- ARGS...] build it, then run it with ARGS
+    sciencec test             build and run each tests/*.science against it
+
+`--module-path DIR` (repeatable) adds DIR to the module search path, after
+the crate root and before `SCIENCE_PATH`; the bundled modules come last.
     sciencec --help           print this message
 
 Diagnostics go to stderr, dumps to stdout.
@@ -102,12 +119,16 @@ fn main() -> ExitCode {
     match run(&args) {
         Outcome::Clean => ExitCode::SUCCESS,
         Outcome::Failed => ExitCode::FAILURE,
+        Outcome::Exit(code) => ExitCode::from(code),
     }
 }
 
 enum Outcome {
     Clean,
     Failed,
+    /// `sciencec run`'s program ran, and this is what it exited with — passed
+    /// through, so `sciencec run` is transparent to a shell.
+    Exit(u8),
 }
 
 fn run(args: &[OsString]) -> Outcome {
@@ -137,10 +158,29 @@ fn run(args: &[OsString]) -> Outcome {
     // only format there is. It is spelled anyway because `mcp-servers.md`
     // §14.3 spells it, and because a second format — a human-readable listing
     // — is the obvious next thing to want.
+    // `run` hands everything after the first `--` to the program, untouched:
+    // `sciencec run -- --verbose` must reach the program as `--verbose`
+    // rather than be refused here as an unknown option.
+    let (operands, program_args) = match command.to_str() {
+        Some("run") => match rest.iter().position(|arg| arg == "--") {
+            Some(at) => (rest[..at].to_vec(), rest[at + 1..].to_vec()),
+            None => (rest.to_vec(), Vec::new()),
+        },
+        _ => (rest.to_vec(), Vec::new()),
+    };
+
+    // `--module-path DIR`, for every command that builds a crate: step 3 of
+    // `stdlib-shape-and-packages.md` §6.3's search path, ahead of
+    // `SCIENCE_PATH` and the toolchain.
+    let (operands, module_path) = match take_valued(&operands, "--module-path") {
+        Ok(taken) => taken,
+        Err(message) => return usage_error(&message),
+    };
+
     let (rest, write) = match command.to_str() {
-        Some("fmt") => take_flag(rest, "--write"),
-        Some("tools") => take_flag(rest, "--json"),
-        _ => (rest.to_vec(), false),
+        Some("fmt") => take_flag(&operands, "--write"),
+        Some("tools") => take_flag(&operands, "--json"),
+        _ => (operands, false),
     };
 
     // `tools` takes a second flag, and it is spelled out rather than folded
@@ -162,13 +202,14 @@ fn run(args: &[OsString]) -> Outcome {
     // because it made their program work — which, for this one, means it hid
     // the bug rather than fixed it.
     let (rest, no_noalias) = match command.to_str() {
-        Some("build") | Some("test") => take_flag(&rest, "--no-noalias"),
+        Some("build") | Some("test") | Some("run") => take_flag(&rest, "--no-noalias"),
         _ => (rest, false),
     };
     let (rest, emit_ir) = match command.to_str() {
-        Some("build") | Some("test") => take_flag(&rest, "--emit=llvm-ir"),
+        Some("build") | Some("test") | Some("run") => take_flag(&rest, "--emit=llvm-ir"),
         _ => (rest, false),
     };
+    let flags = BuildFlags { no_noalias, emit_ir };
 
     let files = match collect_files(&rest) {
         Ok(files) => files,
@@ -180,12 +221,45 @@ fn run(args: &[OsString]) -> Outcome {
     };
 
     let mut session = Session::new();
+    session.set_search_dirs(science_package::search::search_dirs(
+        &module_path,
+        std::env::var_os("SCIENCE_PATH"),
+    ));
     match command.to_str() {
+        // **No file named means the package around the working directory**
+        // (`crate::package`'s §"When a command is a package command"). These
+        // four used to refuse an empty operand list as a usage error; that
+        // refusal is now `SP0060` when there is no manifest to read, which
+        // names the same mistake and the two ways out of it.
         Some("check") => {
             if files.is_empty() {
-                return usage_error("check expects at least one file");
+                package::check(&mut session);
+            } else {
+                session.check(&files);
             }
-            session.check(&files);
+        }
+        Some("new") => {
+            let [name] = files.as_slice() else {
+                return usage_error("new expects exactly one package name");
+            };
+            package::new(&mut session, &name.to_string_lossy());
+        }
+        // `sciencec run [FILE] [-- ARGS...]`. The program's exit code is
+        // passed through when it ran; the summary line, if the build warned,
+        // is printed first so that it is not mistaken for the program's.
+        Some("run") => {
+            if files.len() > 1 {
+                return usage_error("run expects at most one file; arguments for the program go after `--`");
+            }
+            let code = package::run(&mut session, files.first().map(PathBuf::as_path), &program_args, flags);
+            let outcome = session.finish();
+            return match code {
+                Some(code) => Outcome::Exit(code),
+                None => match outcome {
+                    Outcome::Clean => Outcome::Failed,
+                    other => other,
+                },
+            };
         }
         // `build` takes the same operands as `check`, plus the two flags read
         // off above. **`-O` and `--target-cpu` are still not spelled**:
@@ -195,9 +269,10 @@ fn run(args: &[OsString]) -> Outcome {
         // `abi::borrow_attrs` and `--emit=llvm-ir` writes a file.
         Some("build") => {
             if files.is_empty() {
-                return usage_error("build expects at least one file");
+                package::build(&mut session, flags);
+            } else {
+                session.build(&files, flags);
             }
-            session.build(&files, BuildFlags { no_noalias, emit_ir });
         }
         // `test` takes the same operands as `build`: each file is an entry,
         // each entry is a crate, and there is no `test` item yet to select
@@ -208,9 +283,10 @@ fn run(args: &[OsString]) -> Outcome {
         // silently did nothing for `test` is the shape of an hour lost.
         Some("test") => {
             if files.is_empty() {
-                return usage_error("test expects at least one file");
+                package::test(&mut session, flags);
+            } else {
+                session.test(&files, flags);
             }
-            session.test(&files, BuildFlags { no_noalias, emit_ir });
         }
         Some("fmt") => {
             if write {
@@ -281,6 +357,35 @@ fn take_flag(args: &[OsString], flag: &str) -> (Vec<OsString>, bool) {
         }
     }
     (rest, found)
+}
+
+/// Takes every `flag VALUE` and `flag=VALUE` out of the operands, in order.
+///
+/// Repeatable, because a search path is a list. A `flag` with nothing after
+/// it is an error rather than a flag with an empty value: an empty directory
+/// on a search path would be the working directory, which is the one input
+/// `science_resolve::modules` refuses to let decide what a `use` means.
+fn take_valued(args: &[OsString], flag: &str) -> Result<(Vec<OsString>, Vec<PathBuf>), String> {
+    let prefix = format!("{flag}=");
+    let mut values = Vec::new();
+    let mut rest = Vec::with_capacity(args.len());
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.to_str() {
+            Some(text) if text == flag => match iter.next() {
+                Some(value) => values.push(PathBuf::from(value)),
+                None => return Err(format!("`{flag}` expects a directory after it")),
+            },
+            Some(text) if text.starts_with(&prefix) && text.len() > prefix.len() => {
+                values.push(PathBuf::from(&text[prefix.len()..]));
+            }
+            Some(text) if text.starts_with(&prefix) => {
+                return Err(format!("`{flag}` expects a directory after it"))
+            }
+            _ => rest.push(arg.clone()),
+        }
+    }
+    Ok((rest, values))
 }
 
 fn usage_error(message: &str) -> Outcome {

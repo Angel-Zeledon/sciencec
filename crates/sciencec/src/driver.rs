@@ -52,6 +52,13 @@ use crate::Outcome;
 pub struct Session {
     db: ScienceDatabase,
     tally: Tally,
+    /// Everything [`science_package::ModuleSearch`] needs except the crate
+    /// root, which is per entry: the packages mounted by name, and the
+    /// `--module-path` and `SCIENCE_PATH` directories. Empty for a script with
+    /// neither, which is exactly the lookup this driver did before a manifest
+    /// existed.
+    mounts: Vec<(String, PathBuf)>,
+    search_dirs: Vec<PathBuf>,
 }
 
 /// The two flags [`Session::build`] and [`Session::test`] take.
@@ -95,7 +102,39 @@ pub struct BuildFlags {
 
 impl Session {
     pub fn new() -> Self {
-        Session { db: ScienceDatabase::new(), tally: Tally::default() }
+        Session {
+            db: ScienceDatabase::new(),
+            tally: Tally::default(),
+            mounts: Vec::new(),
+            search_dirs: Vec::new(),
+        }
+    }
+
+    /// Steps 3 and 4 of the module search path: `--module-path`, then
+    /// `SCIENCE_PATH`. See `science_package::search`.
+    pub fn set_search_dirs(&mut self, dirs: Vec<PathBuf>) {
+        self.search_dirs = dirs;
+    }
+
+    /// Step 1: every package in the build, mounted at its name.
+    pub fn set_mounts(&mut self, mounts: Vec<(String, PathBuf)>) {
+        self.mounts = mounts;
+    }
+
+    /// Registers a file that is not Science source — a manifest — so that a
+    /// diagnostic can render against it.
+    pub fn register(&mut self, path: &Path, text: String) -> FileId {
+        self.db.add_file(display_path(path), text)
+    }
+
+    /// Reports diagnostics produced outside the pipeline, and counts them.
+    pub fn report_all(&mut self, diagnostics: Vec<Diagnostic>) {
+        self.report(diagnostics);
+    }
+
+    /// Counts a failure reported as a plain line rather than a diagnostic.
+    pub fn fail(&mut self) {
+        self.tally.error();
     }
 
     /// Prints the summary and reports what the process should exit with.
@@ -215,7 +254,10 @@ impl Session {
     /// would otherwise put `hello.exe` somewhere that depends on where the user
     /// was standing. The cost is that a build writes into the source tree, which
     /// is the wrong default the day there is a `target/` directory to write to
-    /// instead — and there is no package manager yet, so there is not one.
+    /// instead. **A package now has one** — `sciencec build` with no file
+    /// writes to `target/` under the package root (`crate::package`) — and a
+    /// named script still has no package root to put one in, so this default
+    /// stands for scripts and only for scripts.
     pub fn build(&mut self, paths: &[PathBuf], flags: BuildFlags) {
         let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
         for path in paths {
@@ -237,11 +279,72 @@ impl Session {
             // command. The day `science_db::pending::mir` has a body, both calls
             // become one query and this paragraph goes with them — that is the
             // same shortcut this module's header names, counted a fourth time.
-            match self.emit_executable(path, *file, flags) {
+            match self.emit_executable(path, *file, flags, &executable_path(path)) {
                 Ok(()) => {}
                 Err(diagnostics) => all.extend(diagnostics),
             }
             self.report(all);
+        }
+    }
+
+    /// One entry, built to `output`: what a package build and `sciencec run`
+    /// do, where [`Session::build`] is the several-scripts form. Says whether
+    /// an executable was produced.
+    ///
+    /// **The same two steps, in the same order**, and not a second pipeline:
+    /// [`Session::diagnostics`] first and the back end only when it is clean.
+    /// The only input that differs is where the executable goes, which for a
+    /// package is `target/` (`crate::package`) rather than beside the source.
+    pub fn build_entry(&mut self, path: &Path, output: &Path, flags: BuildFlags) -> bool {
+        let Some(file) = self.load(path) else { return false };
+        let mut all = self.diagnostics(path, file);
+        if has_error(&all) {
+            self.report(all);
+            return false;
+        }
+        let built = match self.emit_executable(path, file, flags, output) {
+            Ok(()) => true,
+            Err(diagnostics) => {
+                all.extend(diagnostics);
+                false
+            }
+        };
+        self.report(all);
+        built
+    }
+
+    /// `sciencec run`: runs `exe` with `args`, the terminal handed straight
+    /// through, and answers with the code the process should exit with.
+    ///
+    /// **Not bounded by [`RUN_BUDGET`].** That budget is `test`'s, whose
+    /// programs are expected to finish at once; `run` is how a user runs a
+    /// program that may legitimately take an hour, and killing it at ten
+    /// seconds would be a test harness's policy imposed on a user's program.
+    pub fn run_program(&mut self, exe: &Path, args: &[std::ffi::OsString]) -> Option<u8> {
+        match std::process::Command::new(spawnable(exe)).args(args).status() {
+            Ok(status) => match status.code() {
+                Some(code) => Some(code.clamp(0, 255) as u8),
+                // A signal — `assert` and `panic` abort, which is SIGABRT on
+                // POSIX. Passed on the way a shell reports it, `128 + N`, so
+                // `sciencec run` and running the binary directly exit alike;
+                // the line says which signal, because `134` alone does not.
+                None => {
+                    eprintln!("`{}` was ended by {}", display_path(exe), exit_reason(&status));
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        if let Some(signal) = status.signal() {
+                            return Some((128 + signal).clamp(0, 255) as u8);
+                        }
+                    }
+                    Some(1)
+                }
+            },
+            Err(error) => {
+                eprintln!("error: cannot run `{}`: {}", display_path(exe), io_reason(&error));
+                self.tally.error();
+                None
+            }
         }
     }
 
@@ -255,6 +358,7 @@ impl Session {
         path: &Path,
         file: FileId,
         flags: BuildFlags,
+        output: &Path,
     ) -> Result<(), Vec<Diagnostic>> {
         let (sources, _) = self.crate_sources(path, file);
         let (krate, _) = self.resolved(&sources);
@@ -365,7 +469,7 @@ impl Session {
             bodies: &lowered.bodies,
             mono: &mono,
             instances: &instances,
-            output: executable_path(path),
+            output: output.to_path_buf(),
         };
         match science_codegen_llvm::build(&input) {
             Ok(built) => {
@@ -376,7 +480,7 @@ impl Session {
                 // the IR of a module that did not link is the IR of a program
                 // that does not exist.
                 if flags.emit_ir {
-                    let ir = ir_path(path);
+                    let ir = ir_path(output);
                     if let Err(error) = std::fs::write(&ir, &built.ir) {
                         // Reported the way `fmt --write` reports the same
                         // failure — a line on stderr and a nonzero exit — and
@@ -441,13 +545,14 @@ impl Session {
                 self.report(all);
                 continue;
             }
-            if let Err(diagnostics) = self.emit_executable(path, *file, flags) {
+            let exe = executable_path(path);
+            if let Err(diagnostics) = self.emit_executable(path, *file, flags, &exe) {
                 all.extend(diagnostics);
                 self.report(all);
                 continue;
             }
             self.report(all);
-            self.run_test(path);
+            self.run_test(path, &exe);
         }
     }
 
@@ -457,8 +562,8 @@ impl Session {
     ///
     /// Bounded by [`RUN_BUDGET`] rather than `Command::status`'s unconditional
     /// wait — see [`run_bounded`] for why.
-    fn run_test(&mut self, path: &Path) {
-        let exe = spawnable(&executable_path(path));
+    pub fn run_test(&mut self, path: &Path, exe: &Path) {
+        let exe = spawnable(exe);
         let name = display_path(path);
         match run_bounded(&exe, RUN_BUDGET) {
             Ok(RunOutcome::Exited(status)) if status.success() => {
@@ -756,19 +861,31 @@ impl Session {
         };
 
         let mut whole = true;
+        // The search path, `science_package::search`'s five steps: a mounted
+        // package, the crate root, `--module-path`, `SCIENCE_PATH`, and the
+        // toolchain last. With no manifest and neither of the two settings it
+        // is the crate root and the toolchain, which is what this was before.
+        let search = science_package::ModuleSearch {
+            root: root.clone(),
+            mounts: self.mounts.clone(),
+            dirs: self.search_dirs.clone(),
+        };
         let sources = science_resolve::modules::collect_crate(entry_source, |candidate| {
-            let path = root.join(candidate);
             // A missing file is the resolver's to report, against the `use` —
             // unless the toolchain carries a module by that name, which is
             // searched last (`science_resolve::stdlib`). Only a file that is
-            // there and unusable is reported here.
-            if !path.is_file() {
+            // there and unusable is reported here. A candidate under a mounted
+            // package never reaches the toolchain: the mount is final.
+            let Some(path) = search.locate(candidate) else {
+                if search.is_mounted(candidate) {
+                    return None;
+                }
                 let text = science_resolve::stdlib::source(candidate)?;
                 let bundled = self
                     .db
                     .add_file(science_resolve::stdlib::display_path(candidate), text.to_string());
                 return Some((bundled, science_db::ast(&self.db, bundled).value().clone()));
-            }
+            };
             let Some(loaded) = self.load(&path) else {
                 whole = false;
                 return None;
@@ -1141,8 +1258,12 @@ fn executable_path(source: &Path) -> PathBuf {
 /// for [`Session::build`]'s reason: *"`package-manager.md` Decision 7 removes
 /// environment-dependent inputs from a build's output, and the working
 /// directory is one."* `hello.science` gives `hello.ll`, next to `hello`.
-fn ir_path(source: &Path) -> PathBuf {
-    source.with_extension("ll")
+///
+/// **Computed from the executable, not the source**, so that a package build
+/// — whose executable is in `target/` — puts its IR there too. For a script
+/// the two are the same directory and the same stem, so nothing moved.
+fn ir_path(executable: &Path) -> PathBuf {
+    executable.with_extension("ll")
 }
 
 /// The same path, in a form [`std::process::Command`] will treat as a file
