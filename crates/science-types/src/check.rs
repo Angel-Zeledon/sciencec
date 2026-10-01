@@ -6547,6 +6547,14 @@ impl<'a> BodyChecker<'a> {
                         .iter()
                         .all(|candidate| candidate.interface() == Some(interface_def)) =>
             {
+                // A prelude head is structural, as everywhere else an operator
+                // meets one: `i < 3` on a literal-inferred `Int` is settled to
+                // `I64` by `settle_receiver` above, after `ordering` asked about
+                // a head it could not yet see, and its `Ord` has no body to
+                // select. Several instances there are the prelude's own.
+                if self.defs.get(head).is_builtin() {
+                    return None;
+                }
                 let (value, operand_span) = operand.expect("just checked");
                 match self.select_operator(
                     symbol, interface, &candidates, value, self_ty, operand_span, span,
@@ -9457,8 +9465,14 @@ fn instances_not_narrowed(
     )
     .with_label(Label::primary(span, format!("supplied {supplied}, which fits all of them")));
     for (at, params) in accepts {
-        diagnostic =
-            diagnostic.with_label(Label::secondary(*at, format!("one accepts {params}")));
+        // A prelude implementation has no source to point at: its span is in
+        // `BUILTIN_FILE`, which no `SourceMap` holds, and the renderer cannot
+        // draw it. It is named in a note instead.
+        diagnostic = if at.file == science_resolve::hir::BUILTIN_FILE {
+            diagnostic.with_note(format!("one accepts {params}"))
+        } else {
+            diagnostic.with_label(Label::secondary(*at, format!("one accepts {params}")))
+        };
     }
     diagnostic = diagnostic.with_note(
         "these are one method at several instantiations of one interface, so the argument \
@@ -9495,8 +9509,14 @@ fn no_matching_instance(
     )
     .with_label(Label::primary(span, format!("`{name}` was given {supplied}")));
     for (at, params) in accepts {
-        diagnostic =
-            diagnostic.with_label(Label::secondary(*at, format!("this one accepts {params}")));
+        // A prelude implementation has no source to point at: its span is in
+        // `BUILTIN_FILE`, which no `SourceMap` holds, and the renderer cannot
+        // draw it. It is named in a note instead.
+        diagnostic = if at.file == science_resolve::hir::BUILTIN_FILE {
+            diagnostic.with_note(format!("this one accepts {params}"))
+        } else {
+            diagnostic.with_label(Label::secondary(*at, format!("this one accepts {params}")))
+        };
     }
     diagnostic.with_note(
         "these are one method at several instantiations of one interface, and the argument \

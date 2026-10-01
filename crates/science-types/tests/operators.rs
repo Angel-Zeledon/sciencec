@@ -1513,3 +1513,23 @@ def bad(a: V) -> V:
     );
     assert_eq!(checked.codes(), vec![525]);
 }
+
+/// A comparison on a literal-inferred `Int` is structural, and stays so beside
+/// a type with several implementations of an operator: `i < 3` once reached
+/// the operand selection through the prelude's own `Ord` and was `SC0533`.
+#[test]
+fn a_literal_comparison_beside_mixed_operators_is_still_structural() {
+    let source = format!(
+        "{SCALED}
+def count() -> Int:
+    let mutable i be 2
+    let mutable n be 0
+    if i < 3:
+        n be n + 1
+    if i >= 2 and 3 > i:
+        n be n + 1
+    n
+"
+    );
+    support::check(&source).assert_clean();
+}
