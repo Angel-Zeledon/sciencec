@@ -6681,6 +6681,9 @@ enum Step {
     /// of the keys seen so far, and an item whose key is already in it is
     /// dropped. The key is the item read through one borrow.
     Unique,
+    /// `windows(n)` — every run of `n` consecutive items, as an `Array` of
+    /// them: a ring of the last `n` items that is cloned each time it is full.
+    Windows(ExprId),
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6883,6 +6886,7 @@ impl Builder<'_, '_> {
                 ("keep_some", _) => Step::KeepSome,
                 ("reverse", _) => Step::Reverse,
                 ("unique", _) => Step::Unique,
+                ("windows", Some(arg)) => Step::Windows(*arg),
                 ("accumulate", Some(initial)) if args.len() == 2 => {
                     Step::Accumulate(*initial, args[1])
                 }
@@ -7501,6 +7505,29 @@ impl Builder<'_, '_> {
                     closures.push(None);
                     limits.push(Some((counted, counted)));
                 }
+                // The width, and the ring of the last `width` items.
+                Step::Windows(arg) => {
+                    let limit = self.temp(int_ty, span, block);
+                    block = self.expr_into(Place::local(limit), *arg, block);
+                    let TyKind::Named { args, .. } = self.context.types.kind(*item_after).clone()
+                    else {
+                        return block;
+                    };
+                    let Some(element) = args.first().and_then(|arg| arg.as_type()) else {
+                        return block;
+                    };
+                    let ring_ty = self.array_of(element);
+                    let ring = self.temp(ring_ty, span, block);
+                    block = self.emit_call(
+                        Place::local(ring),
+                        Callee::Runtime(ARRAY_WITH_CAPACITY),
+                        vec![Operand::Const(Constant::Count(0))],
+                        block,
+                        span,
+                    );
+                    closures.push(None);
+                    limits.push(Some((limit, ring)));
+                }
                 Step::Take(arg) | Step::Skip(arg) | Step::Every(arg) => {
                     let limit = self.temp(int_ty, span, block);
                     block = self.expr_into(Place::local(limit), *arg, block);
@@ -7819,6 +7846,148 @@ impl Builder<'_, '_> {
                         span,
                     );
                     value = Place::local(yielded);
+                }
+                Step::Windows(_) => {
+                    let (limit, ring) = limits[index].expect("a `windows` carries its ring");
+                    let ring_ty = self.place_ty(&Place::local(ring));
+                    // The item joins the ring...
+                    let (ring_ref, next) = self.exclusive_ref(&Place::local(ring), current, span);
+                    current = next;
+                    let discard = Place::local(self.temp(Ty::UNIT, span, current));
+                    current = self.emit_call(
+                        discard,
+                        Callee::Runtime(ARRAY_PUSH),
+                        vec![ring_ref, Operand::Move(value.clone())],
+                        current,
+                        span,
+                    );
+                    // ...and the oldest leaves it once the ring is wider than
+                    // the window.
+                    let shared_ty = self.context.types.borrowed(false, ring_ty);
+                    let shared = self.temp(shared_ty, span, current);
+                    current = self.borrow_place(
+                        Place::local(shared),
+                        false,
+                        Place::local(ring),
+                        current,
+                        span,
+                        false,
+                    );
+                    let length = self.temp(int_ty, span, current);
+                    current = self.emit_call(
+                        Place::local(length),
+                        Callee::Runtime(ARRAY_LEN),
+                        vec![Operand::Copy(Place::local(shared))],
+                        current,
+                        span,
+                    );
+                    let too_wide = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(too_wide),
+                        Rvalue::Binary {
+                            op: BinaryOp::Gt,
+                            lhs: Operand::Copy(Place::local(length)),
+                            rhs: Operand::Copy(Place::local(limit)),
+                        },
+                        span,
+                    );
+                    let (trim, trimmed) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(too_wide)),
+                            then_block: trim,
+                            else_block: trimmed,
+                        },
+                        span,
+                    );
+                    let (ring_ref, after_ref) = self.exclusive_ref(&Place::local(ring), trim, span);
+                    let ring_element = self.element_ty(&Place::local(ring));
+                    let oldest_ty = self.context.types.nullable(ring_element);
+                    let oldest = self.temp(oldest_ty, span, after_ref);
+                    let callee = match self.array_method(ring_ty, "remove") {
+                        Some(def) => Callee::Def { def, self_ty: None },
+                        None => Callee::Unresolved(Unresolved::Chain),
+                    };
+                    let removed = self.emit_call(
+                        Place::local(oldest),
+                        callee,
+                        vec![ring_ref, Self::bits(0)],
+                        after_ref,
+                        span,
+                    );
+                    self.terminate(removed, TerminatorKind::Goto { target: trimmed }, span);
+                    // Full: `length >= width` before the trim, which is `width`
+                    // items after it. A window of nothing is not a window, so a
+                    // width below one yields none.
+                    let positive = self.temp(self.bool_ty, span, trimmed);
+                    self.assign(
+                        trimmed,
+                        Place::local(positive),
+                        Rvalue::Binary {
+                            op: BinaryOp::Gt,
+                            lhs: Operand::Copy(Place::local(limit)),
+                            rhs: Self::bits(0),
+                        },
+                        span,
+                    );
+                    let (asked, none) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        trimmed,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(positive)),
+                            then_block: asked,
+                            else_block: none,
+                        },
+                        span,
+                    );
+                    self.chain_leave(none, depth, step_block, span);
+                    let full = self.temp(self.bool_ty, span, asked);
+                    self.assign(
+                        asked,
+                        Place::local(full),
+                        Rvalue::Binary {
+                            op: BinaryOp::Ge,
+                            lhs: Operand::Copy(Place::local(length)),
+                            rhs: Operand::Copy(Place::local(limit)),
+                        },
+                        span,
+                    );
+                    let (yield_block, wait) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        asked,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(full)),
+                            then_block: yield_block,
+                            else_block: wait,
+                        },
+                        span,
+                    );
+                    self.chain_leave(wait, depth, step_block, span);
+                    // The window is a copy of the ring, so the ring goes on.
+                    let shared = self.temp(shared_ty, span, yield_block);
+                    let cloning = self.borrow_place(
+                        Place::local(shared),
+                        false,
+                        Place::local(ring),
+                        yield_block,
+                        span,
+                        true,
+                    );
+                    let window = self.temp(*item_after, span, cloning);
+                    let callee = match self.array_method(ring_ty, "clone") {
+                        Some(def) => Callee::Def { def, self_ty: None },
+                        None => Callee::Unresolved(Unresolved::Chain),
+                    };
+                    current = self.emit_call(
+                        Place::local(window),
+                        callee,
+                        vec![Operand::Move(Place::local(shared))],
+                        cloning,
+                        span,
+                    );
+                    value = Place::local(window);
                 }
                 Step::Unique => {
                     let (seen, _) = limits[index].expect("a `unique` carries its set");

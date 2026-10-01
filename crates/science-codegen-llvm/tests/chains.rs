@@ -1371,3 +1371,39 @@ fn unique_keeps_the_first_of_each_distinct_item() {
         "4 3 1 2 4\n3 b a c\n3 b a c\n4\n4\n7\n2\n4\n0\n"
     );
 }
+
+// --- windows ----------------------------------------------------------------
+
+/// **`windows(n)` yields every run of `n` consecutive items as an `Array`**,
+/// overlapping, in order; a source shorter than `n` yields none, and a width
+/// below one yields none. The items may be borrows (an `iterate()`) or owned
+/// (a `map` that clones `String`s), and the links on either side compose: a
+/// `first()` stops after the first window, a `take` after the second.
+#[test]
+fn windows_yields_overlapping_runs_in_order() {
+    assert_eq!(
+        prints(
+            "windows",
+            r#"def main():
+    let xs be [1, 2, 3, 4, 5]
+    let w be xs.iterate().windows(3).collect()
+    print(f"{w.length()}")
+    for win in w:
+        print(f"{win[0]} {win[1]} {win[2]}")
+    print(xs.iterate().windows(5).count())
+    print(xs.iterate().windows(6).count())
+    print(xs.iterate().windows(1).count())
+    print(xs.iterate().windows(0).count())
+    let words be ["a", "b", "c"]
+    for pair in words.iterate().map(each.clone()).windows(2):
+        print(f"{pair[0]}{pair[1]}")
+    let firstw be xs.iterate().windows(2).first()
+    if firstw?:
+        print(f"first {firstw.length()}")
+    print(xs.iterate().keep(each > 1).windows(2).take(2).count())
+    print(xs.iterate().windows(2).map(each.length()).sum())
+"#,
+        ),
+        "3\n1 2 3\n2 3 4\n3 4 5\n1\n0\n5\n0\nab\nbc\nfirst 2\n2\n8\n"
+    );
+}

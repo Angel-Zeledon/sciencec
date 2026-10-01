@@ -204,6 +204,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "Accumulate",
     "Reverse",
     "Unique",
+    "Windows",
     // @LIB-END
 ];
 
@@ -1135,6 +1136,15 @@ macro_rules! chain_links {
             // can file (a number, `Bool`, `Char` or `String`, through one
             // borrow), and the fused loop keeps the seen keys in a `Set`.
             // **`unique(by: key)` is not declared**: one name, one shape.
+            // `windows(n)`: every run of `n` consecutive items as an `Array` of
+            // them — §1.4's overlapping pieces. A width below one yields none.
+            Method {
+                name: "windows",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Windows", &[$this, Ty::App("Array", &[$item])])),
+            },
             Method {
                 name: "unique",
                 generics: &[],
@@ -2813,6 +2823,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Accumulate"),
     chain_adapter!("Reverse"),
     chain_adapter!("Unique"),
+    chain_adapter!("Windows"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2903,6 +2914,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("Accumulate"),
     chain_iterate!("Reverse"),
     chain_iterate!("Unique"),
+    chain_iterate!("Windows"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3269,6 +3281,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Accumulate", CHAIN_UNWRITTEN),
     ("Reverse", CHAIN_UNWRITTEN),
     ("Unique", CHAIN_UNWRITTEN),
+    ("Windows", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3337,7 +3350,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     // Pairing, grouping, windowing.
     "followed_by",
     "batches",
-    "windows",
     // Terminals.
     "collect_or_error",
     "partition_results",
@@ -3484,6 +3496,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "Accumulate",
     "Reverse",
     "Unique",
+    "Windows",
     // @CHAIN-END
 ];
 

@@ -437,6 +437,14 @@ def words(xs: &Array[String]) -> Array[String]:
     );
     checked.assert_clean();
     assert_eq!(terminal_type(&checked, "ints", "collect"), "Array[&I64]");
+    let windows = check(
+        "\
+def runs(xs: &Array[Int]) -> Array[Array[&Int]]:
+    xs.iterate().windows(3).collect()
+",
+    );
+    windows.assert_clean();
+    assert_eq!(terminal_type(&windows, "runs", "collect"), "Array[Array[&I64]]");
     let refused = check(
         "\
 def f(xs: &Array[F64]) -> Int:
