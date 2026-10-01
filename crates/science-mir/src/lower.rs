@@ -3215,6 +3215,29 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             .filter_map(|operand| operand.place())
             .filter_map(|place| self.two_phase_of(place.local))
             .collect();
+        // **A place read is evaluated before the activation, not at the call.**
+        // `fail(c, "msg", c.pos)` reserves `c`, then reads `c.pos` for the third
+        // argument; left as `Operand::Copy(c.pos)` in the call, that read
+        // happens at the terminator, *after* the activation, and is an access
+        // to a place an exclusive borrow holds (`SC0330`). Rust evaluates every
+        // argument into a temporary first, and this does the same for the
+        // operands that read through a projection, which are the ones that can
+        // name a place a two-phase borrow reserved. Only when there is an
+        // activation to come before them.
+        let mut args = args;
+        if !activations.is_empty() {
+            for arg in args.iter_mut() {
+                let Operand::Copy(place) = arg else { continue };
+                if place.projection.is_empty() {
+                    continue;
+                }
+                let place = place.clone();
+                let ty = self.place_ty(&place);
+                let temp = self.temp(ty, span, block);
+                self.assign(block, Place::local(temp), Rvalue::Use(Operand::Copy(place)), span);
+                *arg = Operand::Copy(Place::local(temp));
+            }
+        }
         for borrow in activations {
             self.push_statement(block, StatementKind::Activate(borrow), span);
         }

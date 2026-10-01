@@ -1,0 +1,23 @@
+# UI test: a two-phase borrow tolerates a later *read* of its place, not a
+# later exclusive borrow (SC0330).
+#
+# `fail(c, "msg", c.pos)` compiles: the `&mut` to `c` is reserved while the
+# arguments are evaluated and only activated at the call, so reading `c.pos`
+# in between is fine. `bump(c)` in the same position takes a second exclusive
+# borrow while the first is reserved, and nothing makes that sound.
+
+type Cursor:
+    pos: Int
+    errs: Int
+
+def bump(c: &mut Cursor) -> Int:
+    c.pos be c.pos + 1
+    c.pos
+
+def fail(c: &mut Cursor, m: String, at: Int):
+    c.errs be c.errs + at
+    print(m)
+
+def main():
+    let mutable c be Cursor(pos: 3, errs: 0)
+    fail(c, "msg", bump(c))

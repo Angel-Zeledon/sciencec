@@ -521,3 +521,88 @@ def go():
     );
     assert_eq!(only(&reordered), Vec::<u16>::new());
 }
+
+const CURSOR: &str = "\
+type Cursor:
+    pos: Int
+    errs: Int
+
+def bump(c: &mut Cursor) -> Int:
+    c.pos be c.pos + 1
+    c.pos
+
+def fail(c: &mut Cursor, m: String, at: Int):
+    c.errs be c.errs + at
+";
+
+/// Two-phase borrows for a *free function* argument: `fail(c, "msg", c.pos)`.
+/// The `&mut` auto-borrow of `c` is reserved while the later arguments are
+/// evaluated, and `c.pos` is read in that window. It used to be `SC0330`
+/// because the field read was left as an operand of the call itself, which
+/// is evaluated after the activation.
+#[test]
+fn a_later_argument_may_read_what_an_earlier_one_reserved() {
+    let source = format!(
+        "{CURSOR}
+def go():
+    let mutable c be Cursor(pos: 3, errs: 0)
+    fail(c, \"msg\", c.pos)
+    fail(c, \"msg\", c.pos + c.errs)
+"
+    );
+    assert_eq!(only(&source), Vec::<u16>::new());
+}
+
+/// But a later argument that takes a second exclusive borrow of the same
+/// place is still refused.
+#[test]
+fn a_later_argument_may_not_borrow_exclusively_what_an_earlier_one_reserved() {
+    let source = format!(
+        "{CURSOR}
+def go():
+    let mutable c be Cursor(pos: 3, errs: 0)
+    fail(c, \"msg\", bump(c))
+"
+    );
+    assert_eq!(only(&source), vec![330]);
+}
+
+/// Reassigning a shared borrow variable is accepted, including when the old
+/// referent is mutated after the variable has moved on.
+#[test]
+fn a_shared_borrow_variable_may_be_reassigned() {
+    let source = "\
+type Node:
+    v: Int
+
+def go():
+    let mutable a be Node(v: 1)
+    let b be Node(v: 2)
+    let mutable cur be &a
+    print(cur.v)
+    cur be &b
+    a.v be 5
+    print(cur.v)
+";
+    assert_eq!(only(source), Vec::<u16>::new());
+}
+
+/// And it is refused when the variable may still hold the old referent at the
+/// conflicting write.
+#[test]
+fn a_reassigned_borrow_still_conflicts_while_it_may_hold_the_old_referent() {
+    let source = "\
+type Node:
+    v: Int
+
+def go():
+    let mutable a be Node(v: 1)
+    let b be Node(v: 2)
+    let mutable cur be &a
+    if a.v > 0:
+        cur be &b
+    a.v be 5
+    print(cur.v)
+";
+    assert_eq!(only(source), vec![330]);
+}

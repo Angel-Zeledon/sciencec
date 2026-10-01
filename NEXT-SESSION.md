@@ -408,8 +408,10 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
 1. `Array.clone()` de elementos que poseen algo distinto de `String`
    (`ScienceTypeInfo` no lleva una función de clonado por elemento);
 2. `match` sobre un `(&T)?` estrechado falla en el backend;
-3. no hay borrows en dos fases (`fail(c, "…", c.pos)` es `SC0330`); reasignar
-   un préstamo (`current be next`) lo rechazan las regiones;
+3. (cerrado) `fail(c, "…", c.pos)` ya compila: MIR copia las lecturas de
+   campo a temporales antes de la activación. Reasignar un préstamo compartido
+   (`current be next`) ya funcionaba; reasignar un `&mut` es decisión de
+   `check.rs` (§4.7: asignar a un `&mut` escribe a través de él);
 4. `members[i].value be v` falla; `let a, _ be f()` y `f().0` no parsean; el
    nombre de una función no es un valor (`map(half)` es `SC0400`);
 5. un closure que captura algo propio y no `Copy` no puede escapar, y los

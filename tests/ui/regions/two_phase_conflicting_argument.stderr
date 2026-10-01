@@ -1,0 +1,10 @@
+error[SC0330]: `c` is borrowed here and borrowed exclusively before the borrow ends
+  --> tests/ui/regions/two_phase_conflicting_argument.science:23:20
+   |
+23 |     fail(c, "msg", bump(c))
+   |     ----------------------- the first borrow is still needed here
+   |          - `c` is borrowed here, shared
+   |                    ^^^^^^^ ...and borrowed here, exclusively
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix
