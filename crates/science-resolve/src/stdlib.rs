@@ -40,6 +40,8 @@ const MODULES: &[(&str, &str)] = &[
     ("random.science", include_str!("../stdlib/random.science")),
     ("path.science", include_str!("../stdlib/path.science")),
     ("stats.science", include_str!("../stdlib/stats.science")),
+    ("encoding.science", include_str!("../stdlib/encoding.science")),
+    ("json.science", include_str!("../stdlib/json.science")),
     ("ndarray.science", include_str!("../stdlib/ndarray.science")),
     ("csv.science", include_str!("../stdlib/csv.science")),
 ];

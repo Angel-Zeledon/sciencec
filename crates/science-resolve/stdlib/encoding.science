@@ -1,0 +1,452 @@
+# encoding — `DREAM.md` §19.5, Level 2: `use encoding`.
+#
+# Base64, hex, and the Unicode transformation formats, as plain functions over
+# `Array[U8]`, `Array[U16]` and `String`. Written entirely in Science: nothing
+# here needs the runtime, because a `String` already hands out its UTF-8 bytes
+# (`bytes()`) and takes them back (`String.from_bytes`). Bundled and reached the
+# way `io` is (`science_resolve::stdlib`). `data-io.md` and `stdlib-standard.md`
+# say nothing about this module, so every decision below is this file's.
+#
+# - **Errors are `EncodingError`, a reason and an offset.** `at` is the index of
+#   the first offending element in the *input as given*: a byte offset for a
+#   byte or text input, a unit index for `Array[U16]`. Every decoder returns
+#   `(value, EncodingError?)`; the value is empty when the error is not `null`.
+# - **Base64 is RFC 4648.** `base64_encode` is §4 (alphabet `+/`, padded with
+#   `=`) and `base64_url_encode` is §5 (alphabet `-_`), **unpadded**, the form a
+#   token or a URL wants; `base64_url_encode_padded` is the same with `=`.
+# - **Decoding is strict.** `base64_decode` requires the padding §4 prescribes
+#   and refuses whitespace and any character outside its alphabet; it also
+#   refuses non-zero bits in the last character (a non-canonical encoding of
+#   the same bytes), because accepting them makes two texts decode to one
+#   value. `base64_url_decode` takes the URL alphabet and accepts padding or
+#   none, but not a wrong amount of it.
+# - **Hex** is two digits a byte. `hex_encode` is lower case, `hex_encode_upper`
+#   upper; `hex_decode` accepts either, even mixed, and refuses an odd length.
+# - **UTF-8** is validated by this file and not delegated, so that the error
+#   says *where*: overlong forms, surrogates (`U+D800..U+DFFF`) and values above
+#   `U+10FFFF` are refused, as in RFC 3629. A `String` is always valid UTF-8,
+#   so `utf8_encode` cannot fail.
+# - **UTF-16** is `utf16_encode`/`utf16_decode` over `Array[U16]` (code units,
+#   host order), and `utf16le_*`/`utf16be_*` over bytes. An unpaired surrogate
+#   is an error on decode, never replaced with U+FFFD: silent repair loses the
+#   fact that the input was corrupt. A byte-oriented decode of an odd number of
+#   bytes is an error. A byte-order mark is **not** written and **not**
+#   interpreted: U+FEFF decodes to U+FEFF, and a caller who wants BOM sniffing
+#   reads the first two bytes.
+# - `code_points(text)` is the scalar values of a string, and
+#   `from_code_points` is its inverse, with the same strictness as UTF-8.
+
+# --- EncodingError ------------------------------------------------------------
+
+# Why a decode refused its input, and where. `at` is the index (see the
+# header) of the first element at fault, or the input's length when the input
+# ended early.
+public type EncodingError:
+    reason: String
+    at: Int
+
+EncodingError implements Error:
+    def message(self) -> String:
+        f"{self.reason} at {self.at}"
+
+def refusal(reason: String, at: Int) -> EncodingError:
+    EncodingError(reason: reason, at: at)
+
+# A `String` from bytes this file built itself, which are ASCII or valid UTF-8
+# by construction.
+def text_of(bytes: &Array[U8]) -> String:
+    let text, bad be String.from_bytes(bytes)
+    if bad?:
+        panic("encoding: built bytes that are not UTF-8")
+    text
+
+# --- Base64 -------------------------------------------------------------------
+
+def encode_base64(data: &Array[U8], alphabet: &String, padded: Bool) -> String:
+    let table be alphabet.bytes()
+    let mutable out be Array[U8].new()
+    let length be data.length()
+    let mutable i be 0
+    loop:
+        if i + 3 > length:
+            break
+        let n be ((data[i] as Int) << 16) | ((data[i + 1] as Int) << 8) | (data[i + 2] as Int)
+        out.push(table[(n >> 18) & 63])
+        out.push(table[(n >> 12) & 63])
+        out.push(table[(n >> 6) & 63])
+        out.push(table[n & 63])
+        i be i + 3
+    let left be length - i
+    if left is 1:
+        let n be (data[i] as Int) << 16
+        out.push(table[(n >> 18) & 63])
+        out.push(table[(n >> 12) & 63])
+        if padded:
+            out.push(61)
+            out.push(61)
+    if left is 2:
+        let n be ((data[i] as Int) << 16) | ((data[i + 1] as Int) << 8)
+        out.push(table[(n >> 18) & 63])
+        out.push(table[(n >> 12) & 63])
+        out.push(table[(n >> 6) & 63])
+        if padded:
+            out.push(61)
+    text_of(&out)
+
+# The six-bit value of a base64 character in the standard (`url` false) or URL
+# alphabet, or `-1`.
+def sextet(byte: Int, url: Bool) -> Int:
+    if byte >= 65 and byte <= 90:
+        return byte - 65
+    if byte >= 97 and byte <= 122:
+        return byte - 97 + 26
+    if byte >= 48 and byte <= 57:
+        return byte - 48 + 52
+    if url:
+        if byte is 45:
+            return 62
+        if byte is 95:
+            return 63
+        return -1
+    if byte is 43:
+        return 62
+    if byte is 47:
+        return 63
+    -1
+
+# The URL form accepts padding or none; the standard form requires it.
+def decode_base64(text: &String, url: Bool) -> (Array[U8], EncodingError?):
+    let src be text.bytes()
+    let mutable out be Array[U8].new()
+    let none be Array[U8].new()
+    # Padding is a run of `=` at the very end, at most two.
+    let mutable end be src.length()
+    let mutable pad be 0
+    loop:
+        if end is 0 or pad is 3:
+            break
+        if src[end - 1] is not 61:
+            break
+        end be end - 1
+        pad be pad + 1
+    if pad > 2:
+        return (none, refusal("too much padding", end + 2))
+    let body be end
+    let tail be body % 4
+    if tail is 1:
+        return (none, refusal("a lone character cannot encode a byte", body - 1))
+    if pad > 0:
+        let expected be (4 - tail) % 4
+        if tail is 0 or pad is not expected:
+            return (none, refusal("wrong amount of padding", body))
+    if pad is 0 and not url and tail is not 0:
+        return (none, refusal("missing padding", body))
+    let mutable i be 0
+    loop:
+        if i >= body:
+            break
+        let mutable n be 0
+        let mutable count be 4
+        if body - i < 4:
+            count be body - i
+        for k in 0..count:
+            let value be sextet(src[i + k] as Int, url)
+            if value < 0:
+                return (none, refusal("not a base64 character", i + k))
+            n be (n << 6) | value
+        if count is 4:
+            out.push(((n >> 16) & 255) as U8)
+            out.push(((n >> 8) & 255) as U8)
+            out.push((n & 255) as U8)
+        if count is 3:
+            if n & 3 is not 0:
+                return (none, refusal("non-zero trailing bits", body - 1))
+            out.push(((n >> 10) & 255) as U8)
+            out.push(((n >> 2) & 255) as U8)
+        if count is 2:
+            if n & 15 is not 0:
+                return (none, refusal("non-zero trailing bits", body - 1))
+            out.push(((n >> 4) & 255) as U8)
+        i be i + 4
+    (out, null)
+
+# The bytes as standard base64 (RFC 4648 §4), padded: `"Man"` is `TWFu`.
+public def base64_encode(data: &Array[U8]) -> String:
+    encode_base64(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", true)
+
+# The bytes as URL-safe base64 (RFC 4648 §5), without padding.
+public def base64_url_encode(data: &Array[U8]) -> String:
+    encode_base64(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", false)
+
+# The same, padded with `=`.
+public def base64_url_encode_padded(data: &Array[U8]) -> String:
+    encode_base64(data, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", true)
+
+# Standard base64, strictly (see the header).
+public def base64_decode(text: &String) -> (Array[U8], EncodingError?):
+    decode_base64(text, false)
+
+# URL-safe base64, with or without padding.
+public def base64_url_decode(text: &String) -> (Array[U8], EncodingError?):
+    decode_base64(text, true)
+
+# --- Hex ----------------------------------------------------------------------
+
+def encode_hex(data: &Array[U8], digits: &String) -> String:
+    let table be digits.bytes()
+    let mutable out be Array[U8].new()
+    for byte in data:
+        out.push(table[(byte as Int) >> 4])
+        out.push(table[(byte as Int) & 15])
+    text_of(&out)
+
+# The bytes as lower-case hex, two digits each.
+public def hex_encode(data: &Array[U8]) -> String:
+    encode_hex(data, "0123456789abcdef")
+
+# The bytes as upper-case hex, two digits each.
+public def hex_encode_upper(data: &Array[U8]) -> String:
+    encode_hex(data, "0123456789ABCDEF")
+
+def nibble(byte: Int) -> Int:
+    if byte >= 48 and byte <= 57:
+        return byte - 48
+    if byte >= 97 and byte <= 102:
+        return byte - 97 + 10
+    if byte >= 65 and byte <= 70:
+        return byte - 65 + 10
+    -1
+
+# Hex text, either case, as bytes. An odd length and any non-hex character are
+# errors.
+public def hex_decode(text: &String) -> (Array[U8], EncodingError?):
+    let src be text.bytes()
+    let none be Array[U8].new()
+    if src.length() % 2 is not 0:
+        return (none, refusal("odd number of hex digits", src.length()))
+    let mutable out be Array[U8].new()
+    let mutable i be 0
+    loop:
+        if i >= src.length():
+            break
+        let high be nibble(src[i] as Int)
+        if high < 0:
+            return (none, refusal("not a hex digit", i))
+        let low be nibble(src[i + 1] as Int)
+        if low < 0:
+            return (none, refusal("not a hex digit", i + 1))
+        out.push(((high << 4) | low) as U8)
+        i be i + 2
+    (out, null)
+
+# --- Scalar values ------------------------------------------------------------
+
+# Appends the UTF-8 form of `scalar`, which the caller has checked is a scalar
+# value.
+def push_utf8(out: &mut Array[U8], scalar: Int):
+    if scalar < 128:
+        out.push(scalar as U8)
+        return
+    if scalar < 2048:
+        out.push((192 | (scalar >> 6)) as U8)
+        out.push((128 | (scalar & 63)) as U8)
+        return
+    if scalar < 65536:
+        out.push((224 | (scalar >> 12)) as U8)
+        out.push((128 | ((scalar >> 6) & 63)) as U8)
+        out.push((128 | (scalar & 63)) as U8)
+        return
+    out.push((240 | (scalar >> 18)) as U8)
+    out.push((128 | ((scalar >> 12) & 63)) as U8)
+    out.push((128 | ((scalar >> 6) & 63)) as U8)
+    out.push((128 | (scalar & 63)) as U8)
+
+# The scalar value starting at `bytes[at]` and its length in bytes, as `(value,
+# length)`, or `(-1, why)` where `why` is `0` for a bad lead or continuation
+# and `1` for a truncated sequence. Overlong forms, surrogates and values above
+# `U+10FFFF` are refused.
+def scalar_at(bytes: &Array[U8], at: Int) -> (Int, Int):
+    let lead be bytes[at] as Int
+    if lead < 128:
+        return (lead, 1)
+    let mutable length be 0
+    let mutable value be 0
+    let mutable least be 0
+    if lead >= 194 and lead <= 223:
+        length be 2
+        value be lead & 31
+        least be 128
+    if lead >= 224 and lead <= 239:
+        length be 3
+        value be lead & 15
+        least be 2048
+    if lead >= 240 and lead <= 244:
+        length be 4
+        value be lead & 7
+        least be 65536
+    if length is 0:
+        return (-1, 0)
+    for k in 1..length:
+        if at + k >= bytes.length():
+            return (-1, 1)
+        let next be bytes[at + k] as Int
+        if next & 192 is not 128:
+            return (-1, 0)
+        value be (value << 6) | (next & 63)
+    if value < least or value > 1114111:
+        return (-1, 0)
+    if value >= 55296 and value <= 57343:
+        return (-1, 0)
+    (value, length)
+
+# --- UTF-8 --------------------------------------------------------------------
+
+# The UTF-8 bytes of `text`.
+public def utf8_encode(text: &String) -> Array[U8]:
+    let mutable out be Array[U8].new()
+    for byte in text.bytes():
+        out.push(byte)
+    out
+
+# `bytes` as text. The error's offset is that of the first byte of the first
+# invalid sequence.
+public def utf8_decode(bytes: &Array[U8]) -> (String, EncodingError?):
+    let mutable i be 0
+    loop:
+        if i >= bytes.length():
+            break
+        let value, length be scalar_at(bytes, i)
+        if value < 0:
+            if length is 1:
+                return ("", refusal("truncated UTF-8 sequence", i))
+            return ("", refusal("invalid UTF-8", i))
+        i be i + length
+    let text, bad be String.from_bytes(bytes)
+    if bad?:
+        return ("", refusal("invalid UTF-8", 0))
+    (text, null)
+
+# The scalar values (code points) of `text`.
+public def code_points(text: &String) -> Array[U32]:
+    let bytes be text.bytes()
+    let mutable out be Array[U32].new()
+    let mutable i be 0
+    loop:
+        if i >= bytes.length():
+            break
+        let value, length be scalar_at(bytes, i)
+        out.push(value as U32)
+        i be i + length
+    out
+
+# The text of a sequence of scalar values. A value above `U+10FFFF`, or a
+# surrogate, is an error at its index.
+public def from_code_points(points: &Array[U32]) -> (String, EncodingError?):
+    let mutable out be Array[U8].new()
+    for i in 0..points.length():
+        let value be points[i] as Int
+        if value > 1114111 or (value >= 55296 and value <= 57343):
+            return ("", refusal("not a Unicode scalar value", i))
+        push_utf8(&mut out, value)
+    (text_of(&out), null)
+
+# --- UTF-16 -------------------------------------------------------------------
+
+# The UTF-16 code units of `text`, in host order.
+public def utf16_encode(text: &String) -> Array[U16]:
+    let bytes be text.bytes()
+    let mutable out be Array[U16].new()
+    let mutable i be 0
+    loop:
+        if i >= bytes.length():
+            break
+        let value, length be scalar_at(bytes, i)
+        if value >= 65536:
+            let rest be value - 65536
+            out.push((55296 | (rest >> 10)) as U16)
+            out.push((56320 | (rest & 1023)) as U16)
+        else:
+            out.push(value as U16)
+        i be i + length
+    out
+
+# Code units as text. A high surrogate must be followed by a low one and a low
+# one must follow a high one; the error's index is that of the unpaired unit.
+public def utf16_decode(units: &Array[U16]) -> (String, EncodingError?):
+    decode_units(units, 1)
+
+# `utf16_decode`, with an error's index multiplied by `scale`: `2` when the
+# units came from bytes, so the index is a byte offset.
+def decode_units(units: &Array[U16], scale: Int) -> (String, EncodingError?):
+    let mutable out be Array[U8].new()
+    let mutable i be 0
+    loop:
+        if i >= units.length():
+            break
+        let unit be units[i] as Int
+        if unit >= 56320 and unit <= 57343:
+            return ("", refusal("unpaired low surrogate", i * scale))
+        if unit >= 55296 and unit <= 56319:
+            if i + 1 >= units.length():
+                return ("", refusal("high surrogate at the end of the input", i * scale))
+            let next be units[i + 1] as Int
+            if next < 56320 or next > 57343:
+                return ("", refusal("high surrogate not followed by a low one", i * scale))
+            push_utf8(&mut out, 65536 + ((unit - 55296) << 10) + (next - 56320))
+            i be i + 2
+        else:
+            push_utf8(&mut out, unit)
+            i be i + 1
+    (text_of(&out), null)
+
+def units_to_bytes(units: &Array[U16], little: Bool) -> Array[U8]:
+    let mutable out be Array[U8].new()
+    for unit in units:
+        let high be ((unit as Int) >> 8) as U8
+        let low be ((unit as Int) & 255) as U8
+        if little:
+            out.push(low)
+            out.push(high)
+        else:
+            out.push(high)
+            out.push(low)
+    out
+
+def bytes_to_units(bytes: &Array[U8], little: Bool) -> (Array[U16], EncodingError?):
+    let mutable out be Array[U16].new()
+    if bytes.length() % 2 is not 0:
+        return (out, refusal("odd number of bytes", bytes.length()))
+    let mutable i be 0
+    loop:
+        if i >= bytes.length():
+            break
+        let first be bytes[i] as Int
+        let second be bytes[i + 1] as Int
+        if little:
+            out.push((first | (second << 8)) as U16)
+        else:
+            out.push(((first << 8) | second) as U16)
+        i be i + 2
+    (out, null)
+
+def byte_decode(bytes: &Array[U8], little: Bool) -> (String, EncodingError?):
+    let units, bad be bytes_to_units(bytes, little)
+    if bad?:
+        return ("", bad)
+    decode_units(&units, 2)
+
+# `text` as UTF-16 little-endian bytes, with no byte-order mark.
+public def utf16le_encode(text: &String) -> Array[U8]:
+    units_to_bytes(&utf16_encode(text), true)
+
+# `text` as UTF-16 big-endian bytes, with no byte-order mark.
+public def utf16be_encode(text: &String) -> Array[U8]:
+    units_to_bytes(&utf16_encode(text), false)
+
+# UTF-16 little-endian bytes as text. Indices in an error are byte offsets.
+public def utf16le_decode(bytes: &Array[U8]) -> (String, EncodingError?):
+    byte_decode(bytes, true)
+
+# UTF-16 big-endian bytes as text. Indices in an error are byte offsets.
+public def utf16be_decode(bytes: &Array[U8]) -> (String, EncodingError?):
+    byte_decode(bytes, false)
