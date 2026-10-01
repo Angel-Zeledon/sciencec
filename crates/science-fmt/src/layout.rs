@@ -168,12 +168,39 @@ impl<'a> Layout<'a> {
         None
     }
 
+    /// The index just past the `f"…"` that starts at `start`, nested ones
+    /// included. Everything inside is a string's content and an interpolation's
+    /// expression, and a layout may break neither: a newline there is a
+    /// character of the string, not a continuation (`Lexer::eat_line_continuation`
+    /// is not consulted inside a literal), so an interpolated call is no
+    /// bracket group, and its `.name(` is no chain link, however long the line.
+    fn after_fstring(&self, start: usize, limit: usize) -> usize {
+        let mut depth = 0usize;
+        let mut i = start;
+        while i < limit {
+            match self.tokens[i].kind {
+                K::FStrStart => depth += 1,
+                K::FStrEnd => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        limit
+    }
+
     /// The bracket groups at the top level of `lo..hi`.
     fn top_groups(&self, lo: usize, hi: usize) -> Vec<Group> {
         let mut out = Vec::new();
         let mut i = lo;
         while i < hi {
-            if matches!(self.tokens[i].kind, K::LParen | K::LBracket | K::LBrace) {
+            if self.tokens[i].kind == K::FStrStart {
+                i = self.after_fstring(i, hi);
+            } else if matches!(self.tokens[i].kind, K::LParen | K::LBracket | K::LBrace) {
                 match self.group_at(i, hi) {
                     Some(group) => {
                         i = group.close + 1;
@@ -212,6 +239,10 @@ impl<'a> Layout<'a> {
         let mut after: Option<usize> = None;
         let mut i = lo;
         while i < hi {
+            if self.tokens[i].kind == K::FStrStart {
+                i = self.after_fstring(i, hi);
+                continue;
+            }
             if matches!(self.tokens[i].kind, K::LParen | K::LBracket | K::LBrace) {
                 match self.group_at(i, hi) {
                     Some(group) => i = group.close + 1,
@@ -254,7 +285,9 @@ impl<'a> Layout<'a> {
     fn where_at(&self, lo: usize, hi: usize) -> Option<usize> {
         let mut i = lo;
         while i < hi {
-            if matches!(self.tokens[i].kind, K::LParen | K::LBracket | K::LBrace) {
+            if self.tokens[i].kind == K::FStrStart {
+                i = self.after_fstring(i, hi);
+            } else if matches!(self.tokens[i].kind, K::LParen | K::LBracket | K::LBrace) {
                 match self.group_at(i, hi) {
                     Some(group) => i = group.close + 1,
                     None => return None,

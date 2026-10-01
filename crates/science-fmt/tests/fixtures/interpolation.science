@@ -9,3 +9,9 @@ def report(frame: Frame, name: String):
     print(r"\frac{a}{b}")
     print(f"")
     let width be f"{f"{name}"}".len()
+
+# A line wider than the width that is mostly one f-string: nothing inside it is
+# a place to break, so it stays whole. The interpolated calls are not bracket
+# groups to explode and `.length()` is not a chain link.
+def too_wide(left: Array[Int], right: Array[Int]):
+    let reason be f"the first is {describe(left)} and the second {describe(right)}, which is {left.length()} against {right.length()}"

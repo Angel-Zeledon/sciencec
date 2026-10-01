@@ -1,0 +1,662 @@
+# ndarray — `DREAM.md` §15, §16 and Phase 3 of §37: `use ndarray (NdArray)`.
+#
+# The first module of Phase 3, and the first of the standard library to hold
+# numbers in bulk: an n-dimensional array of `F64`, bundled the way `io` and
+# `collections` are (`science_resolve::stdlib`) and written in Science over the
+# prelude's `Array`. It needs no runtime of its own.
+#
+# `tensor`, `shape` and `model` are reserved words, so the type is `NdArray`
+# and the lengths along its axes are `dims` (`reserved-words.md` §3).
+#
+# Eleven decisions are this file's, and each is written where it applies:
+#
+# - The storage is one contiguous row-major `Array[F64]`, with `dims` and
+#   `strides` beside it, both in *elements*. `strides` is always the row-major
+#   strides of `dims` here, and it is stored anyway: it is a field of DLPack's
+#   `DLTensor`, and a field added later to a type every program already names
+#   is the expensive kind of change (`DREAM.md` §35bis).
+# - **Forward compatibility with DLPack** (`python-interop.md` §4). A
+#   `DLTensor` is `data` (a pointer), `device`, `ndim`, `dtype`, `shape`,
+#   `strides` and `byte_offset`. This type holds `data` as an `Array[F64]`,
+#   `dims` as `shape` and `strides` as `strides`; `ndim` is `dims.length()`;
+#   `dtype` is `F64` for every value (code `kDLFloat`, 64 bits, 1 lane) and
+#   `device` is the host (`kDLCPU`, 0), both implied by the type and not
+#   fields; `byte_offset` is 0 because no value here is a view. The day a
+#   view exists, or a second dtype or a device does, `NdArray` gains `offset`,
+#   `dtype` and `device` fields, and every one of them has a default that
+#   today's values already satisfy. Nothing in this file may rely on `strides`
+#   being anything but row-major until that day, and every method that builds
+#   an array builds its strides through `row_major_strides`.
+# - There are no views. `transpose` copies, and `reshape` *consumes* its
+#   receiver and moves the buffer into the result, which is a no-copy reshape
+#   of a contiguous array — the only kind there is. A view needs a borrow of
+#   the array it looks into held in a record, which is a lifetime the front
+#   half does not yet check across a field (`DequeIterate` holds one only
+#   because a `for` loop does), and a copy-on-write count the runtime does not
+#   have. `transpose` as a copy is O(n) where numpy's is O(1); it is also
+#   never aliased, so a later `set` cannot change two arrays at once.
+# - Every operation that can be refused returns `(NdArray, Error?)` or
+#   `(F64, Error?)`, the error beside the value (`§2` of `AGENTS.md`), and the
+#   value is a zero-length placeholder when the error is present. `reshape` is
+#   the one exception: on a refusal it gives the array back unchanged, since
+#   it took the array to begin with.
+# - **Element-wise operators are same-shape.** `a + b`, `a - b`, `a * b` and
+#   `a / b` are `Add`, `Sub`, `Mul` and `Div`, and they are *element-wise* —
+#   `a * b` is not a matrix product — which is `broadcasting.md` §3.2's
+#   "undotted" family. Equal `dims` are required, and a mismatch is a panic: an
+#   operator has nowhere to return an error, and `broadcasting.md` §2.2 makes
+#   the same mismatch a compile error (`SC0290`) the day the type checker
+#   knows the dims, which is the day this panic is dead code. The operators
+#   borrow both operands, so `a + b` leaves both usable.
+# - **Broadcasting is a method for now, not `.+`.** `broadcasting.md` §2.1
+#   gives the dotted operators to two arrays whose dims differ, and §6.4
+#   refuses a runtime-checked form altogether, putting the check in a `with`
+#   block. Neither the dotted operators nor `with` exist, and `dims` here is a
+#   runtime value, so the check has to happen at run time. `broadcast_add`,
+#   `broadcast_sub`, `broadcast_mul` and `broadcast_div` are that stand-in:
+#   NumPy's rule exactly (§4.1: right-aligned, left-padded with 1, a dimension
+#   of 1 stretches, `0` and `1` give `0`), returning `(NdArray, Error?)`, with
+#   the error naming both dims. They are the dotted operators' semantics under
+#   names, and `.+` is a spelling change when it lands. The warning of §3.4 for
+#   the accidental outer product is not written.
+# - **A scalar is a method.** `a.scaled(by: 2.0)` and `a.shifted(by: 1.0)`,
+#   not `a * 2.0` and `a + 1.0`, for `complex`'s reason: an operator interface
+#   is looked up by method name and one implementation answers it, so a
+#   second `NdArray implements Mul` taking an `F64` is refused (`SC0535`).
+#   `Mul[Rhs]` is the change that would allow it, and `broadcasting.md` §2.1's
+#   scalar carve-out is written for it.
+# - A reduction is a method with the axis as an argument: `sum_axis(axis)`
+#   where `broadcasting.md` §7.2 writes `sum(axis: 0)`. The axis there is a
+#   const so that a bad one is a compile error; it is a runtime `Int` here, and
+#   a bad one is a `ShapeError`. The whole-array `sum`, `mean`, `min` and
+#   `max` take none. Every sum adds in index order, left to right: that is
+#   deterministic, and it is not the tree reduction of
+#   `collections-and-chains.md` §7.1, which exists to be parallel and is not
+#   written. `min` and `max` are `F64?`, `null` when the array is empty, and
+#   a `NaN` never replaces an element (the comparison is false), so a
+#   `NaN` first element is what a reduction starts from and keeps.
+# - `matmul` is the textbook triple loop in `i, k, j` order, so the inner loop
+#   walks both `other` and the result along a row. It is correct and it is not
+#   fast: the fast path is the one `examples/20_extern.science` shows,
+#   `extern "C"` and `cblas_dgemm` over a `ffi.Span[F64]` of `data`. That
+#   needs a BLAS on the link line, and nothing here depends on one.
+# - `Display` is numpy's nested brackets without its column alignment:
+#   `[[1.0 2.0]\n [3.0 4.0]]`, elements separated by a space as `print` writes
+#   an `F64`, one newline between rows and a blank line between higher blocks
+#   as numpy does. A rank-0 array prints its element and any array with no
+#   elements prints `[]`. There is no summarising of a long array with `...`.
+# - Indexing is `get(index)` and `set(index, value)` over an `Array[Int]`, as
+#   `Array.get` is a method, and `get_2d` and `set_2d` for the common case.
+#   `xs[i, j]` is not written: `indexing-and-array-literals.md` makes
+#   multi-index subscripts the `Index[Idx]` interface's business with a tuple
+#   `Idx`, which is not yet implementable here. An index out of range, or of
+#   the wrong rank, is `null` from `get` and a `ShapeError` from `set`.
+
+# --- ShapeError ---------------------------------------------------------------
+
+# Why an operation on arrays was refused: dims that do not agree, an axis that
+# does not exist, an index out of range, a length that is not the product of
+# the dims. `reason` is the whole sentence.
+public type ShapeError:
+    reason: String
+
+ShapeError implements Error:
+    def message(self) -> String:
+        self.reason.clone()
+
+# A refusal, as `Error?`.
+def refusal(reason: String) -> Error?:
+    ShapeError(reason: reason)
+
+# --- NdArray ------------------------------------------------------------------
+
+# An n-dimensional array of `F64`, row-major and contiguous. `data` holds
+# `dims[0] * dims[1] * ...` elements, the last axis varying fastest; `strides`
+# is `row_major_strides(dims)`. A rank-0 array has no `dims` and one element.
+#
+# The fields are readable, and a program that builds one by hand must keep
+# them in agreement: use `from_array`, which checks.
+public type NdArray:
+    data: Array[F64]
+    dims: Array[Int]
+    strides: Array[Int]
+
+# Whole-array reductions and the per-axis ones share one routine, which takes
+# the operation as one of these.
+const SUM: Int be 0
+const MIN: Int be 1
+const MAX: Int be 2
+
+# The element-wise operations, by the same device.
+const ADD: Int be 0
+const SUB: Int be 1
+const MUL: Int be 2
+const DIV: Int be 3
+
+# `dims` multiplied out: the number of elements. 1 for no dims.
+def count_of(dims: &Array[Int]) -> Int:
+    let mutable total be 1
+    for axis in 0..dims.length():
+        total be total * dims[axis]
+    total
+
+# The strides, in elements, of a row-major array of `dims`: the last is 1 and
+# each one before it is the next one times the next dim.
+def row_major_strides(dims: &Array[Int]) -> Array[Int]:
+    let rank be dims.length()
+    let mutable strides be Array[Int].new()
+    for _ in 0..rank:
+        strides.push(1)
+    let mutable running be 1
+    let mutable axis be rank
+    loop:
+        if axis is 0:
+            break
+        axis be axis - 1
+        strides[axis] be running
+        running be running * dims[axis]
+    strides
+
+def copy_ints(values: &Array[Int]) -> Array[Int]:
+    let mutable copy be Array[Int].new()
+    for index in 0..values.length():
+        copy.push(values[index])
+    copy
+
+# An array over `data`, with `dims` copied and the row-major strides they give.
+# Every method that builds an array builds it here, so no array has strides
+# that are not its dims'.
+def make(data: Array[F64], dims: &Array[Int]) -> NdArray:
+    NdArray(data: data, dims: copy_ints(dims), strides: row_major_strides(dims))
+
+# Whether every dim is zero or more.
+def valid_dims(dims: &Array[Int]) -> Bool:
+    for axis in 0..dims.length():
+        if dims[axis] < 0:
+            return false
+    true
+
+# `dims` as `(2, 3)`, for a message. `(2,)` for one dim, as Python writes it,
+# and `()` for none.
+def dims_text(dims: &Array[Int]) -> String:
+    if dims.length() is 0:
+        return "()"
+    let mutable text be "("
+    for axis in 0..dims.length():
+        if axis > 0:
+            text be f"{text}, "
+        text be f"{text}{dims[axis]}"
+    if dims.length() is 1:
+        text be f"{text},"
+    f"{text})"
+
+# An array of `dims` with every element `value`. The one place that builds one
+# without a check, for the callers that have made one.
+def filled(dims: &Array[Int], value: F64) -> NdArray:
+    let mutable data be Array[F64].new()
+    for _ in 0..count_of(dims):
+        data.push(value)
+    make(data, dims)
+
+# What an operation that was refused returns beside its error: no elements.
+def empty() -> NdArray:
+    NdArray(data: Array[F64].new(), dims: Array[Int].new(), strides: Array[Int].new())
+
+NdArray has:
+    # --- Construction ---------------------------------------------------------
+
+    # An array of `dims`, every element `0.0`. A negative dim panics: there is
+    # no array to give back, and a `from_array` call is the checked spelling.
+    public def zeros(dims: &Array[Int]) -> NdArray:
+        NdArray.full(dims, 0.0)
+
+    public def ones(dims: &Array[Int]) -> NdArray:
+        NdArray.full(dims, 1.0)
+
+    public def full(dims: &Array[Int], value: F64) -> NdArray:
+        if not valid_dims(dims):
+            panic("ndarray: a dimension is negative")
+        filled(dims, value)
+
+    # An array of `dims` over `values`, in row-major order. The length must be
+    # the product of the dims, which is the check the field-by-field record
+    # literal does not make.
+    public def from_array(values: Array[F64], dims: &Array[Int]) -> (NdArray, Error?):
+        if not valid_dims(dims):
+            return (empty(), refusal(f"a dimension of {dims_text(dims)} is negative"))
+        if values.length() is not count_of(dims):
+            let reason be f"{values.length()} values do not fill dims {dims_text(dims)}"
+            return (empty(), refusal(reason))
+        (make(values, dims), null)
+
+    # `[start, start + step, ...)`, one dimension, ending before `stop` as
+    # numpy's `arange` does: `ceil((stop - start) / step)` elements, each
+    # `start + i * step` (not a running sum, so the error does not grow). A
+    # step of zero panics; a range that goes the wrong way is empty.
+    public def arange(start: F64, stop: F64, step: F64) -> NdArray:
+        if step is 0.0:
+            panic("ndarray.arange: the step is zero")
+        let span be ((stop - start) / step).ceil()
+        let mutable count be 0
+        if span > 0.0:
+            count be span as Int
+        let mutable data be Array[F64].new()
+        for index in 0..count:
+            data.push(start + (index as F64) * step)
+        let mutable dims be Array[Int].new()
+        dims.push(count)
+        make(data, &dims)
+
+    # `count` evenly spaced values from `start` to `stop`, both included, as
+    # numpy's `linspace`; the last is exactly `stop`. One value is `start`.
+    public def linspace(start: F64, stop: F64, count: Int) -> NdArray:
+        if count < 0:
+            panic("ndarray.linspace: the count is negative")
+        let mutable data be Array[F64].new()
+        for index in 0..count:
+            if count is 1:
+                data.push(start)
+            else if index is count - 1:
+                data.push(stop)
+            else:
+                let step be (stop - start) / ((count - 1) as F64)
+                data.push(start + (index as F64) * step)
+        let mutable dims be Array[Int].new()
+        dims.push(count)
+        make(data, &dims)
+
+    # --- Shape ----------------------------------------------------------------
+
+    public def rank(self) -> Int:
+        self.dims.length()
+
+    # The number of elements.
+    public def size(self) -> Int:
+        self.data.length()
+
+    # The same elements under `dims`, which must have the same product.
+    # **It consumes the array and moves the buffer**: no element is copied.
+    # Refused, it gives the array back untouched, with the error beside it.
+    public def reshape(self: Self, dims: &Array[Int]) -> (NdArray, Error?):
+        if not valid_dims(dims) or count_of(dims) is not self.data.length():
+            let reason be f"cannot reshape {self.data.length()} elements into {dims_text(dims)}"
+            return (self, refusal(reason))
+        let mutable moved be self
+        (make(moved.data, dims), null)
+
+    # The matrix transposed, as a *copy* (see the header). A vector or a scalar
+    # is its own transpose, and a rank above two is refused: numpy's reversal
+    # of every axis is not written.
+    public def transpose(self) -> (NdArray, Error?):
+        if self.rank() < 2:
+            return (self.clone(), null)
+        if self.rank() > 2:
+            let reason be f"transpose is written for rank 2 or less, not dims {dims_text(&self.dims)}"
+            return (empty(), refusal(reason))
+        let rows: Int be self.dims[0]
+        let columns: Int be self.dims[1]
+        let mutable data be Array[F64].new()
+        for column in 0..columns:
+            for row in 0..rows:
+                data.push(self.data[row * columns + column])
+        let mutable dims be Array[Int].new()
+        dims.push(columns)
+        dims.push(rows)
+        (make(data, &dims), null)
+
+    # --- Indexing -------------------------------------------------------------
+
+    # The element at `index`, one position per axis, or `null` when the index
+    # has the wrong rank or any position is out of range.
+    public def get(self, index: &Array[Int]) -> F64?:
+        let offset be self.offset_of(index)
+        if offset < 0:
+            return null
+        self.data[offset]
+
+    # Replaces the element at `index`; refused when `get` would say `null`.
+    public def set(mutable self, index: &Array[Int], value: F64) -> Error?:
+        let offset be self.offset_of(index)
+        if offset < 0:
+            return refusal(f"index is outside dims {dims_text(&self.dims)}")
+        self.data[offset] be value
+        null
+
+    # `get` for a matrix: row `row`, column `column`.
+    public def get_2d(self, row: Int, column: Int) -> F64?:
+        let mutable index be Array[Int].new()
+        index.push(row)
+        index.push(column)
+        self.get(&index)
+
+    public def set_2d(mutable self, row: Int, column: Int, value: F64) -> Error?:
+        let mutable index be Array[Int].new()
+        index.push(row)
+        index.push(column)
+        self.set(&index, value)
+
+    # The flat position of `index`, or -1 when it names no element.
+    def offset_of(self, index: &Array[Int]) -> Int:
+        if index.length() is not self.dims.length():
+            return -1
+        let mutable offset be 0
+        for axis in 0..index.length():
+            if index[axis] < 0 or index[axis] >= self.dims[axis]:
+                return -1
+            offset be offset + index[axis] * self.strides[axis]
+        offset
+
+    # --- Scalars --------------------------------------------------------------
+
+    # Every element multiplied by `by` (see the header).
+    public def scaled(self, by: F64) -> NdArray:
+        let mutable data be Array[F64].new()
+        for index in 0..self.data.length():
+            data.push(self.data[index] * by)
+        make(data, &self.dims)
+
+    # Every element with `by` added.
+    public def shifted(self, by: F64) -> NdArray:
+        let mutable data be Array[F64].new()
+        for index in 0..self.data.length():
+            data.push(self.data[index] + by)
+        make(data, &self.dims)
+
+    # --- Broadcasting ---------------------------------------------------------
+
+    # NumPy's rule (see the header), element by element.
+    public def broadcast_add(self, other: &NdArray) -> (NdArray, Error?):
+        combine(self, other, ADD, true)
+
+    public def broadcast_sub(self, other: &NdArray) -> (NdArray, Error?):
+        combine(self, other, SUB, true)
+
+    public def broadcast_mul(self, other: &NdArray) -> (NdArray, Error?):
+        combine(self, other, MUL, true)
+
+    public def broadcast_div(self, other: &NdArray) -> (NdArray, Error?):
+        combine(self, other, DIV, true)
+
+    # --- Reductions -----------------------------------------------------------
+
+    # The elements added in index order; `0.0` for none.
+    public def sum(self) -> F64:
+        let mutable total be 0.0
+        for index in 0..self.data.length():
+            total be total + self.data[index]
+        total
+
+    # The sum over the count; `NaN` for none, as numpy's is.
+    public def mean(self) -> F64:
+        self.sum() / (self.data.length() as F64)
+
+    public def min(self) -> F64?:
+        if self.data.is_empty():
+            return null
+        let mutable best be self.data[0]
+        for index in 1..self.data.length():
+            if self.data[index] < best:
+                best be self.data[index]
+        best
+
+    public def max(self) -> F64?:
+        if self.data.is_empty():
+            return null
+        let mutable best be self.data[0]
+        for index in 1..self.data.length():
+            if self.data[index] > best:
+                best be self.data[index]
+        best
+
+    # One result per position along every axis but `axis`, which is gone from
+    # the dims: a `(2, 3)` array summed over axis 0 is `(3,)`, over axis 1 `(2,)`.
+    public def sum_axis(self, axis: Int) -> (NdArray, Error?):
+        self.reduce(axis, SUM)
+
+    public def mean_axis(self, axis: Int) -> (NdArray, Error?):
+        let summed, err be self.reduce(axis, SUM)
+        if err?:
+            return (summed, err)
+        (summed.scaled(1.0 / (self.dims[axis] as F64)), null)
+
+    # Refused for an axis of length 0, which has no least element.
+    public def min_axis(self, axis: Int) -> (NdArray, Error?):
+        self.reduce(axis, MIN)
+
+    public def max_axis(self, axis: Int) -> (NdArray, Error?):
+        self.reduce(axis, MAX)
+
+    # The array as `outer` blocks of `extent` rows of `inner` elements, with
+    # `axis` the middle one: element `(o, k, i)` is at `(o * extent + k) *
+    # inner + i`, and it folds into result `o * inner + i`.
+    def reduce(self, axis: Int, operation: Int) -> (NdArray, Error?):
+        if axis < 0 or axis >= self.dims.length():
+            let reason be f"axis {axis} does not exist for dims {dims_text(&self.dims)}"
+            return (empty(), refusal(reason))
+        let extent: Int be self.dims[axis]
+        if extent is 0 and operation is not SUM:
+            return (
+                empty(),
+                refusal("no least or greatest element along an axis of length 0")
+            )
+        let mutable outer be 1
+        let mutable inner be 1
+        let mutable dims be Array[Int].new()
+        for position in 0..self.dims.length():
+            if position < axis:
+                outer be outer * self.dims[position]
+            if position > axis:
+                inner be inner * self.dims[position]
+            if position is not axis:
+                dims.push(self.dims[position])
+        let mutable data be Array[F64].new()
+        for block in 0..outer:
+            for column in 0..inner:
+                let mutable accumulator be 0.0
+                if operation is not SUM:
+                    accumulator be self.data[(block * extent) * inner + column]
+                for step in 0..extent:
+                    let value be self.data[(block * extent + step) * inner + column]
+                    if operation is SUM:
+                        accumulator be accumulator + value
+                    if operation is MIN and value < accumulator:
+                        accumulator be value
+                    if operation is MAX and value > accumulator:
+                        accumulator be value
+                data.push(accumulator)
+        (make(data, &dims), null)
+
+    # --- Linear algebra -------------------------------------------------------
+
+    # The matrix product of `(m, k)` and `(k, n)`, giving `(m, n)`. Both must
+    # be rank 2 and the inner dims must agree: `broadcasting.md` §4.4 gives
+    # `@` no broadcasting of the matrix dims, and neither does this.
+    public def matmul(self, other: &NdArray) -> (NdArray, Error?):
+        if self.rank() is not 2 or other.rank() is not 2:
+            let reason be f"matmul takes two matrices, not dims {dims_text(&self.dims)} and {dims_text(&other.dims)}"
+            return (empty(), refusal(reason))
+        let rows: Int be self.dims[0]
+        let inner: Int be self.dims[1]
+        let columns: Int be other.dims[1]
+        if other.dims[0] is not inner:
+            let reason be f"matmul needs the inner dims to agree, not {dims_text(&self.dims)} and {dims_text(&other.dims)}"
+            return (empty(), refusal(reason))
+        let mutable result be NdArray.zeros(& [rows, columns])
+        for row in 0..rows:
+            for step in 0..inner:
+                let left be self.data[row * inner + step]
+                for column in 0..columns:
+                    let at be row * columns + column
+                    result.data[at] be result.data[at] + left * other.data[
+                        step * columns + column
+                    ]
+        (result, null)
+
+    # The inner product of two vectors of one length.
+    public def dot(self, other: &NdArray) -> (F64, Error?):
+        if self.rank() is not 1 or other.rank() is not 1:
+            let reason be f"dot takes two vectors, not dims {dims_text(&self.dims)} and {dims_text(&other.dims)}"
+            return (0.0, refusal(reason))
+        if self.dims[0] is not other.dims[0]:
+            let reason be f"dot needs vectors of one length, not {dims_text(&self.dims)} and {dims_text(&other.dims)}"
+            return (0.0, refusal(reason))
+        let mutable total be 0.0
+        for index in 0..self.data.length():
+            total be total + self.data[index] * other.data[index]
+        (total, null)
+
+# Applies `operation` to every pair of elements of `left` and `right`, the
+# dims broadcast when `broadcasting` and equal otherwise. Each result axis is
+# the larger of the two dims aligned from the right, and an operand whose dim
+# there is 1 or missing has stride 0 along it, so its element is reused.
+def combine(
+    left: &NdArray,
+    right: &NdArray,
+    operation: Int,
+    broadcasting: Bool
+) -> (NdArray, Error?):
+    let rank be left.dims.length().max(right.dims.length())
+    let mutable dims be Array[Int].new()
+    let mutable left_steps be Array[Int].new()
+    let mutable right_steps be Array[Int].new()
+    for axis in 0..rank:
+        let from_left be axis - (rank - left.dims.length())
+        let from_right be axis - (rank - right.dims.length())
+        let mutable p be 1
+        let mutable q be 1
+        if from_left >= 0:
+            p be left.dims[from_left]
+        if from_right >= 0:
+            q be right.dims[from_right]
+        let mismatch be p is not q
+        if mismatch and (not broadcasting or (p is not 1 and q is not 1)):
+            let reason be f"dims {dims_text(&left.dims)} and {dims_text(&right.dims)} do not agree"
+            return (empty(), refusal(reason))
+        if p is q or q is 1:
+            dims.push(p)
+        else:
+            dims.push(q)
+        if from_left >= 0 and p is not 1:
+            left_steps.push(left.strides[from_left])
+        else:
+            left_steps.push(0)
+        if from_right >= 0 and q is not 1:
+            right_steps.push(right.strides[from_right])
+        else:
+            right_steps.push(0)
+    let mutable data be Array[F64].new()
+    let total be count_of(&dims)
+    for flat in 0..total:
+        let mutable remainder be flat
+        let mutable at_left be 0
+        let mutable at_right be 0
+        let mutable axis be rank
+        loop:
+            if axis is 0:
+                break
+            axis be axis - 1
+            let position be remainder % dims[axis]
+            remainder be remainder / dims[axis]
+            at_left be at_left + position * left_steps[axis]
+            at_right be at_right + position * right_steps[axis]
+        let a be left.data[at_left]
+        let b be right.data[at_right]
+        if operation is ADD:
+            data.push(a + b)
+        if operation is SUB:
+            data.push(a - b)
+        if operation is MUL:
+            data.push(a * b)
+        if operation is DIV:
+            data.push(a / b)
+    (make(data, &dims), null)
+
+# A same-shape operator's result, or the panic that `broadcasting.md` §2.2
+# will make a compile error.
+def same_shape(left: &NdArray, right: &NdArray, operation: Int) -> NdArray:
+    let result, err be combine(left, right, operation, false)
+    if err?:
+        panic(err.message())
+    result
+
+# --- Arithmetic ---------------------------------------------------------------
+
+NdArray implements Add:
+    def add(self, other: &NdArray) -> NdArray:
+        same_shape(self, other, ADD)
+
+NdArray implements Sub:
+    def sub(self, other: &NdArray) -> NdArray:
+        same_shape(self, other, SUB)
+
+# Element by element: the Hadamard product, and not a matrix product.
+NdArray implements Mul:
+    def mul(self, other: &NdArray) -> NdArray:
+        same_shape(self, other, MUL)
+
+NdArray implements Div:
+    def div(self, other: &NdArray) -> NdArray:
+        same_shape(self, other, DIV)
+
+NdArray implements Neg:
+    def neg(self) -> NdArray:
+        self.scaled(-1.0)
+
+NdArray implements Clone:
+    def clone(self) -> NdArray:
+        let mutable data be Array[F64].new()
+        for index in 0..self.data.length():
+            data.push(self.data[index])
+        make(data, &self.dims)
+
+# Equal dims and every element equal, by `F64`'s `is`: `NaN` is not equal to
+# itself, so an array holding one is not equal to its own clone.
+NdArray implements Eq:
+    def eq(self, other: &NdArray) -> Bool:
+        if self.dims.length() is not other.dims.length():
+            return false
+        for axis in 0..self.dims.length():
+            if self.dims[axis] is not other.dims[axis]:
+                return false
+        for index in 0..self.data.length():
+            if self.data[index] is not other.data[index]:
+                return false
+        true
+
+# --- Display ------------------------------------------------------------------
+
+# Numpy's nesting: `[1.0 2.0]`, `[[1.0 2.0]\n [3.0 4.0]]`.
+NdArray implements Display:
+    def display(self, into: &mut Formatter):
+        if self.dims.length() is 0:
+            if self.data.length() is 1:
+                into.number(self.data[0])
+            return
+        if self.data.is_empty():
+            into.raw("[]")
+            return
+        write_axis(self, 0, 0, into)
+
+# Writes the block of `array` that starts at flat position `start` and runs
+# along `axis`: `[`, each item, `]`. An item is an element on the last axis
+# and a block on any other; between two, a space on the last axis and a newline
+# per axis below it, then one space per axis above it, to line the brackets up.
+def write_axis(array: &NdArray, axis: Int, start: Int, into: &mut Formatter):
+    into.raw("[")
+    let last be array.dims.length() - 1
+    let length: Int be array.dims[axis]
+    for item in 0..length:
+        if item > 0:
+            if axis is last:
+                into.raw(" ")
+            else:
+                for _ in 0.. (last - axis):
+                    into.raw("\n")
+                for _ in 0.. (axis + 1):
+                    into.raw(" ")
+        let at be start + item * array.strides[axis]
+        if axis is last:
+            into.number(array.data[at])
+        else:
+            write_axis(array, axis + 1, at, into)
+    into.raw("]")
