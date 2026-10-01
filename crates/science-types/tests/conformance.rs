@@ -527,10 +527,14 @@ Doc has:
 ///   not invented. A block writing `whatever_this_is` under `Display` is
 ///   `SC0539` now, and the diagnostic names the signature to write instead.
 ///
-/// `Ord` is what is left and it is the honest example: `Ordering` really is
-/// specified by no note, `binary_operator` has no `Ord` row, and
-/// `implements_operand`'s doc argues at length for why the requirement is
-/// checkable and the dispatch is not.
+/// - It wrote `Doc implements Ord: def whatever_this_is(self) -> Int` until
+///   `Ord.less` was — `stdlib-shape-and-packages.md` §4.5's AMENDMENT 1 named
+///   the method and needed no `Ordering` to do it. That block is `SC0539` now,
+///   and the next test holds it.
+///
+/// `Eq` is what is left: `is` dispatches to an `eq` by name, read off the
+/// implementation, and the interface still declares no signature for a block
+/// to be held to.
 #[test]
 fn a_methodless_prelude_interface_admits_any_method() {
     support::check(
@@ -538,12 +542,44 @@ fn a_methodless_prelude_interface_admits_any_method() {
 type Doc:
     title: String
 
-Doc implements Ord:
+Doc implements Eq:
     def whatever_this_is(self) -> Int:
         1
 ",
     )
     .assert_clean();
+}
+
+/// **`Ord` is held to `less` now**, which is the measurement `conform`'s §3
+/// said would arrive with the method and no edit to `conform`: a block with
+/// no `less` is `SC0539`, and one that takes `other` by value is `SC0541`.
+#[test]
+fn an_ord_block_is_held_to_less() {
+    let checked = support::check(
+        "\
+type Doc:
+    title: String
+
+Doc implements Ord:
+    def whatever_this_is(self) -> Int:
+        1
+
+type Note:
+    text: String
+
+Note implements Ord:
+    def less(self, other: Note) -> Bool:
+        true
+",
+    );
+    assert_eq!(checked.codes(), vec![539, 541]);
+    assert_eq!(
+        checked.messages(),
+        vec![
+            "this block does not implement `Ord`'s method `less`",
+            "`less` does not have the signature `Ord` declares for it",
+        ]
+    );
 }
 
 /// `conform`'s `unanswered`. An implementation that supplies `index` and not

@@ -93,9 +93,9 @@
 //!    `Lowerer::intern_element_descriptor`, the same descriptor builder
 //!    `Array`'s and `Map`'s elements already used. `boxed_value_owning_a_string`
 //!    is the corpus program and the allowlist entry is gone with it.
-//!    `String`'s ordering is refused by name
-//!    (`tests/methods.rs`'s `ordering_two_strings_is_refused` asserts the
-//!    refusal names `science_string_cmp`). **`science_write` was the eighth
+//!    `String`'s ordering was refused by name until `stdlib-core.md` §6.8 was
+//!    read as deciding it, and `science_string_cmp` is reached by
+//!    `string_order` below. **`science_write` was the eighth
 //!    instance, and it is closed the same way `panic` was.** `science_write`
 //!    sat in `RUNTIME` with `science_print`'s own signature and no caller:
 //!    `Lowerer::lower_call` special-cased `name == "print"` by literal string
@@ -198,6 +198,15 @@ fn declared_runtime_symbols(source: &str) -> Vec<&'static str> {
 /// compiler's reachable set. See the module doc for why each is here and what
 /// execution test it is a reduction of.
 const CORPUS: &[(&str, &str)] = &[
+    // `ordering.rs`, reduced: `<` on two `String`s is `science_string_cmp`,
+    // which sat on the allowlist as *"refused by name"* until
+    // `stdlib-core.md` §6.8's byte order was read as the decision it is.
+    (
+        "string_order",
+        "def main():\n\
+         \x20   let a be \"apple\"\n\
+         \x20   print(a < \"pear\")\n",
+    ),
     // `loops.rs`'s `for`, which is what makes `Chars` reachable at all:
     // `science_string_chars` builds the iterator and `science_chars_next`
     // advances it through §5.3's bool-plus-out-parameter convention. Both were
@@ -712,12 +721,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
         "`String.truncate` is not declared: `builtins.rs`'s `UNWRITTEN` table holds it back \
          because §6.9's signature contradicts eighteen corpus call sites that read it as \
          `-> String`",
-    ),
-    (
-        "science_string_cmp",
-        "`String`'s ordering is refused by name rather than lowered: `tests/methods.rs`'s \
-         `ordering_two_strings_is_refused` asserts the refusal's message names this exact \
-         symbol and cites the missing `Ord` implementation",
     ),
 ];
 

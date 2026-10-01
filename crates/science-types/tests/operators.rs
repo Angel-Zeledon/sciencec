@@ -742,24 +742,22 @@ def before(a: Held, b: Held) -> Bool:
     assert_eq!(checked.messages(), vec!["`Held` does not implement `Ord`"]);
 }
 
-/// And the right program still passes, at each of the four spellings.
+/// And the right program dispatches, at each of the four spellings, to the one
+/// method `stdlib-shape-and-packages.md` §4.5's AMENDMENT 1 gives `Ord`.
 ///
-/// **The block has to contain something and the language does not say what.**
-/// `Ord` is declared with no methods, so nothing in the block below is checked
-/// against a declaration and nothing is called; but an `implements` block may
-/// not be empty (`SC0100`), so the author writes a method and picks its name.
-/// That is the residue this change does not close, and `implements_operand`
-/// says so.
+/// This used to pin the opposite — *"the block has to contain something and
+/// the language does not say what"*, with a `compare` nobody called — and the
+/// residue it named is closed: the block contains `less`, and `<` calls it.
 #[test]
-fn a_comparison_on_a_type_that_implements_ord_passes_at_all_four_spellings() {
+fn a_comparison_on_a_type_that_implements_ord_dispatches_to_less_at_all_four_spellings() {
     let checked = support::check(
         "\
 type Held:
     x: F64
 
 Held implements Ord:
-    def compare(self, other: Held) -> I64:
-        0
+    def less(self, other: &Held) -> Bool:
+        self.x < other.x
 
 def before(a: Held, b: Held) -> Bool:
     a < b
@@ -775,26 +773,86 @@ def not_before(a: Held, b: Held) -> Bool:
 ",
     );
     checked.assert_clean();
-    // The node is a `Binary` and not a call: `Ord` is required, never
-    // dispatched.
-    assert_eq!(
-        ty_of(&checked, "before", |kind| matches!(kind, ExprKind::Binary { .. })),
-        "Bool"
+    // `(written, receiver, operand, negated)`: the table on
+    // `BodyChecker::ordering`.
+    for (name, receiver, operand, negated) in [
+        ("before", "a", "b", false),
+        ("after", "b", "a", false),
+        ("not_after", "b", "a", true),
+        ("not_before", "a", "b", true),
+    ] {
+        let body = checked.body(name);
+        let id = checked.find(name, |kind| matches!(kind, ExprKind::MethodCall { .. }));
+        let ExprKind::MethodCall { receiver: on, method: Some(method), ref args } = body.expr(id).kind
+        else {
+            panic!("`{name}` is a resolved call to `less`");
+        };
+        assert_eq!(checked.krate.defs.get(method).name, "less", "{name}");
+        assert_eq!(local_under(&checked, name, on), receiver, "{name}: the receiver");
+        assert_eq!(local_under(&checked, name, args[0]), operand, "{name}: the operand");
+        assert_eq!(checked.render(body.ty(id)), "Bool", "{name}");
+        let wrapped = body.exprs().any(|(_, expr)| {
+            matches!(expr.kind, ExprKind::Unary { operand, .. } if operand == id)
+        });
+        assert_eq!(wrapped, negated, "{name}: `<=` and `>=` are the negation");
+        assert!(
+            !body.exprs().any(|(_, expr)| matches!(expr.kind, ExprKind::Binary { .. })),
+            "{name}: a dispatched comparison leaves no structural `Binary` behind"
+        );
+    }
+}
+
+/// A `choice` orders the same way a record does: the operator asks the type
+/// for `less` and does not care what kind of type answers.
+#[test]
+fn a_choice_that_implements_ord_dispatches_to_less() {
+    let checked = support::check(
+        "\
+choice Level:
+    Low
+    High(I64)
+
+Level has:
+    def rank(self) -> I64:
+        match self:
+            Low: 0
+            High(n): 1 + n
+
+Level implements Ord:
+    def less(self, other: &Level) -> Bool:
+        self.rank() < other.rank()
+
+def above(a: Level, b: Level) -> Bool:
+    a >= b
+",
     );
-    assert!(
-        !checked
-            .body("before")
-            .exprs()
-            .any(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. })),
-        "`a < b` must not become a call: `Ord` has no method this crate may name"
-    );
+    checked.assert_clean();
+    let body = checked.body("above");
+    let id = checked.find("above", |kind| matches!(kind, ExprKind::MethodCall { .. }));
+    let ExprKind::MethodCall { method: Some(method), .. } = body.expr(id).kind else {
+        panic!("`a >= b` on a `choice` is a resolved call");
+    };
+    assert_eq!(checked.krate.defs.get(method).name, "less");
+}
+
+/// The name of the local an operand reads, through whatever borrow or copy
+/// the checker wrapped round it.
+fn local_under(checked: &support::Checked, name: &str, mut id: science_types::thir::ExprId) -> String {
+    let body = checked.body(name);
+    loop {
+        match body.expr(id).kind {
+            ExprKind::Coerce { operand, .. } | ExprKind::Borrow { operand, .. } => id = operand,
+            ExprKind::Local(def) => return checked.krate.defs.get(def).name.clone(),
+            ref other => panic!("`{name}`: an operand that reads no local: {other:?}"),
+        }
+    }
 }
 
 /// The prelude's own numerics are unaffected, because they implement `Ord` and
 /// because `1 < 2` never reaches an implementation at all.
 #[test]
 fn a_comparison_of_two_numbers_is_still_structural() {
-    support::check(
+    let checked = support::check(
         "\
 def before(a: I64, b: I64) -> Bool:
     a < b
@@ -805,8 +863,20 @@ def letters(a: Char, b: Char) -> Bool:
 def words(a: &String, b: &String) -> Bool:
     a < b
 ",
-    )
-    .assert_clean();
+    );
+    checked.assert_clean();
+    // **Never a call**, although `Ord.less` is now in each of these types'
+    // index: `BodyChecker::ordering` hands a prelude head back to the
+    // structural comparison it has always been.
+    for name in ["before", "letters", "words"] {
+        assert!(
+            !checked
+                .body(name)
+                .exprs()
+                .any(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. })),
+            "{name}: a prelude comparison is an instruction, not a call to `less`"
+        );
+    }
 }
 
 /// A type parameter is silent, which is `methods`' §5 and the restraint the
@@ -824,38 +894,53 @@ def largest[T](a: &T, b: &T) -> Bool
     .assert_clean();
 }
 
-/// **`Ord` is still not dispatched**, and what that waits for is three things
-/// no note supplies: a method name, an `Ordering` return type that is not in
-/// §8's closed library, and a rule for how four operators sit over one
-/// `compare` — including what `F64`'s NaN does to a total order. This test
-/// pins the remaining hole: an `implements Ord:` block that writes a `compare`
-/// is not consulted, and a comparison of two values it would order wrongly is
-/// not the compiler's business yet.
+/// **Through a `T: Ord` bound the comparison is a call too**, to the
+/// interface's own `less` — `science_codegen::mono` picks the implementation
+/// per instantiation, and at a prelude type `science-codegen-llvm` answers it
+/// with the structural instruction. This is what makes `largest[T: Ord]`
+/// mean the same thing at `Int` and at a user's record.
+///
+/// This replaces a test that pinned the hole: an `implements Ord:` block
+/// writing a `compare` that nothing called. That block is now `SC0539`, which
+/// `conformance.rs` holds.
 #[test]
-fn ord_is_still_not_dispatched_and_its_method_is_not_named() {
+fn a_comparison_on_a_bounded_type_parameter_calls_ord_less() {
     let checked = support::check(
         "\
-type Held:
-    x: F64
-
-Held implements Ord:
-    def compare(self, other: Held) -> I64:
-        0
-
-def before(a: Held, b: Held) -> Bool:
-    a < b
+def largest[T](a: &T, b: &T) -> Bool
+        where T: Ord:
+    a > b
 ",
     );
     checked.assert_clean();
-    // The `compare` above is an ordinary method of the block. Nothing calls it,
-    // and nothing checked its signature against a declaration, because `Ord`
-    // declares none.
+    let body = checked.body("largest");
+    let id = checked.find("largest", |kind| matches!(kind, ExprKind::MethodCall { .. }));
+    let ExprKind::MethodCall { receiver, method: Some(method), .. } = body.expr(id).kind else {
+        panic!("`a > b` under `T: Ord` is a resolved call");
+    };
+    assert_eq!(checked.krate.defs.get(method).name, "less");
+    // `a > b` is `b.less(a)`.
+    assert_eq!(local_under(&checked, "largest", receiver), "b");
+}
+
+/// **A type parameter with no `Ord` bound has nothing to call**, and stays
+/// the structural `Binary` it was — silent, for `methods`' §5 reason, and
+/// left for the backend to refuse rather than reported here.
+#[test]
+fn a_comparison_on_an_unbounded_type_parameter_is_not_a_call() {
+    let checked = support::check(
+        "\
+def bigger[T](a: &T, b: &T) -> Bool:
+    a > b
+",
+    );
+    checked.assert_clean();
     assert!(
         !checked
-            .body("before")
+            .body("bigger")
             .exprs()
             .any(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. })),
-        "nothing may dispatch `<` until a note writes `Ord`'s method down"
+        "no bound names `Ord`, so no `less` is in reach"
     );
 }
 

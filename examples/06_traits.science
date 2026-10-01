@@ -230,7 +230,7 @@ Note implements Eq:
         self.text is other.text
 
 Note implements Ord:
-    def less(self, other: Note) -> Bool:
+    def less(self, other: &Note) -> Bool:
         self.text.length() < other.text.length()
 
 Doc implements Drop:

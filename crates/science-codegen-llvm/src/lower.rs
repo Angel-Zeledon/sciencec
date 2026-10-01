@@ -7886,7 +7886,8 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// `a is b` and `a is not b` on a `String`: `science_string_eq`.
+    /// A comparison of two `String`s: `science_string_eq` for `is` and `is not`,
+    /// `science_string_cmp` for the four orderings.
     ///
     /// **The decision. Equality on a `String` is a call, and `is not` is that
     /// call and one `icmp`.** `science_string_eq` takes two `*const
@@ -7902,12 +7903,15 @@ impl<'a> Lowerer<'a> {
     /// different allocations are `is` and would have compared unequal, and
     /// nothing in the IR or the verifier distinguishes the two questions.
     ///
-    /// **Only `is` and `is not`.** `<` and `>` on a `String` are
-    /// `stdlib-core.md`'s `Ord` and `science_string_cmp` exists for them, but
-    /// the ordering the runtime implements is a byte ordering and no note in
-    /// this repository says that is the ordering the language means; a
-    /// collation question answered by whichever function was nearest is the
-    /// kind of guess §11 exists to refuse.
+    /// **And `< > <= >=`, through `science_string_cmp`.** This used to refuse
+    /// them, reasoning that *"no note in this repository says a byte ordering
+    /// is the ordering the language means"*. One does, in its title:
+    /// `stdlib-core.md` §6.8, *"`String: Ord` is byte order, and says so"* —
+    /// byte order, which for UTF-8 is code-point order, and never collation,
+    /// because collation would make `sorted()` differ between a laptop and a
+    /// cluster. `science_string_cmp` is exactly that order (`string.rs` says
+    /// *"lexicographic over bytes"*), so the comparison is one call and one
+    /// `icmp` of its `-1`/`0`/`1` against zero, the operator unchanged.
     ///
     /// **A literal operand is Decision 15's temporary and it is freed here.**
     /// `"" ` has no MIR local, so this call site builds the `ScienceString`,
@@ -7924,23 +7928,23 @@ impl<'a> Lowerer<'a> {
         dest: LocalId,
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
-        if !matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
-            return Err(Unlowered::new(format!(
-                "`{}` on a `String`: `science_string_cmp` is in `RUNTIME` and orders by bytes, \
-                 and no note in this repository says a byte ordering is the ordering \
-                 `stdlib-core.md`'s `String implements Ord` means",
-                op.as_str()
-            )));
-        }
         let (left, left_temp) = self.string_pointer(ctx, lhs, insts)?;
         let (right, right_temp) = self.string_pointer(ctx, rhs, insts)?;
-        let equal = self.declare("science_string_eq")?;
+        let ordering = match op {
+            BinaryOp::Lt => Some(CmpOp::Lt),
+            BinaryOp::Le => Some(CmpOp::Le),
+            BinaryOp::Gt => Some(CmpOp::Gt),
+            BinaryOp::Ge => Some(CmpOp::Ge),
+            _ => None,
+        };
+        let symbol = if ordering.is_some() { "science_string_cmp" } else { "science_string_eq" };
+        let entry = self.declare(symbol)?;
         let value = ctx.value();
         insts.push(ExtInst::Above(Inst::Call {
             dest: Some(value),
-            callee: Callee::Runtime("science_string_eq"),
+            callee: Callee::Runtime(symbol),
             args: vec![Operand::Value(left), Operand::Value(right)],
-            ret: equal.ret.clone(),
+            ret: entry.ret.clone(),
             sret_slot: None,
         }));
         for slot in [left_temp, right_temp].into_iter().flatten() {
@@ -7955,7 +7959,19 @@ impl<'a> Lowerer<'a> {
                 sret_slot: None,
             }));
         }
-        let result = if op == BinaryOp::Eq {
+        let result = if let Some(cmp) = ordering {
+            // `science_string_cmp`'s sign, read with the operator itself:
+            // `a < b` exactly when `cmp(a, b) < 0`.
+            let ordered = ctx.value();
+            insts.push(ExtInst::Above(Inst::Cmp {
+                dest: ordered,
+                op: cmp,
+                signed: true,
+                lhs: Operand::Value(value),
+                rhs: Operand::ConstInt(0),
+            }));
+            ordered
+        } else if op == BinaryOp::Eq {
             value
         } else {
             // The same negation `UnaryOp::Not` emits, and the only one this
@@ -8008,6 +8024,20 @@ impl<'a> Lowerer<'a> {
             }
             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                 let (address, layout) = self.place_address(ctx, place, insts)?;
+                // **A narrowed `(&String)?` holds the same pointer**, niched
+                // (Decision 19): `science-mir`'s `as_place` sees through the
+                // narrow to the nullable's own slot, so `x < best` inside
+                // `if best?:` arrives here at the `Niched` layout whose
+                // payload is the pointer. Taking the slot's *address* instead
+                // handed `science_string_cmp` a pointer to a pointer.
+                let layout = match layout.repr {
+                    Repr::Niched { ref payload, .. }
+                        if matches!(payload.repr, Repr::Scalar(Scalar::Pointer(_))) =>
+                    {
+                        (**payload).clone()
+                    }
+                    _ => layout,
+                };
                 if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
                     let pointer = ctx.value();
                     insts.push(ExtInst::LoadAt {
@@ -8872,6 +8902,10 @@ impl<'a> Lowerer<'a> {
             self.lower_array_span(body, ctx, args, destination, insts)?;
         } else if self.string_bytes(def, args.first().and_then(|op| self.operand_ty(body, op))) {
             self.lower_string_bytes(ctx, args, destination, insts)?;
+        } else if let Some(self_ty) =
+            self.builtin_less(def, args.first().and_then(|op| self.operand_ty(body, op)))
+        {
+            self.lower_builtin_less(body, ctx, self_ty, args, destination, insts)?;
         } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
@@ -10363,6 +10397,149 @@ impl<'a> Lowerer<'a> {
                 | "Bool"
                 | "Char"
         )
+    }
+
+    /// The prelude type a call to `Ord.less` is answered by, when the receiver
+    /// is one: an integer, `Char`, a float or `String`.
+    ///
+    /// # The decision
+    ///
+    /// `Ord.less` reaches this crate as a call only through a **type
+    /// parameter**: `science-types`' `BodyChecker::ordering` keeps `1 < 2` and
+    /// `"a" < "b"` the structural [`mir::Rvalue::BinaryOp`] they always were,
+    /// and makes the call only where the operand's type is a `T: Ord` that
+    /// nothing has picked yet. Monomorphised at `T = Int`,
+    /// `science_codegen::mono`'s `Mono::redirect_self_call` finds the
+    /// prelude's `I64 implements Ord`, which writes no `less` of its own —
+    /// `builtins.rs` declares the relation and not a body — so the call
+    /// arrives here still naming the interface's declaration, with a
+    /// concrete receiver. That is [`Lowerer::trivial_scalar_clone`]'s case
+    /// exactly, one interface over, and it is answered the same way: with the
+    /// instruction `a < b` on that type already is, and no call.
+    ///
+    /// # The reason it is the *same* instruction
+    ///
+    /// A generic `largest[T: Ord]` at `T = Int` and the same body written
+    /// with `Int` in place of `T` must agree, and the only way to make that
+    /// true by construction is for both to reach the one comparison: an
+    /// `icmp` with the type's signedness, an `fcmp` for a float, and
+    /// `science_string_cmp` for a `String` through
+    /// [`Lowerer::lower_string_comparison`] — the very arm `lower_binary`
+    /// sends a `String` to.
+    ///
+    /// A user's own `implements Ord:` with a written `less` never reaches
+    /// here: it has a body and `symbol_for_call` lowers it as an ordinary call
+    /// first.
+    fn builtin_less(&self, def: DefId, receiver_ty: Option<Ty>) -> Option<Ty> {
+        if self.defs.get(def).name.as_str() != "less" {
+            return None;
+        }
+        if self.declaring_interface(def).as_deref() != Some("Ord") {
+            return None;
+        }
+        let self_ty = self.referent(receiver_ty?);
+        let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
+            return None;
+        };
+        if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
+            return None;
+        }
+        matches!(
+            self.defs.get(*receiver).name.as_str(),
+            "Int" | "I8"
+                | "I16"
+                | "I32"
+                | "I64"
+                | "U8"
+                | "U16"
+                | "U32"
+                | "U64"
+                | "F16"
+                | "BF16"
+                | "F32"
+                | "F64"
+                | "Float"
+                | "Char"
+                | "String"
+        )
+        .then_some(self_ty)
+    }
+
+    /// The lowering [`Lowerer::builtin_less`] names: `receiver < other` on
+    /// the two operands' referents, stored into the destination.
+    ///
+    /// **Both operands are usually borrows** — `less` takes `self` shared and
+    /// `other: &Self` — so each is read through its pointer with
+    /// [`ExtInst::LoadAt`], as `lower_trivial_scalar_clone` reads its
+    /// receiver; an operand that arrives as a value is used as one.
+    fn lower_builtin_less(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        self_ty: Ty,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new(
+                "an `Ord.less` on a builtin type whose result goes through a field",
+            ));
+        }
+        let [receiver, other] = args else {
+            return Err(Unlowered::new("an `Ord.less` call lowered without its two operands"));
+        };
+        let dest_local = LocalId(destination.local.index() as u32);
+        if self.is_string(self_ty) {
+            return self.lower_string_comparison(ctx, BinaryOp::Lt, receiver, other, dest_local, insts);
+        }
+        let scalar = self.scalar_of(self_ty)?;
+        let layout = layout_of(self.target, &self.cg_ty(self_ty)?);
+        let signed = matches!(scalar, Scalar::Int(int) if int.is_signed());
+        let left = self.scalar_through_borrow(body, ctx, receiver, &layout, insts)?;
+        let right = self.scalar_through_borrow(body, ctx, other, &layout, insts)?;
+        let result = ctx.value();
+        insts.push(ExtInst::Above(Inst::Cmp {
+            dest: result,
+            op: CmpOp::Lt,
+            signed,
+            lhs: left,
+            rhs: right,
+        }));
+        insts.push(ExtInst::Above(Inst::Store { local: dest_local, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// One operand of [`Lowerer::lower_builtin_less`], as a value at `layout`:
+    /// loaded through the pointer when the operand is a borrow.
+    ///
+    /// **A narrowed `(&T)?` is a borrow here too.** `science-mir`'s `as_place`
+    /// sees through a narrow to the nullable's own slot, so `x > best` inside
+    /// `if best?:` hands this call `best` at its written `(&Int)?` — which
+    /// Decision 19 niches into the very pointer the narrow has proved
+    /// non-null. Reading that as a value would compare an `i64` with a `ptr`.
+    fn scalar_through_borrow(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let borrowed = self.operand_ty(body, operand).is_some_and(|ty| {
+            let ty = match self.types.kind(ty) {
+                TyKind::Nullable(payload) => *payload,
+                _ => ty,
+            };
+            matches!(self.types.kind(ty), TyKind::Borrowed { .. })
+        });
+        if !borrowed {
+            return self.typed_operand(ctx, operand, layout, insts);
+        }
+        let address = self.lower_operand(ctx, operand, None, insts)?;
+        let value = ctx.value();
+        insts.push(ExtInst::LoadAt { dest: value, address, layout: layout.clone() });
+        Ok(Operand::Value(value))
     }
 
     /// The lowering [`Lowerer::trivial_scalar_clone`] names: read the

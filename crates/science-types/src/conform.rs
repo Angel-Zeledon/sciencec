@@ -100,9 +100,13 @@
 //!
 //! **What the restraint costs** is a stray method in a block implementing a
 //! methodless prelude interface — `Doc implements Clone:` with a `describe`
-//! beside its `clone` — which stays silent. It closes with the fourteen: the
-//! day `Ord.compare` has a note behind it, the entry goes in `builtins.rs` and
-//! this rule starts reporting there with no edit here.
+//! beside its `clone` — which stays silent. `Ord` is the measurement of what
+//! a declared method changes and what it does not: since `Ord.less` went into
+//! `builtins.rs` (`stdlib-shape-and-packages.md` §4.5, AMENDMENT 1), a block
+//! with no `less` is `SC0539` and one whose `less` takes `other` by value is
+//! `SC0541`, with no edit here — but a stray method beside `less` is still
+//! silent, because the restraint is keyed on `Def::is_builtin` and not on
+//! whether the interface declares anything.
 //!
 //! # 4. Where it declines, stated rather than hidden
 //!

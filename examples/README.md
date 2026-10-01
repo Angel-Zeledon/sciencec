@@ -70,6 +70,10 @@ here so that changing one is a single, visible decision.
   the section itself. `Copy` and the markers have no methods. Every other name
   used here is the obvious reading: `clone`, `eq`, `less`, `drop`, `display`,
   `from`, and `add` / `sub` / `mul` / `neg` / `matmul` for the operators.
+  `less` is no longer an assumption: `stdlib-shape-and-packages.md` §4.5's
+  AMENDMENT 1 decides it as `def less(self, other: &Self) -> Bool`, the one
+  method `< > <= >=` dispatch to, which is why `06_traits.science`'s `Note`
+  now takes `other` by borrow.
 - **The method sets §8 declares closed but no longer lists.** §8 names the
   types, the interfaces and the free functions, and says anything not listed does
   not exist — but it stopped listing. `19_stdlib.science` is where the corpus

@@ -550,7 +550,7 @@ struct InterfaceDecl {
     methods: &'static [Method],
 }
 
-/// The interfaces that get a method, and why only six do.
+/// The interfaces that get a method, and why only seven do.
 ///
 /// **Decision. An interface is declared with its methods only where a note
 /// gives the method's name and its types.** `Error.message` is
@@ -560,10 +560,12 @@ struct InterfaceDecl {
 /// §1.1's Decision 2, written out in Science in that note and transcribed
 /// below; `Clone.clone` is the fifth, and its own comment below says why it
 /// passes the same test although no note writes its signature in Science
-/// syntax. The other thirteen — `Add`, `Ord`, `Eq` and the rest — are
-/// declared as **names with implementations and no methods**, which is the
-/// whole of what the bound check needs: `methods`' §7 asks *"does `I64`
-/// implement `Ord`"* and never *"what is `Ord`'s method called"*.
+/// syntax. `Ord.less` is the seventh, and it is `stdlib-shape-and-packages.md`
+/// §4.5's AMENDMENT 1 to Decision 4c, written for it. The other twelve —
+/// `Add`, `Eq` and the rest — are declared as **names with implementations
+/// and no methods**, which is the whole of what the bound check needs:
+/// `methods`' §7 asks *"does `I64` implement `Add`"* and never *"what is
+/// `Add`'s method called"*.
 ///
 /// **`Display.display` is the sixth, and it stood refused for three prior
 /// commits on a premise this file itself got wrong.** The refusal read
@@ -607,13 +609,13 @@ struct InterfaceDecl {
 /// corpus run this session's report cites is what confirms it rather than a
 /// second table audit.
 ///
-/// **What the thirteen still buy, now that the implementations are
+/// **What the twelve still buy, now that the implementations are
 /// declared**, is the *requirement*: `check`'s `implements_operand` refuses
-/// `a < b` on a type that has no `implements Ord:` block without ever naming
-/// `Ord`'s method. `Ordering` is still unspecified, so `Ord`'s dispatch is
-/// still left open, and so is `<`'s. `check`'s §6 wants *"a rule anywhere
-/// saying which method name each operator dispatches to"*, and for `< > <=
-/// >=` there is still none.
+/// `a + b` on a type that has no `implements Add:` block, and the dispatch
+/// names the method beside the operator rather than here. **`< > <= >=` are
+/// no longer in that position**: `Ord` has its method now, so the four order
+/// operators dispatch to `less` and the requirement is the dispatch's own
+/// `SC0535` — see `Ord`'s entry below for the decision and what it costs.
 const INTERFACE_DECLS: &[InterfaceDecl] = &[
     InterfaceDecl {
         name: "Error",
@@ -807,6 +809,59 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             recv: Some(SelfKind::Shared),
             params: &[],
             ret: Some(Ty::SelfTy),
+        }],
+    },
+    // --- `Ord`, `stdlib-shape-and-packages.md` §4.5, AMENDMENT 1 ---------
+    //
+    // **Decision. `Ord`'s one method is `def less(self, other: &Self) ->
+    // Bool`, and the four order operators are written over it:** `a < b` is
+    // `a.less(b)`, `a > b` is `b.less(a)`, `a <= b` is `not b.less(a)` and
+    // `a >= b` is `not a.less(b)`. `check`'s `BodyChecker::ordering` is the
+    // desugaring.
+    //
+    // **Reason.** The alternative every reader expects — `compare(self,
+    // other) -> Ordering` — needs a Level 1 `choice Ordering` that no note
+    // specifies, and §8's library is closed: adding a type to it is a spec
+    // change, not a detail an operator may bring along. `less` needs nothing
+    // that does not exist. It is also what the corpus already writes —
+    // `examples/19_stdlib.science`'s `Record implements Ord: def less(self,
+    // other: &Record) -> Bool` and `06_traits`' `Note` — and it is the one
+    // comparison every sorting and selection algorithm is defined over: a
+    // strict weak order is `<` and nothing else, which is why Python's
+    // `sorted`, `min` and `max` call only `__lt__` and C++'s `Compare` is a
+    // `less`. `F64`'s NaN, the third obstacle this file used to list, is not
+    // `Ord`'s question at all: §5.1 keeps floats out of `Ord`, and `<` on an
+    // `F64` stays the structural IEEE comparison.
+    //
+    // **`other` is borrowed**, because a comparison reads both operands and
+    // consumes neither — `science-mir`'s `force_copy` over the six comparison
+    // operators says the same thing one phase down. `06_traits`' `Note` wrote
+    // `other: Note` by value and is amended to `&Note`; a by-value operand
+    // would have moved the right-hand side of `a < b` into the call.
+    //
+    // **`Eq` is not derived from it and does not derive it.** `is` stays
+    // `Eq.eq`, a separate implementation, and the law that ties the two —
+    // `a is b` exactly when `not a.less(b) and not b.less(a)` — is prose, as
+    // `contracts.md` leaves every interface law for now.
+    //
+    // **Cost.** `a > b` and `a <= b` evaluate `b` before `a`, because the
+    // receiver is evaluated first and THIR has no binding form to keep the
+    // written order in; it is observable only when both operands have
+    // effects. A three-way answer costs two calls where `compare` would be
+    // one. And `intrinsics-math-physics.md`'s `total_order -> Ordering`
+    // still has no type to return — the day `Ordering` is specified,
+    // `compare` joins `less` as a defaulted method and no implementation of
+    // `less` changes.
+    InterfaceDecl {
+        name: "Ord",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "less",
+            generics: &[],
+            recv: Some(SelfKind::Shared),
+            params: &[("other", Ty::Ref(&Ty::SelfTy))],
+            ret: Some(BOOL),
         }],
     },
     // --- `Display`, `strings-formatting-and-docs.md` §3.1 ----------------
@@ -2400,14 +2455,14 @@ const BLOCKS: &[Block] = &[
 
     // # `sorted(by:)` takes an `Int` key, where §1.4 writes `K: Ord`
     //
-    // Narrowed deliberately, because `K: Ord` is not a bound this prelude can
-    // state or this compiler can discharge. [`INTERFACE_DECLS`]' own comment
-    // says so in as many words: `Ord` is declared as *"a name with
-    // implementations and no methods"*, because writing `Ord.compare ->
-    // Ordering` would invent `Ordering` — a Level 1 type no note specifies —
-    // and a rule for how four operators sit over one `compare`. So the cost
-    // of *"two operators still do not dispatch"* lands here too: there is no
-    // comparison a generic key could be sorted by.
+    // Narrowed deliberately, and the reason it was narrowed is half gone.
+    // `Ord` used to be *"a name with implementations and no methods"*, so
+    // there was no comparison a generic key could be sorted by at all. It
+    // has one now — [`INTERFACE_DECLS`]' `Ord.less` — and generic Science
+    // code can write `a < b` under `T: Ord` and run it. What is left is the
+    // runtime half: `science_array_sort_by_int_key` compares two `I64`s in
+    // Rust, and a `K: Ord` key means calling a monomorphised `less` back
+    // from inside the runtime's sort, a callback this backend does not emit.
     //
     // An `Int` key is what §1.4's own example sorts on
     // (`.sorted(by: each.score)` over a numeric field), it is what
@@ -2416,7 +2471,7 @@ const BLOCKS: &[Block] = &[
     // than a program that checks clean and is refused by the backend — which
     // is the trade this file makes everywhere else. Widening it is one
     // `K: Ord` bound and one comparison in `science_array_sort_by_int_key`,
-    // the day `Ord` has a method.
+    // and a callback into the key's `less`, now that `Ord` has the method.
 
     // # `sum()` returns the item with its borrow peeled, and the checker says so
     //

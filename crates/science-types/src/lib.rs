@@ -884,9 +884,9 @@ pub mod codes {
     ///
     /// **Reported only where the question is answerable**, which is the
     /// restraint [`NO_SUCH_METHOD`] is under and for the identical reason at
-    /// the other end of the same table: `builtins.rs` declares fourteen prelude
-    /// interfaces as *names with no methods* — deliberately, because `Ord`'s
-    /// method would need an `Ordering` and `Display`'s a `Formatter`, and *"a
+    /// the other end of the same table: `builtins.rs` declares most prelude
+    /// interfaces as *names with no methods* — deliberately, because a method
+    /// with no note behind it is a signature invented here, and *"a
     /// signature invented in passing is how a language acquires a design nobody
     /// argued for"* — so `Doc implements Clone:` writing a `clone` is a correct
     /// program that this rule must not see. [`crate::conform`]'s §3 is the

@@ -225,23 +225,22 @@
 //!   a type — and `methods`'s §6 makes the arguments choose between them.
 //!   `BodyChecker::select` is the selection and it says what it costs Decision
 //!   1.
-//! - **Operators on user types: closed, except for `Ord`'s dispatch.** `a + b`
-//!   on a record is `Add.add` and `a[i]` is `Index.index`; `builtins.rs` now
-//!   declares `Index of Idx` with its `type Output` and its method, and
-//!   `IndexMutably` beside it, so `a[i]` has a type and `a[i] be v` is checked.
-//!   `is` requires `Eq` and `< > <= >=` require `Ord`, both through
-//!   `BodyChecker::implements_operand`, which asks whether the implementation
-//!   exists and calls nothing.
+//! - **Operators on user types: closed.** `a + b` on a record is `Add.add`
+//!   and `a[i]` is `Index.index`; `builtins.rs` now declares `Index of Idx`
+//!   with its `type Output` and its method, and `IndexMutably` beside it, so
+//!   `a[i]` has a type and `a[i] be v` is checked. `is` is `Eq.eq`, and
+//!   `< > <= >=` are `Ord.less` — `BodyChecker::ordering` — including through
+//!   a `T: Ord` bound, which is the one operator dispatch a type parameter
+//!   reaches because `Ord` is the one operator interface that declares its
+//!   method.
 //!
-//!   **What is left is one row of `binary_operator`.** `Ord`'s *dispatch* needs
-//!   a method name, an `Ordering` return type that is not in §8's closed
-//!   library, and a rule for how four operators sit over one `compare` —
-//!   including what `F64`'s NaN does to a total order. Nothing here invents
-//!   any of the three; `implements_operand` is where the line between
-//!   requiring an implementation and calling into one is argued, and
-//!   `builtins.rs`' `INTERFACE_DECLS` states the same refusal at the
-//!   declaration. `Display` keeps its whole hole for the same reason, one type
-//!   along: its method would name a `Formatter`.
+//!   **What closed the last row** was not this file inventing the three
+//!   things it used to say were missing — a method name, an `Ordering`, a rule
+//!   for four operators over one `compare`. It was a note deciding that none
+//!   of the three is needed: `stdlib-shape-and-packages.md` §4.5's AMENDMENT
+//!   1 makes `less` the one method, and the four operators are `less` and its
+//!   negation with the operands in either order. `builtins.rs`' `Ord` entry is
+//!   the decision and its cost.
 //!
 //!   Operators on the prelude's numeric primitives *are* checked structurally,
 //!   because those do not go through an implementation.
@@ -6065,7 +6064,7 @@ impl<'a> BodyChecker<'a> {
                 let left = self.read_value(left, lhs.span);
                 let right = self.read_value(right, rhs.span);
                 // §6: `is` and `is not` dispatch to `Eq.eq`, and `< > <= >=`
-                // require `Ord` without dispatching to anything.
+                // dispatch to `Ord.less` — [`BodyChecker::ordering`].
                 //
                 // **`Eq` is a dispatch now.** The three obstacles
                 // `binary_operator`'s note lists for `Ord` — no method name, no
@@ -6083,10 +6082,15 @@ impl<'a> BodyChecker<'a> {
                 // with one instruction: a prelude head's surface is not closed,
                 // so the lookup declines to speak and the implementation check
                 // below runs in its place.
+                //
+                // **And `Ord` is a dispatch now too**, over the one method
+                // `builtins.rs`' `Ord` entry gives it; that entry is the
+                // decision, and `ordering` is the four operators written over
+                // it.
                 let dispatched = if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
                     self.operator(op.as_str(), "Eq", "eq", left, Some((right, rhs.span)), span)
                 } else {
-                    None
+                    self.ordering(op, (left, lhs.span), (right, rhs.span), span)
                 };
                 // The requirement check is what a *fall-through* still gets:
                 // once `operator` has spoken it has either made the call or
@@ -6390,8 +6394,20 @@ impl<'a> BodyChecker<'a> {
         if self.types.references_error(revealed) {
             return None;
         }
-        let head = self.decls.methods().receiver(self.defs, self.types, revealed)?;
         let self_ty = self.receiver_self_ty(revealed, span);
+        let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) else {
+            // **A type parameter has no head, and its bound is the answer.**
+            // `a < b` under `T: Ord` is `lookup_via_bound`'s case from the
+            // operator side: the bound names the interface, the interface's
+            // own index has the method, and `science_codegen::mono`'s
+            // `Mono::redirect_self_call` turns the call into the concrete
+            // implementation at each instantiation. Only an interface that
+            // declares the method can answer — `Ord.less` today — so `a + b`
+            // under `T: Add` still falls through, for `Add`'s own reason.
+            let TyKind::Param { def: param } = *self.types.kind(self_ty) else { return None };
+            let candidate = self.bound_operator(param, interface_def, method)?;
+            return self.operator_call(receiver, operand, candidate, self_ty, span);
+        };
         let candidate = match self.decls.methods().lookup(head, method, Form::Value) {
             Found::One(candidate) if candidate.interface() == Some(interface_def) => candidate,
             // Everything else is *this type does not implement this
@@ -6414,6 +6430,42 @@ impl<'a> BodyChecker<'a> {
                 return None;
             }
         };
+        self.operator_call(receiver, operand, candidate, self_ty, span)
+    }
+
+    /// The method `interface` declares under `method`'s name, reached through
+    /// a bound on `param` that names `interface` — [`BodyChecker::operator`]'s
+    /// type-parameter case, and [`BodyChecker::lookup_via_bound`] narrowed to
+    /// the one interface the operator means. A bound at some *other*
+    /// interface that happens to declare the same name is not the operator's
+    /// interface, for the reason `operator`'s own `candidate.interface()`
+    /// test gives.
+    fn bound_operator(
+        &mut self,
+        param: DefId,
+        interface: DefId,
+        method: &str,
+    ) -> Option<Candidate> {
+        self.bounds
+            .iter()
+            .filter(|bound| bound.param == param && bound.interface == interface)
+            .find_map(|bound| match self.decls.methods().lookup(bound.interface, method, Form::Value) {
+                Found::One(candidate) => Some(candidate),
+                _ => None,
+            })
+    }
+
+    /// The call [`BodyChecker::operator`] resolved, built: the receiver
+    /// invalidated if the method writes it, the operand checked against the
+    /// signature, and the node pushed.
+    fn operator_call(
+        &mut self,
+        receiver: Typed,
+        operand: Option<(Typed, Span)>,
+        candidate: Candidate,
+        self_ty: Ty,
+        span: Span,
+    ) -> Option<Typed> {
         // Decision 8 and `narrow`'s §4, as at any other call.
         if candidate.writes_receiver() {
             if let Some(place) = self.body.place_of(receiver.id) {
@@ -6458,6 +6510,55 @@ impl<'a> BodyChecker<'a> {
         Some(Typed { id, ty: InferTy::Known(ret) })
     }
 
+    /// `a < b`, `a > b`, `a <= b` and `a >= b` on a type that implements
+    /// `Ord`: one call to `less`, with the operands in the order the operator
+    /// needs and [`BodyChecker::equality`]'s negation around two of them.
+    ///
+    /// | written  | is                 |
+    /// |----------|--------------------|
+    /// | `a < b`  | `a.less(b)`        |
+    /// | `a > b`  | `b.less(a)`        |
+    /// | `a <= b` | `not b.less(a)`    |
+    /// | `a >= b` | `not a.less(b)`    |
+    ///
+    /// `builtins.rs`' `Ord` entry is the decision and its cost — `b` is
+    /// evaluated before `a` in the two rows that swap, because the receiver is
+    /// evaluated first.
+    ///
+    /// **A prelude head is structural and never a call**, which is the one
+    /// way this differs from `Eq`'s arm. Giving `Ord` a method put `less` in
+    /// the index of every prelude type `IMPLEMENTS` lists against it — every
+    /// integer, `Char`, `String` — so `operator`'s lookup now *finds* one on
+    /// `1 < 2`, where for `eq` it finds nothing and falls through. The answer
+    /// for those types has always been an instruction (a `science_string_cmp`
+    /// for a `String`), and a call to a method with no body would be a
+    /// detour through `science-codegen-llvm` back to the same instruction. So
+    /// the head is asked first and a builtin one is handed back as `None`,
+    /// which is `operator`'s own *fall through to the structural answer*.
+    /// Through a type parameter the call *is* made — at `T = Int` too — and
+    /// `science-codegen-llvm`'s `Lowerer::builtin_less` is the instruction it
+    /// lowers to there.
+    fn ordering(
+        &mut self,
+        op: BinaryOp,
+        left: (Typed, Span),
+        right: (Typed, Span),
+        span: Span,
+    ) -> Option<Typed> {
+        let written = self.known_or_error(left.0.ty);
+        let revealed = self.revealed(written, span);
+        if let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) {
+            if self.defs.get(head).is_builtin() {
+                return None;
+            }
+        }
+        let (receiver, operand) = match op {
+            BinaryOp::Lt | BinaryOp::Ge => (left, right),
+            _ => (right, left),
+        };
+        self.operator(op.as_str(), "Ord", "less", receiver.0, Some(operand), span)
+    }
+
     /// What a dispatched `a is b` evaluates to, and what `a is not b` wraps it
     /// in.
     ///
@@ -6488,7 +6589,9 @@ impl<'a> BodyChecker<'a> {
         } else {
             self.demand(dispatched, bool_ty, Site::Elsewhere, span)
         };
-        if op == BinaryOp::Eq {
+        // `is not`, and `Ord`'s two negated rows: `<=` and `>=` are `not` of
+        // the strict comparison the other way round.
+        if !matches!(op, BinaryOp::Ne | BinaryOp::Le | BinaryOp::Ge) {
             return Typed { id: value, ty: InferTy::Known(bool_ty) };
         }
         let id = self.body.push_expr(
@@ -6499,14 +6602,20 @@ impl<'a> BodyChecker<'a> {
         Typed { id, ty: InferTy::Known(bool_ty) }
     }
 
-    /// The implementation check with no call made: the four order comparisons.
+    /// The implementation check with no call made.
     ///
-    /// **`Eq` no longer comes through here, and the paragraphs below that say
-    /// it does are corrected at the end.** `a is b` on a type whose surface
-    /// this index can speak for is [`BodyChecker::operator`]'s call now; this
-    /// function is reached for `Eq` only on the fall-through — a prelude head,
-    /// a type parameter, an erroneous operand — where `operator` declines to
-    /// speak and the *requirement* is still worth asking about.
+    /// **Neither `Eq` nor `Ord` comes through here on a user type any more,
+    /// and the paragraphs below are kept as the record of why they once did.**
+    /// `a is b` is [`BodyChecker::operator`]'s call, and `a < b` is
+    /// [`BodyChecker::ordering`]'s since `stdlib-shape-and-packages.md` §4.5's
+    /// AMENDMENT 1 named `Ord`'s method `less` — which is the *"one method
+    /// signature"* the last paragraph of the first section asks for. This
+    /// function is reached only on the fall-through — a prelude head, a type
+    /// parameter, an erroneous operand — where the dispatch declines to speak.
+    /// On every one of those this function is silent too, for `methods`' §7:
+    /// `true < false` passes here although `builtins.rs` lists no `Ord` for
+    /// `Bool`, because a prelude head's `false` is not evidence. That gap is
+    /// this function's and older than `less`.
     ///
     /// # `a < b` requires `Ord`, and that is not the refusal being reversed
     ///
@@ -8548,24 +8657,17 @@ pub(crate) fn suffix_name(suffix: NumSuffix) -> &'static str {
 /// different reason: §5.4 declares no bitwise interfaces at all, which that note
 /// records as a hole in the core spec rather than filling.
 ///
-/// `Ord` is the deliberate omission and it stays one: `< > <= >=` would
-/// dispatch to a method whose only sane name is `compare`, whose return type is
-/// an `Ordering` that no note specifies, and whose relation to four operators —
-/// including what `F64`'s NaN does to a total order — nothing has written down.
-/// The *implementation* is required all the same, by
-/// [`BodyChecker::implements_operand`], which is where the line between the two
-/// is argued.
+/// `Ord` is not on this table, and no longer because it is an omission: `< >
+/// <= >=` dispatch to `Ord.less` through [`BodyChecker::ordering`], which
+/// swaps the operands for two of them and negates two — neither of which a
+/// `(interface, method)` row has anywhere to say.
 ///
-/// **`Eq` used to be off this table "for the same reason", and it was not the
-/// same reason.** None of `Ord`'s three obstacles is `Eq`'s: Decision 4c gives
-/// the name, because `eq` is a free one; §5.4 gives the return type, `Bool`;
-/// and `is`/`is not` are two operators over one method related by a negation,
-/// not four over an `Ordering`. `docs/.../2026-09-16-science-f0-core-design.md`
-/// §5.4 says it outright — *"`Eq` and `Ord` are what §4.6's comparisons
-/// dispatch to"*. It is still off *this* table, but only because the comparison
-/// arm of [`BodyChecker::binary`] calls [`BodyChecker::operator`] itself: the
-/// `Ne` half needs the negation wrapped round the call, which a `(interface,
-/// method)` row has nowhere to say.
+/// **`Eq` is off it for the same structural reason.** Decision 4c gives the
+/// name, because `eq` is a free one; §5.4 gives the return type, `Bool`; and
+/// `docs/.../2026-09-16-science-f0-core-design.md` §5.4 says it outright —
+/// *"`Eq` and `Ord` are what §4.6's comparisons dispatch to"*. The comparison
+/// arm of [`BodyChecker::binary`] calls [`BodyChecker::operator`] itself
+/// because the `Ne` half needs the negation wrapped round the call.
 fn binary_operator(op: BinaryOp) -> Option<(&'static str, &'static str)> {
     match op {
         BinaryOp::Add => Some(("Add", "add")),

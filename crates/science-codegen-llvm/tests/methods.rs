@@ -1039,20 +1039,33 @@ def main():
     assert_eq!(prints("stringlit", source), "true\nfalse\ntrue\nKepler\n");
 }
 
-/// `<` on a `String` is refused, and the refusal says why rather than reaching
-/// for `science_string_cmp`.
+/// `<` on a `String` is `science_string_cmp`, which is byte order.
+///
+/// This used to be refused, the refusal naming `science_string_cmp` and saying
+/// no note chose byte order for `Ord`. `stdlib-core.md` §6.8 is that note —
+/// *"`String: Ord` is byte order, and says so"* — so the four operators run,
+/// and the pairs below are the ones where byte order is the whole answer: a
+/// prefix sorts first, and an uppercase letter before every lowercase one,
+/// which collation would not do.
 #[test]
-fn ordering_two_strings_is_refused() {
+fn ordering_two_strings_is_byte_order() {
     let source = "\
-def before(a: &String, b: &String) -> Bool:
-    a < b
+def order(a: &String, b: &String) -> String:
+    f\"{a < b} {a > b} {a <= b} {a >= b}\"
 
 def main():
-    print(before(\"a\", \"b\"))
+    print(order(\"a\", \"b\"))
+    print(order(\"ab\", \"a\"))
+    print(order(\"Zebra\", \"apple\"))
+    print(order(\"same\", \"same\"))
 ";
-    let text = refusal("stringord", source);
-    assert!(text.contains("science_string_cmp"), "{text}");
-    assert!(text.contains("Ord"), "{text}");
+    assert_eq!(
+        prints("stringord", source),
+        "true false true false\n\
+         false true false true\n\
+         true false true false\n\
+         false false true true\n"
+    );
 }
 
 // --- `assign`'s §7: a `Copy` out of a borrow --------------------------------

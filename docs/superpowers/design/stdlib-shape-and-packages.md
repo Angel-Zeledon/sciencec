@@ -921,6 +921,46 @@ in use. So:
 > user type that redefines them redefines evaluation order, which no library
 > should be able to do.
 
+> **AMENDMENT 1: `Ord`'s method is `less`, not `ord`, and it is the only one.**
+>
+> Read literally, Decision 4c names it `ord` — the word is free — and that
+> literal reading names nothing anyone would call. `Add.add` reads as the
+> operation because the trait is named for the operation; `Ord` is named for a
+> *property*, and the operations under it are four. So the rule is read as it
+> was meant: the method is the operation's own word, as `Not` declares
+> `invert`. For order, that word is `less`:
+>
+> ```science
+> interface Ord:
+>     def less(self, other: &Self) -> Bool
+> ```
+>
+> and the four operators are written over it: `a < b` is `a.less(b)`, `a > b`
+> is `b.less(a)`, `a <= b` is `not b.less(a)`, `a >= b` is `not a.less(b)`.
+>
+> **Rejected: `compare(self, other: &Self) -> Ordering`.** It is the expected
+> shape and it needs a Level 1 `choice Ordering` that no note specifies; the
+> core spec's §8 makes the library's list closed, so the type would be a spec
+> change arriving as a side effect of an operator. `less` needs nothing new.
+> It is also the corpus's spelling — `examples/19_stdlib.science`'s `Record`
+> and `06_traits`' `Note` both write `def less` — and it is the primitive
+> sorting and selection are defined over: a strict weak order is `<` alone,
+> which is why Python's `sorted`, `min` and `max` call only `__lt__` and C++'s
+> `Compare` is a `less`. `F64`'s NaN is not a question for this method: the
+> core spec's §5.1 keeps floats out of `Ord`.
+>
+> **`other` is a borrow**, because a comparison consumes neither operand.
+> **`Eq` is independent**: `is` stays `Eq.eq`, and the law that ties the two —
+> `a is b` exactly when neither is `less` than the other — is prose, as
+> `contracts.md` leaves every interface law.
+>
+> **The cost.** `a > b` and `a <= b` evaluate `b` first, since the receiver is
+> evaluated first; it shows only when both operands have effects. A
+> three-way answer is two calls where `compare` would be one. And
+> `intrinsics-math-physics.md`'s `total_order -> Ordering` still has no type.
+> The day `Ordering` is specified, `compare` joins `less` as a *defaulted*
+> method — written over `less` — and no implementation of `less` changes.
+
 This also flags a hole rather than filling one: §5.4's operator-trait list has no
 bitwise traits although §4.6's precedence table has `& ^ | << >>`. That gap
 belongs to the core spec and is requested in §8.
@@ -1556,7 +1596,7 @@ to.
 | **3.** Threads and data parallelism; no async/await | Async with a runtime; both; green threads (Go) | Colouring splits the stdlib in two; async needs `borrows_live_at` three phases early and self-referential futures the language cannot express; green threads tax the foreign call, which is this language's hot path | Science is a bad language for a network server; fan-out I/O costs a bounded pool |
 | **3.6** No second thread pool; the pool sizes to the batch allocation; `Mutex` exposes a closure, not a guard | An exposed pool; `os.cpu_count()` as the default; a `Drop`-released guard | Two pools oversubscribe a shared node; a guard makes lock scope a region question | No early release without a nested block; `stdlib-standard.md` §10 owns the surface and may decide otherwise |
 | **4a/4b.** Conventional naming; no privileged stdlib vocabulary | A reserved internal namespace | The library is the teaching corpus, and a machine-written corpus imitates what it reads | Nine genuine renames (§4.4), until `reserved-words.md` lands |
-| **4c.** Operator-trait methods avoid keyword names; `and`/`or` not overloadable | `Not.not`, `BitAnd.and` | Declaration position, which the dot rule does not reach — and redefining `and` redefines evaluation order | Two method names differ from the trait name |
+| **4c.** Operator-trait methods avoid keyword names; `and`/`or` not overloadable | `Not.not`, `BitAnd.and` | Declaration position, which the dot rule does not reach — and redefining `and` redefines evaluation order | Two method names differ from the trait name; `Ord` declares `less` (§4.5, AMENDMENT 1) |
 | **5a.** CSV stays Level 2; TOML moves up; only YAML is Level 3 | The brief's single CSV/TOML/YAML package | `data-io.md` §3 already ranked CSV in; a manifest parser cannot be delivered by the package manager that reads it; YAML is the security case | Disagrees with the brief's grouping, explicitly |
 | **5b.** Data parallelism is core, not a package | A Rayon-style Level 3 package | The orphan rule forbids it; `collections-and-chains.md` §7 already put seven obligations in F0 for it | Only the scheduler policy is swappable |
 | **5c.** Crypto is linked (libsodium, BoringSSL), never written; and it ships at Level 2 **labelled**, per `stdlib-standard.md` §1 | Write the primitives in Science; ship it at Level 3 | No cryptographers; constant-time code is not expressible in a language that delegates everything to LLVM; and Level 3 has no distribution mechanism, which is the worst place for a security module | A C dependency in a security-critical package, at a level it does not belong at |

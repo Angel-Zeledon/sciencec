@@ -10,12 +10,11 @@
 #   Level 1. It is `io`'s reason for `File`: the prelude is declared as data
 #   and cannot hold a body, and every method below has one. Moving them back
 #   is a `use` line, the day the prelude can hold Science.
-# - Order is not an operator yet. `a < b` on a user type needs `Ord` to
-#   dispatch, and `science-types`' `binary_operator` leaves it out on purpose:
-#   its method would return an `Ordering` no note specifies. `Duration` and
-#   `Instant` implement `Eq`, so `is` and `is not` work; for order, compare
-#   `nanoseconds()`. Adding `implements Ord` the day it has a method is the
-#   whole change.
+# - Order is an operator. `Ord` has its method now — `less`, by
+#   `stdlib-shape-and-packages.md` §4.5's AMENDMENT 1 — so `Duration` and
+#   `Instant` implement it beside `Eq`, and `a < b`, `>`, `<=` and `>=` work
+#   on both, as `is` and `is not` already did. Comparing `nanoseconds()` was
+#   the workaround while it had none, and it still gives the same answer.
 # - `Monotonic` has `elapsed()` beside §3.3's `since`, as Rust's `Instant`
 #   does. It is `Monotonic.now().since(self)` and reads the clock exactly as
 #   that does, so it adds a spelling and no capability.
@@ -152,6 +151,10 @@ Duration implements Eq:
     def eq(self, other: Duration) -> Bool:
         self.nanos is other.nanos
 
+Duration implements Ord:
+    def less(self, other: &Duration) -> Bool:
+        self.nanos < other.nanos
+
 # In the largest of `s`, `ms`, `µs` and `ns` that leaves a whole part, with the
 # exact fraction and no trailing zeros: `1.5s`, `250ms`, `17ns`, `0s`. Integer
 # arithmetic only, so the same span always prints the same text.
@@ -260,6 +263,12 @@ Instant implements Add:
 Instant implements Eq:
     def eq(self, other: Instant) -> Bool:
         self.nanos is other.nanos
+
+# Earlier is less: the order of the timeline, which is the order of the
+# nanosecond count.
+Instant implements Ord:
+    def less(self, other: &Instant) -> Bool:
+        self.nanos < other.nanos
 
 Instant implements Display:
     def display(self, into: &mut Formatter):

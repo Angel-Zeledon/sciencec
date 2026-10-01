@@ -1347,7 +1347,26 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // guard requires the place's *written* type to still be
                 // `Nullable`, which a literal borrow's is not, so it returns
                 // such a place unchanged.
-                let place = self.deref_to_hole(place, *target);
+                //
+                // **Only through an exclusive borrow, which is the checker's
+                // own line.** `science-types`' `StmtKind::Assign` arm writes
+                // *through* a narrowed `mutable borrowed T` and *rebinds* a
+                // narrowed shared one — `largest`'s `best be item`, where a
+                // shared borrow cannot be written through at all, so the only
+                // thing it can mean is *this local now points at `item`*. This
+                // used to project the `Deref` for both, so `best be item`
+                // stored `item`'s pointer *into* the `Int` `best` pointed at:
+                // `local _17 is i64 and the value stored into it is ptr`, at
+                // every generic `largest[T: Ord]` instantiated at `Int`. A
+                // rebinding keeps the nullable's own slot, and a `(&T)?` is
+                // its niched pointer, so the pointer is stored where it
+                // belongs.
+                let hole_ty = self.revealed(self.thir.expr(*target).ty);
+                let exclusive = matches!(
+                    self.context.types.kind(hole_ty),
+                    TyKind::Borrowed { mutable: true, .. }
+                );
+                let place = if exclusive { self.deref_to_hole(place, *target) } else { place };
                 // §4.7's *"borrows auto-dereference for assignment"*, which is
                 // §4's rule on the other side of `be`. See
                 // [`Builder::assign_target`].
