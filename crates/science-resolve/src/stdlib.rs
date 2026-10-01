@@ -36,6 +36,7 @@ const MODULES: &[(&str, &str)] = &[
     ("os.science", include_str!("../stdlib/os.science")),
     ("time.science", include_str!("../stdlib/time.science")),
     ("complex.science", include_str!("../stdlib/complex.science")),
+    ("fs.science", include_str!("../stdlib/fs.science")),
 ];
 
 /// The source of the bundled module at `candidate`, if there is one.
@@ -64,17 +65,24 @@ mod tests {
     /// A bundled module is a file every `use` of it compiles, so a mistake in
     /// one is a mistake in every program that imports it — found here, where
     /// it names the module, rather than as a diagnostic in a stranger's build.
+    ///
+    /// **Each is resolved beside every other**, as one crate: `fs` writes
+    /// `use io (FileError)`, and a bundled module reaches another exactly as a
+    /// program reaches either — through `collect_crate`'s fallback, as a
+    /// sibling at the root. Alone, `fs` would report `io` missing, which is
+    /// true of the test and of no build.
     #[test]
     fn every_bundled_module_lexes_parses_and_resolves_clean() {
-        for (path, text) in modules() {
-            let file = FileId(0);
+        let mut sources = Vec::new();
+        for (index, (path, text)) in modules().enumerate() {
+            let file = FileId(index as u32);
             let (tokens, lexed) = science_lexer::lex(file, text);
             assert!(!lexed.has_errors(), "`{path}` must lex");
             let (ast, parsed) = science_parser::parse_module(&tokens, file);
             assert!(!parsed.has_errors(), "`{path}` must parse");
-            let sources = [crate::SourceModule { file, path: path.to_string(), ast, entry: false }];
-            let (_, resolution) = crate::resolve_crate(&sources);
-            assert!(!resolution.has_errors(), "`{path}` must resolve");
+            sources.push(crate::SourceModule { file, path: path.to_string(), ast, entry: false });
         }
+        let (_, resolution) = crate::resolve_crate(&sources);
+        assert!(!resolution.has_errors(), "the bundled modules must resolve: {:?}", resolution);
     }
 }

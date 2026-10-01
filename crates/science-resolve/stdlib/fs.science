@@ -1,0 +1,158 @@
+# fs — `stdlib-core.md` §5.1, Level 2: `use fs (list_directory, remove_file)`.
+#
+# The second module of the standard library written in Science, bundled and
+# reached exactly as `io` is (`science_resolve::stdlib`). §5.1 puts these six
+# here and not in the prelude for two reasons it states: they are the
+# operations with an adversary — traversal, TOCTOU, symlink races — and
+# platforms that disagree, and `use fs (remove_file)` at the top of a file is a
+# reviewable signal that the program deletes things.
+#
+# Six decisions are this file's, and each is written where it applies:
+#
+# - Paths are `&String`, where `data-io.md` §7 writes `borrowed Path`: there is
+#   no `Path` yet, and `read_file`, `write_file` and `io`'s `File.create` take
+#   a `String` today. The day `Path` lands, every signature here changes its
+#   parameter type and nothing else.
+# - The error is `io`'s `FileError`, where §7 names `IoError` — `io.science`'s
+#   own reason: the prelude declares no `IoError` variants, so nothing here can
+#   build one. It reads one sentence more than `io` needs, *"directory not
+#   empty"*, for `remove_directory`'s refusal.
+# - A function with no value returns `Error?` alone, where §7 writes `((),
+#   IoError?)`: `write_file` and `File.close` already return the bare error,
+#   and a pair whose first half is `()` is that error with a word in front.
+# - `list_directory` returns **names**, not paths — `a.txt`, never `dir/a.txt`
+#   — because there is no `Path` to join them with, and a name is what a
+#   listing shows.
+# - `list_directory` is **sorted in byte order**: `reproducibility.md` G7, which
+#   applies `data-io.md` §7's argument for `glob` to it verbatim — a program
+#   whose input order is the filesystem's gives different output on a laptop
+#   and a cluster.
+# - A name that is not UTF-8 fails the **whole** listing with *"invalid data"*:
+#   `data-io.md` §7 makes a non-Unicode path an error. Skipping it would return
+#   a listing that silently lacks a file, and a lossy name would open nothing.
+
+# `science-rt`'s `fs.rs`. Called from here and from nowhere else; they cross as
+# C scalars and a pointer, with `io`'s status convention — a negative result is
+# `-(code + 1)`. `library "science-rt"` adds nothing to the link line.
+#
+# A function whose answer is text cannot return it through C scalars, so the
+# runtime keeps the answer behind a handle and this side copies it out: open
+# a list, ask its count, and for each entry ask its length and copy that many
+# bytes into an `Array[U8]` this side owns, then make a `String` of them.
+unsafe extern "C" library "science-rt":
+    def science_fs_create_directory(path: ffi.Span[U8], length: I64) -> I64
+    def science_fs_remove_file(path: ffi.Span[U8], length: I64) -> I64
+    def science_fs_remove_directory(path: ffi.Span[U8], length: I64) -> I64
+    def science_fs_rename(
+        from: ffi.Span[U8],
+        from_length: I64,
+        to: ffi.Span[U8],
+        to_length: I64
+    ) -> I64
+    def science_fs_list_open(path: ffi.Span[U8], length: I64) -> I64
+    def science_fs_current_directory() -> I64
+    def science_fs_list_count(handle: I64) -> I64
+    def science_fs_list_entry_length(handle: I64, index: I64) -> I64
+    def science_fs_list_entry_copy(
+        handle: I64,
+        index: I64,
+        buffer: ffi.MutableSpan[U8],
+        capacity: I64
+    ) -> I64
+    def science_fs_list_close(handle: I64) -> I64
+
+use io (FileError)
+
+# A runtime status as `Error?`, as `io`'s `failure` reads one.
+def failure(status: Int) -> Error?:
+    if status >= 0:
+        return null
+    FileError(code: -status - 1)
+
+# --- Directories and files ----------------------------------------------------
+
+# Creates `path` and every missing parent (`data-io.md` §7: *"`create_directory`
+# creates parents"*). A directory that is already there is success.
+public def create_directory(path: &String) -> Error?:
+    failure(unsafe: science_fs_create_directory(path.bytes(), path.length()))
+
+# Removes the file at `path`.
+public def remove_file(path: &String) -> Error?:
+    failure(unsafe: science_fs_remove_file(path.bytes(), path.length()))
+
+# Removes the directory at `path`, which must be empty. There is no recursive
+# form, on purpose: `data-io.md` §7, *"a bug in a path expression should not be
+# able to erase a results directory"*.
+public def remove_directory(path: &String) -> Error?:
+    failure(unsafe: science_fs_remove_directory(path.bytes(), path.length()))
+
+# Moves `from` to `to`. When `to` exists the answer is the platform's — POSIX
+# replaces a file, Windows refuses — which is one of §5.1's reasons this is
+# Level 2.
+public def rename(from: &String, to: &String) -> Error?:
+    failure(
+        unsafe: science_fs_rename(from.bytes(), from.length(), to.bytes(), to.length())
+    )
+
+# --- Listings -----------------------------------------------------------------
+
+# A list of names the runtime holds. Closed when dropped, so every way out of
+# `read_all` — the error returns included — gives the handle back.
+type Listing:
+    handle: Int
+
+Listing implements Drop:
+    def drop(mutable self):
+        let _closed be unsafe: science_fs_list_close(self.handle)
+
+# Entry `index`, copied out of the runtime into bytes this side owns and made a
+# `String` by `String.from_bytes`.
+#
+# The runtime refused names that are not UTF-8 when it built the list, so a
+# `TextError` here is not expected — and it is reported as the runtime's own
+# refusal, *"invalid data"*, rather than passed on: the backend cannot box a
+# prelude `TextError` into an `Error?` yet (`SC0400`), and the sentence is the
+# same fact either way.
+def entry(listing: &Listing, index: Int) -> (String, Error?):
+    let length be unsafe: science_fs_list_entry_length(listing.handle, index)
+    let mutable bytes be Array[U8].new()
+    for _ in 0..length:
+        bytes.push(0)
+    let _copied be unsafe: science_fs_list_entry_copy(
+        listing.handle,
+        index,
+        bytes.span_mutably(),
+        length
+    )
+    let text, err be String.from_bytes(&bytes)
+    if err?:
+        return (text, FileError(code: 3))
+    (text, null)
+
+# Every entry of the list behind `status`, or what opening it failed with.
+def read_all(status: Int) -> (Array[String], Error?):
+    let mutable names be Array[String].new()
+    if status < 0:
+        return (names, failure(status))
+    let listing be Listing(handle: status)
+    let count be unsafe: science_fs_list_count(listing.handle)
+    for index in 0..count:
+        let name, err be entry(&listing, index)
+        if err?:
+            return (Array[String].new(), err)
+        names.push(name)
+    (names, null)
+
+# The names in the directory `path`, sorted in byte order, without `.` and `..`.
+public def list_directory(path: &String) -> (Array[String], Error?):
+    read_all(unsafe: science_fs_list_open(path.bytes(), path.length()))
+
+# The working directory, as an absolute path.
+public def current_directory() -> (String, Error?):
+    let names, err be read_all(unsafe: science_fs_current_directory())
+    if err?:
+        return ("", err)
+    let first be names.get(0)
+    if first?:
+        return (first.clone(), null)
+    ("", null)

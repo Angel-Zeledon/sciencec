@@ -293,8 +293,9 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
     }
 
     // **The second caller.** `science-rt/src/file.rs`'s three,
-    // `science-rt/src/os.rs`'s five and `science-rt/src/time.rs`'s three are
-    // called by the bundled `io`, `os` and `time` modules' `unsafe extern
+    // `science-rt/src/os.rs`'s five, `science-rt/src/time.rs`'s three and
+    // `science-rt/src/fs.rs`'s ten are called by the bundled `io`, `os`,
+    // `time` and `fs` modules' `unsafe extern
     // "C":` blocks — Science source, not emitted code — so they are not
     // `RUNTIME` rows and must not be: `RUNTIME` is what codegen may call, and
     // codegen never calls these. Named here so that the next symbol nothing
@@ -311,6 +312,16 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         "science_time_monotonic_nanos",
         "science_time_unix_nanos",
         "science_time_sleep_nanos",
+        "science_fs_create_directory",
+        "science_fs_remove_file",
+        "science_fs_remove_directory",
+        "science_fs_rename",
+        "science_fs_list_open",
+        "science_fs_current_directory",
+        "science_fs_list_count",
+        "science_fs_list_entry_length",
+        "science_fs_list_entry_copy",
+        "science_fs_list_close",
     ];
     // And each of them is declared by a bundled module: a symbol on this list
     // that no module calls any more would be dead code this exemption hid.

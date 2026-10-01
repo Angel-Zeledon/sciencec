@@ -35,11 +35,15 @@ unsafe extern "C" library "science-rt":
 
 # --- FileError ----------------------------------------------------------------
 
-# What a file operation failed with. `code` is `IoError`'s byte.
+# What a file operation failed with. `code` is `IoError`'s byte, or `5`, which
+# is `fs`'s alone: `remove_directory` refused a directory with entries in it.
+# `IoError`'s catch-all would read that as *"input/output error"*, which sends
+# the reader to the disk when the answer is in the directory.
 public type FileError:
     code: Int
 
-# The same five sentences `science_io_error_message` gives an `IoError`.
+# The same five sentences `science_io_error_message` gives an `IoError`, and
+# `fs`'s sixth.
 FileError implements Error:
     def message(self) -> String:
         if self.code is 0:
@@ -50,6 +54,8 @@ FileError implements Error:
             return "already exists"
         if self.code is 3:
             return "invalid data"
+        if self.code is 5:
+            return "directory not empty"
         "input/output error"
 
 # A runtime status as `Error?`: `null` for success, a boxed `FileError` for a
