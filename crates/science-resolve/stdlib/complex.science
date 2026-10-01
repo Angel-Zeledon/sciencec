@@ -5,7 +5,7 @@
 # `io` is (`science_resolve::stdlib`). It needs no runtime at all: every
 # operation below is arithmetic on two `F64`s.
 #
-# Seven decisions are this file's, and each is written where it applies:
+# Thirteen decisions are this file's, and each is written where it applies:
 #
 # - `Complex` is over `F64` only, where §5.10 writes `Complex of T`. The
 #   generic record was tried and does not hold yet: there is no `Real`
@@ -46,11 +46,36 @@
 #   the prelude. Making `ffi.Complex64` this type is the prelude naming a
 #   module's type, which it cannot do; until it can, the two have one layout
 #   and two names.
-#
-# Not here, because `F64` has no `sqrt`, `atan2`, `hypot`, `exp`, `ln`, `sin`
-# or `cos` yet: `modulus`, `argument`, `from_polar`, `to_polar`, `exp`, `ln`,
-# `sqrt`, `pow` and the trigonometric family. They are methods over the two
-# parts and nothing else, and they join this file when those arrive.
+# - Every multivalued function takes its principal value, with the branch
+#   cuts of C99 Annex G (`intrinsics-math-physics.md` §5.7 names
+#   `argument_principal` and `ln_branch` and fixes no other convention). The
+#   argument is `im.atan2(re)`, in `[-π, π]`; the cut is the negative real
+#   axis, and the *sign of a zero imaginary part* says which side of it a
+#   point is on: `ln(-1+0i)` is `0+πi` and `ln(-1-0i)` is `0-πi`, and `sqrt`
+#   and `pow` inherit the same cut through `ln` and `argument`. `ln_branch`
+#   and `argument_principal` are not written; `argument` is principal.
+# - `sqrt` is the halved-parts form of `sqrt((|z| + |re|) / 2)`: both parts
+#   are halved before `hypot`, so no finite input overflows, and the second
+#   part is `im / 2t` (or `t` itself, with `im`'s sign, left of the imaginary
+#   axis), so nothing cancels. `sqrt(x ± i∞)` is `+∞ ± i∞` and `sqrt(±0 ±
+#   0i)` is `+0 ± 0i`, Annex G's two special cases that the formula alone
+#   would get as `NaN`.
+# - `pow(F64)` is polar, `|z|^x · (cos xθ + i sin xθ)`, and `pow_complex` is
+#   `exp(w · ln z)`. Neither special-cases an integral exponent the way
+#   CPython's `**` does, so `(1+1i).pow(2.0)` is `2i` to within an ulp, not
+#   exactly; `z * z` is the exact square. A zero base gives `0+0i` for an
+#   exponent with a positive real part and `1+0i` for an exponent of zero.
+# - `ln` is `ln |z| + i·arg z`, with `|z|` from `hypot`, so it neither
+#   overflows nor underflows; with no `ln_1p` it loses relative accuracy in
+#   the real part for `|z|` within a few ulps of 1.
+# - `tan` and `tanh` use the double-angle form, `tan(a+bi) = (sin 2a + i
+#   sinh 2b) / (cos 2a + cosh 2b)`, which the quotient `sin z / cos z` is
+#   not: that one overflows to `NaN` for `|b|` past about 355. Past `|b| =
+#   20` the denominator is `cosh 2b` to every bit, and the parts are taken
+#   as `2 sin 2a · e^(-2|b|)` and `tanh 2b`, which stay finite all the way
+#   out.
+# - `exp` keeps a zero imaginary part exactly: `exp(x + 0i)` is `e^x + 0i`,
+#   where the formula would give `e^x · sin 0`, which is `NaN` at `x = ∞`.
 
 # --- Complex ------------------------------------------------------------------
 
@@ -87,16 +112,131 @@ Complex has:
     public def scaled(self, by: F64) -> Complex:
         Complex(re: self.re * by, im: self.im * by)
 
-# `|x|` for one part. `F64` has no `abs` method yet.
-def magnitude(x: F64) -> F64:
-    if x < 0.0:
-        return -x
-    x
-
 # Whether `x` carries a minus sign, `-0.0` included: `-0.0 < 0.0` is false, and
 # `1.0 / -0.0` is `-inf`. `NaN` answers false.
 def is_negative(x: F64) -> Bool:
     x < 0.0 or (x is 0.0 and 1.0 / x < 0.0)
+
+# `magnitude` with the sign of `sign`, zeros included: C's `copysign`, which
+# `F64` does not have.
+def with_sign_of(magnitude: F64, sign: F64) -> F64:
+    if is_negative(sign):
+        return -magnitude.abs()
+    magnitude.abs()
+
+# --- Polar form ---------------------------------------------------------------
+
+Complex has:
+    # The point at distance `modulus` from the origin, at angle `argument`
+    # radians from the positive real axis.
+    public def from_polar(modulus: F64, argument: F64) -> Complex:
+        Complex(re: modulus * argument.cos(), im: modulus * argument.sin())
+
+    # `|z|`, through `hypot`: no overflow where `modulus_squared` would.
+    public def modulus(self) -> F64:
+        self.re.hypot(self.im)
+
+    # The principal argument, `im.atan2(re)`, in `[-π, π]`. The sign of a
+    # zero imaginary part picks the side of the cut (see the header).
+    public def argument(self) -> F64:
+        self.im.atan2(self.re)
+
+    # `(modulus, argument)`.
+    public def to_polar(self) -> (F64, F64):
+        (self.modulus(), self.argument())
+
+# --- Exponential, logarithm, roots and powers -------------------------------
+
+Complex has:
+    # `e^re · (cos im + i sin im)`, with a zero `im` kept as it is.
+    public def exp(self) -> Complex:
+        let scale be self.re.exp()
+        if self.im is 0.0:
+            return Complex(re: scale, im: self.im)
+        Complex(re: scale * self.im.cos(), im: scale * self.im.sin())
+
+    # The principal logarithm, `ln |z| + i·arg z`. `ln(0)` is `-∞` plus the
+    # zero's argument.
+    public def ln(self) -> Complex:
+        Complex(re: self.modulus().ln(), im: self.argument())
+
+    # The principal square root: a non-negative real part, and an imaginary
+    # part with the sign of `im` (see the header for the formulation).
+    public def sqrt(self) -> Complex:
+        if self.im.is_infinite():
+            return Complex(re: F64.INFINITY, im: self.im)
+        if self.re is 0.0 and self.im is 0.0:
+            return Complex(re: 0.0, im: self.im)
+        let half_modulus be (self.re * 0.5).hypot(self.im * 0.5)
+        let t be (self.re.abs() * 0.5 + half_modulus).sqrt()
+        if self.re >= 0.0:
+            return Complex(re: t, im: self.im / (2.0 * t))
+        Complex(re: self.im.abs() / (2.0 * t), im: with_sign_of(t, self.im))
+
+    # `z^x` for a real exponent, in polar form on the principal branch.
+    public def pow(self, exponent: F64) -> Complex:
+        if exponent is 0.0:
+            return Complex(re: 1.0, im: 0.0)
+        if self.re is 0.0 and self.im is 0.0 and exponent > 0.0:
+            return Complex(re: 0.0, im: 0.0)
+        let modulus be self.modulus().pow(exponent)
+        Complex.from_polar(modulus, self.argument() * exponent)
+
+    # `z^w`, as `exp(w · ln z)` on the principal branch.
+    public def pow_complex(self, exponent: Complex) -> Complex:
+        if exponent.re is 0.0 and exponent.im is 0.0:
+            return Complex(re: 1.0, im: 0.0)
+        if self.re is 0.0 and self.im is 0.0 and exponent.re > 0.0:
+            return Complex(re: 0.0, im: 0.0)
+        (exponent * self.ln()).exp()
+
+# --- Trigonometric and hyperbolic ---------------------------------------------
+
+Complex has:
+    # `sin a cosh b + i cos a sinh b`.
+    public def sin(self) -> Complex:
+        let re be self.re.sin() * self.im.cosh()
+        let im be self.re.cos() * self.im.sinh()
+        Complex(re: re, im: im)
+
+    # `cos a cosh b - i sin a sinh b`.
+    public def cos(self) -> Complex:
+        let re be self.re.cos() * self.im.cosh()
+        let im be -self.re.sin() * self.im.sinh()
+        Complex(re: re, im: im)
+
+    # The double-angle form, with the cutover at `|b| = 20` (see the header).
+    public def tan(self) -> Complex:
+        let a be 2.0 * self.re
+        let b be 2.0 * self.im
+        if self.im.abs() > 20.0:
+            let re be 2.0 * a.sin() * (-b.abs()).exp()
+            return Complex(re: re, im: b.tanh())
+        let denominator be a.cos() + b.cosh()
+        Complex(re: a.sin() / denominator, im: b.sinh() / denominator)
+
+    # `sinh a cos b + i cosh a sin b`.
+    public def sinh(self) -> Complex:
+        let re be self.re.sinh() * self.im.cos()
+        let im be self.re.cosh() * self.im.sin()
+        Complex(re: re, im: im)
+
+    # `cosh a cos b + i sinh a sin b`.
+    public def cosh(self) -> Complex:
+        let re be self.re.cosh() * self.im.cos()
+        let im be self.re.sinh() * self.im.sin()
+        Complex(re: re, im: im)
+
+    # `tan`'s form with the parts' roles exchanged: `tanh(a+bi) = (sinh 2a +
+    # i sin 2b) / (cosh 2a + cos 2b)`, and `tanh 2a` past `|a| = 20`.
+    public def tanh(self) -> Complex:
+        let a be 2.0 * self.re
+        let b be 2.0 * self.im
+        if self.re.abs() > 20.0:
+            let im be 2.0 * b.sin() * (-a.abs()).exp()
+            return Complex(re: a.tanh(), im: im)
+        let denominator be a.cosh() + b.cos()
+        Complex(re: a.sinh() / denominator, im: b.sin() / denominator)
 
 # --- Arithmetic ---------------------------------------------------------------
 
@@ -120,7 +260,7 @@ Complex implements Mul:
 # part, so that `ratio` is at most 1 in magnitude and nothing is squared.
 Complex implements Div:
     def div(self, other: Complex) -> Complex:
-        if magnitude(other.re) >= magnitude(other.im):
+        if other.re.abs() >= other.im.abs():
             let ratio be other.im / other.re
             let denominator be other.re + other.im * ratio
             let re be (self.re + self.im * ratio) / denominator
