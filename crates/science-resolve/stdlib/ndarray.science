@@ -581,6 +581,81 @@ def same_shape(left: &NdArray, right: &NdArray, operation: Int) -> NdArray:
         panic(err.message())
     result
 
+# --- Indexing -----------------------------------------------------------------
+
+# `a[i]`, `a[i, j]` and `a[i, j, k]` (`indexing-and-array-literals.md` §1.1):
+# one index of arity one, two or three, and the arity has to be the array's
+# rank. The comma is grammar and the positions reach `index` as a tuple, so
+# `Index[(Int, Int)]` is the rank-2 spelling. Out of range, or the wrong rank,
+# is a panic: an index has nowhere to return an error, and `get` is the form
+# that answers `null`. `a[i, j] be v` is `IndexMutably` and checks the same.
+# Arity four and up is `get` and `set` with an `Array[Int]`.
+def checked_offset(array: &NdArray, index: &Array[Int]) -> Int:
+    let offset be array.offset_of(index)
+    if offset < 0:
+        panic(f"index is outside dims {dims_text(&array.dims)}")
+    offset
+
+def slot_of(array: &mut NdArray, offset: Int) -> &mut F64:
+    let slot be array.data.get_mutably(offset)
+    if slot?:
+        return slot
+    panic("index is outside the array")
+
+def pair_index(first: Int, second: Int) -> Array[Int]:
+    let mutable index be Array[Int].new()
+    index.push(first)
+    index.push(second)
+    index
+
+def triple_index(first: Int, second: Int, third: Int) -> Array[Int]:
+    let mutable index be Array[Int].new()
+    index.push(first)
+    index.push(second)
+    index.push(third)
+    index
+
+NdArray implements Index[Int]:
+    type Output is F64
+    def index(self, at: Int) -> &F64:
+        let mutable position be Array[Int].new()
+        position.push(at)
+        &self.data[checked_offset(self, &position)]
+
+NdArray implements Index[(Int, Int)]:
+    type Output is F64
+    def index(self, at: (Int, Int)) -> &F64:
+        let position be pair_index(at.0, at.1)
+        &self.data[checked_offset(self, &position)]
+
+NdArray implements Index[(Int, Int, Int)]:
+    type Output is F64
+    def index(self, at: (Int, Int, Int)) -> &F64:
+        let position be triple_index(at.0, at.1, at.2)
+        &self.data[checked_offset(self, &position)]
+
+NdArray implements IndexMutably[Int]:
+    type Output is F64
+    def index_mutably(mutable self, at: Int) -> &mut F64:
+        let mutable position be Array[Int].new()
+        position.push(at)
+        let offset be checked_offset(self, &position)
+        slot_of(self, offset)
+
+NdArray implements IndexMutably[(Int, Int)]:
+    type Output is F64
+    def index_mutably(mutable self, at: (Int, Int)) -> &mut F64:
+        let position be pair_index(at.0, at.1)
+        let offset be checked_offset(self, &position)
+        slot_of(self, offset)
+
+NdArray implements IndexMutably[(Int, Int, Int)]:
+    type Output is F64
+    def index_mutably(mutable self, at: (Int, Int, Int)) -> &mut F64:
+        let position be triple_index(at.0, at.1, at.2)
+        let offset be checked_offset(self, &position)
+        slot_of(self, offset)
+
 # --- Arithmetic ---------------------------------------------------------------
 
 NdArray implements Add:

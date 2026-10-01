@@ -7799,6 +7799,13 @@ impl<'a> BodyChecker<'a> {
         // handing back one element for an expression that asked for several.
         // Reported before the lookup, because the lookup is not what failed.
         let slicing = matches!(index.kind, hir::ExprKind::Range { .. });
+        // `m[i, j]` is written with two positions and `m[i]` with one: the
+        // arity chooses among several `Index` instances before any type does,
+        // because a position that is a bare literal has no type yet.
+        let written_arity = match &index.kind {
+            hir::ExprKind::Tuple(elements) => Some(elements.len()),
+            _ => None,
+        };
         let index = self.synth(index);
         if slicing {
             let written = self.known_or_error(base.ty);
@@ -7814,6 +7821,11 @@ impl<'a> BodyChecker<'a> {
         }
         let mut ty = Ty::ERROR;
         let mut index_id = index.id;
+        // The user's own `index` / `index_mutably`, when the implementation is
+        // source and not the prelude's. See the node pushed below.
+        let mut user_method: Option<DefId> = None;
+        let mut slot_ty: Option<Ty> = None;
+        let mut call_ty = Ty::ERROR;
         let written = self.known_or_error(base.ty);
         let revealed = self.revealed(written, span);
         let (interface_name, method_name) = indexing.dispatch();
@@ -7825,8 +7837,58 @@ impl<'a> BodyChecker<'a> {
         };
         if let (Some(interface), Some(head)) = (interface, head) {
             let self_ty = self.receiver_self_ty(revealed, span);
-            match self.decls.methods().lookup(head, method_name, Form::Value) {
+            // One `Index` at several index types — `NdArray` is indexed by an
+            // `Int`, a pair and a triple — is `Found::Instances`, and the
+            // index operand's type chooses, as a binary operator's right
+            // operand does. `Some(None)` is a selection that reported itself.
+            let picked = match self.decls.methods().lookup(head, method_name, Form::Value) {
                 Found::One(candidate) if candidate.interface() == Some(interface) => {
+                    Some(Some(candidate))
+                }
+                Found::Instances(candidates)
+                    if !self.defs.get(head).is_builtin()
+                        && candidates
+                            .iter()
+                            .all(|candidate| candidate.interface() == Some(interface)) =>
+                {
+                    let mut by_arity = None;
+                    if let Some(instances) = self.instances(&candidates, self_ty, span) {
+                        let mut fitting = Vec::new();
+                        for instance in &instances {
+                            let Some((_, param)) = instance.params.first().copied() else {
+                                continue;
+                            };
+                            let param = self.unreported_reveal(param);
+                            let arity = match self.types.kind(param) {
+                                TyKind::Tuple(elements) => Some(elements.len()),
+                                _ => None,
+                            };
+                            if arity == written_arity {
+                                fitting.push(instance.candidate);
+                            }
+                        }
+                        if fitting.len() == 1 {
+                            by_arity = Some(fitting[0]);
+                        }
+                    }
+                    Some(match by_arity {
+                        Some(candidate) => Some(candidate),
+                        None => self.select_operator(
+                            "[]",
+                            interface_name,
+                            &candidates,
+                            index,
+                            self_ty,
+                            span,
+                            span,
+                        ),
+                    })
+                }
+                _ => None,
+            };
+            match picked {
+                Some(None) => {}
+                Some(Some(candidate)) => {
                     // Decision 8 and `narrow`'s §4, as at any other call:
                     // `index_mutably` takes `mutable self`.
                     if candidate.writes_receiver() {
@@ -7845,13 +7907,24 @@ impl<'a> BodyChecker<'a> {
                         }
                         let ret = self.apply(&block, ret, span);
                         let ret = self.instantiate(ret, span);
+                        if !self.defs.get(candidate.method).is_builtin() {
+                            user_method = Some(candidate.method);
+                            // The node below is a call and its type is the
+                            // reference the method returns; a write's slot is
+                            // the referent, which `Typed` carries.
+                            slot_ty = Some(match indexing {
+                                Indexing::Read => ret,
+                                Indexing::Write => self.referent(ret, span),
+                            });
+                            call_ty = ret;
+                        }
                         ty = match indexing {
                             Indexing::Read => ret,
                             Indexing::Write => self.referent(ret, span),
                         };
                     }
                 }
-                _ => {
+                None => {
                     if self.decls.methods().surface_is_closed(self.defs, head) {
                         let rendered = self.types.render(self.defs, self_ty);
                         self.diagnostics.push(no_operator_implementation(
@@ -7863,6 +7936,28 @@ impl<'a> BodyChecker<'a> {
                     }
                 }
             }
+        }
+        // **A user type's `a[i]` is a call, not a place projection.**
+        // `science-mir` lowers `ExprKind::Index` to `Projection::Index`, which
+        // is right for an `Array` and for nothing else, so an implementation
+        // written in source is reached as `a.index(i)` (or `index_mutably`):
+        // the node's type is the reference the method returns, a read takes
+        // its `Copy` through the usual coercion, and a write's target is that
+        // `&mut` which an assignment writes through (§4.7).
+        if let Some(method) = user_method {
+            let id = self.body.push_expr(
+                ExprKind::MethodCall { receiver: base.id, method: Some(method), args: vec![index_id] },
+                call_ty,
+                span,
+            );
+            let call = Typed { id, ty: InferTy::Known(slot_ty.unwrap_or(ty)) };
+            // A read of a `Copy` element is the element: the same load an
+            // `Array`'s place projection performs, made explicit here because
+            // a call's result is not a place.
+            return match indexing {
+                Indexing::Read => self.read_value(call, span),
+                Indexing::Write => call,
+            };
         }
         let id =
             self.body.push_expr(ExprKind::Index { base: base.id, index: index_id }, ty, span);

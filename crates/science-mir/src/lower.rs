@@ -1385,6 +1385,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     None => {
                         let ty = self.thir.ty(*target);
                         let temp = self.temp(ty, span, block);
+                        // `a[i, j] be v` on a user type is a call to
+                        // `index_mutably` whose `&mut` result the assignment
+                        // writes through (`science-types`' `index_expr`), so
+                        // here the call has to run: its reference lands in the
+                        // temporary and `assign_target` dereferences it.
+                        let block = if matches!(
+                            self.thir.expr(*target).kind,
+                            ExprKind::MethodCall { .. }
+                        ) {
+                            self.expr_into(Place::local(temp), *target, block)
+                        } else {
+                            block
+                        };
                         (Place::local(temp), block)
                     }
                 };

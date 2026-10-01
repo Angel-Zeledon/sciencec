@@ -543,6 +543,12 @@ def sum(a: I64, b: I64) -> I64:
 ///
 /// The node stays an [`ExprKind::Index`] — it is a place — and what changed is
 /// that it has a type and that the index operand is checked.
+///
+/// **Amended when a user type's index became a call.** For an implementation
+/// written in source the node is the [`ExprKind::MethodCall`] of `index`, typed
+/// `&F64` as before, because `science-mir` lowers `Index` to a place projection
+/// that is right for an `Array` only. The assertions are otherwise the same:
+/// the node's type is `&F64` and §7 reads the `F64` out of it with one `Copy`.
 #[test]
 fn indexing_dispatches_to_index_for_its_type() {
     let checked = support::check(
@@ -560,7 +566,7 @@ def at(grid: &Grid) -> F64:
     );
     checked.assert_clean();
     assert_eq!(
-        ty_of(&checked, "at", |kind| matches!(kind, ExprKind::Index { .. })),
+        ty_of(&checked, "at", |kind| matches!(kind, ExprKind::MethodCall { .. })),
         "&F64"
     );
     // And §7 then reads the `F64` out of it, which is the whole point of

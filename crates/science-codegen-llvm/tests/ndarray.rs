@@ -510,6 +510,39 @@ fn a_loop_of_arrays_runs() {
     );
 }
 
+#[test]
+fn multi_index_reads_and_writes() {
+    // `a[i]`, `a[i, j]` and `a[i, j, k]` are `Index` at an `Int`, a pair and a
+    // triple; positions are row-major, so for arange(24).reshape(2, 3, 4)
+    // numpy's `a[1, 2, 3]` is 23 and `a[1, 0, 2]` is 14, and for
+    // arange(6).reshape(2, 3) `m[1, 2]` is 5. The writes land in the array and
+    // the next read sees them.
+    assert_eq!(
+        prints(
+            "multi_index",
+            &program(
+                "    let a be shaped(0.0, 24.0, &[2, 3, 4])
+    print(a[1, 2, 3])
+    print(a[1, 0, 2])
+    let mutable m be shaped(0.0, 6.0, &[2, 3])
+    print(m[1, 2])
+    print(m[0, 1] + m[1, 0] * 2.0)
+    m[0, 1] be 9.5
+    m[1, 2] be m[1, 2] * 2.0
+    print(m)
+    let mutable v be NdArray.arange(5.0, 8.0, 1.0)
+    v[2] be -1.0
+    print(v[0] + v[2])
+    let row: Int be 1
+    let column: Int be 0
+    print(m[row, column])
+"
+            )
+        ),
+        "23.0\n14.0\n5.0\n7.0\n[[0.0 9.5 2.0]\n [3.0 4.0 10.0]]\n4.0\n3.0\n"
+    );
+}
+
 /// The same loop under `leaks --atExit`, at two lengths: no leak at either, and
 /// the same number of allocations live at exit, which is what makes the live
 /// set constant and not merely small. Skipped where `/usr/bin/leaks` is not.

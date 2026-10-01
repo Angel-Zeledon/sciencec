@@ -4505,6 +4505,7 @@ impl<'t> Parser<'t> {
                 // neighbour already rewrites it.
                 TokenKind::LBracket
                     if instantiable_path(&expr)
+                        && !is_value_name(&expr)
                         && (self.brackets_hold_a_list() || self.brackets_precede_named_args()) =>
                 {
                     let args = self.parse_generic_args();
@@ -4524,7 +4525,24 @@ impl<'t> Parser<'t> {
                     let index = match self.eat(&TokenKind::RBracket) {
                         Some(close) => self.report_empty_index(open.merge(close.span)),
                         None => {
-                            let index = self.parse_expr();
+                            let mut index = self.parse_expr();
+                            // `m[i, j]` is one index of arity two
+                            // (`indexing-and-array-literals.md` §1.1). The
+                            // positions travel as a tuple, so the `Idx` an
+                            // `Index[(Int, Int)]` implementation names is the
+                            // type of what is written between the brackets.
+                            if self.at(&TokenKind::Comma) {
+                                let first = index.span;
+                                let mut positions = vec![index];
+                                while self.eat(&TokenKind::Comma).is_some() {
+                                    if self.at(&TokenKind::RBracket) {
+                                        break;
+                                    }
+                                    positions.push(self.parse_expr());
+                                }
+                                let span = first.merge(self.last_text_span());
+                                index = Expr { kind: ExprKind::Tuple(positions), span };
+                            }
                             if self.expect(&TokenKind::RBracket, "`]`").is_none() {
                                 self.recover_to_index_close();
                             }
@@ -6021,6 +6039,25 @@ fn type_text(ty: &Type) -> String {
 ///
 /// `Array` can; `Array of Int` already has them, and a call, a field or a
 /// literal never could.
+/// A single-segment path written in lower case or with a leading underscore:
+/// a value, never a type. `m[i, j]` and `Map[K, V]` are the same tokens, and
+/// this is the one place the parser reads a name's spelling to tell them
+/// apart; every type in the prelude and the standard library is `UpperCamel`.
+fn is_value_name(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Path(path) => match path.segments.as_slice() {
+            [segment] => segment
+                .name
+                .name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_'),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 fn instantiable_path(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Path(path) => {
