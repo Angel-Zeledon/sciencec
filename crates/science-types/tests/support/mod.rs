@@ -164,6 +164,7 @@ pub fn describe(kind: &ExprKind) -> String {
         ExprKind::Call { .. } => "call",
         ExprKind::MethodCall { .. } => "method",
         ExprKind::Field { .. } => "field",
+        ExprKind::TupleField { .. } => "tuple_field",
         ExprKind::Index { .. } => "index",
         ExprKind::Record { .. } => "record",
         ExprKind::Tuple(_) => "tuple",

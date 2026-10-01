@@ -212,7 +212,7 @@ impl Walker<'_> {
                     self.bind_expr(*arg);
                 }
             }
-            ExprKind::Field { base, .. } => self.bind_expr(*base),
+            ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => self.bind_expr(*base),
             ExprKind::Index { base, index } => {
                 self.bind_expr(*base);
                 self.bind_expr(*index);
@@ -400,7 +400,7 @@ impl Walker<'_> {
             // because a write to `c.f` writes `c` and a move out of `c.f` moves
             // part of `c` — and §2's per-local granularity has no way to say
             // *part*.
-            ExprKind::Field { base, .. } => self.expr(*base, ctx),
+            ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => self.expr(*base, ctx),
             ExprKind::Index { base, index } => {
                 self.expr(*base, ctx);
                 self.expr(*index, Ctx::Consume(*index));

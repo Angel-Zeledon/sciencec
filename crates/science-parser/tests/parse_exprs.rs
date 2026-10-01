@@ -1520,3 +1520,17 @@ fn a_negative_index_other_than_one_offers_a_note_and_no_fix() {
     assert_eq!(diagnostic.code.to_string(), "SC0152");
     assert!(diagnostic.suggestions.is_empty(), "no fix can be built from spans alone");
 }
+
+/// `pair().0`: a tuple element is named by its position, and the parser keeps
+/// it as a `Field` whose name is the digits. It chains like any other field.
+#[test]
+fn a_tuple_element_is_a_positional_field() {
+    assert_shape(
+        "pair().1",
+        "
+        Field `1`
+          base: Call
+            callee: Path `pair`
+        ",
+    );
+}

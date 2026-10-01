@@ -2078,8 +2078,12 @@ impl Resolver {
                             binding.name.span,
                             Some(self.current_module),
                         );
-                        if let Err(previous) = self.ribs.define(&binding.name.name, def) {
-                            self.duplicate(&binding.name, previous, "binding");
+                        // `_` discards: the binding exists, so the tuple has
+                        // a slot to land in, but no name reaches it.
+                        if binding.name.name != "_" {
+                            if let Err(previous) = self.ribs.define(&binding.name.name, def) {
+                                self.duplicate(&binding.name, previous, "binding");
+                            }
                         }
                         hir::LetBinding { def, ty, span: binding.span }
                     })

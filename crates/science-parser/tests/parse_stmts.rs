@@ -260,3 +260,14 @@ fn assert_without_parentheses_is_rejected() {
 "
     ));
 }
+
+/// `_` in a destructuring `let` discards that element. It is kept in the name
+/// list spelled `_`, so a list may hold any number of them.
+#[test]
+fn a_wildcard_in_a_destructuring_let() {
+    let dump = parse_body(
+        "def main():\n    let value, _ be pair()\n    let _, _, last be triple()\n",
+    );
+    assert!(dump.contains("Let `value, _`"), "{dump}");
+    assert!(dump.contains("Let `_, _, last`"), "{dump}");
+}

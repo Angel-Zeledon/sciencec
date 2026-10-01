@@ -1645,6 +1645,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Local(_)
             | ExprKind::SelfValue(_)
             | ExprKind::Field { .. }
+            | ExprKind::TupleField { .. }
             | ExprKind::Index { .. } => match self.as_place(expr, block) {
                 Some((place, block)) => {
                     let (operand, block) = self.read_ergonomic(place, ty, block, span);
@@ -5749,6 +5750,24 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let base_ty = self.place_ty(&place);
                 let ty = self.field_ty(owner, field, base_ty);
                 Some((place.project(Projection::Field { field, ty }), block))
+            }
+            ExprKind::TupleField { base, index } => {
+                // Storage for the base, as the `Field` arm gives it: `f().0`
+                // has none of its own, so the call lands in a temporary.
+                let (place, block) = match self.as_place(*base, block) {
+                    Some(found) => found,
+                    None => {
+                        let base_ty = thir.expr(*base).ty;
+                        let base_span = thir.expr(*base).span;
+                        let temp = self.temp(base_ty, base_span, block);
+                        let block = self.expr_into(Place::local(temp), *base, block);
+                        (Place::local(temp), block)
+                    }
+                };
+                let place = self.auto_deref(place);
+                let base_ty = self.place_ty(&place);
+                let ty = self.tuple_field_ty(base_ty, *index as usize);
+                Some((place.project(Projection::TupleField { index: *index, ty }), block))
             }
             ExprKind::Index { base, index } => {
                 let index = *index;

@@ -2886,12 +2886,75 @@ impl<'a> BodyChecker<'a> {
                 return typed;
             }
         }
+        // `t.0` in the statement that built `let t be (3, 4)`: the tuple's
+        // type is still its own variable, but its elements are known here.
+        if let (InferTy::Var(var), Ok(index)) = (base.ty, name.name.parse::<usize>()) {
+            let root = self.infer.find(var);
+            let found = self
+                .pending_tuples
+                .iter()
+                .find(|(_, tuple, _)| self.infer.find(*tuple) == root)
+                .map(|(_, _, parts)| (parts.len(), parts.get(index).copied()));
+            if let Some((arity, None)) = found {
+                self.diagnostics.push(no_such_field(
+                    name.span,
+                    &name.name,
+                    &format!("a tuple of {arity}"),
+                ));
+                return self.error_expr(span);
+            }
+            if let Some(part) = found.and_then(|(_, part)| part) {
+                return match self.infer.resolve(part) {
+                    InferTy::Known(element) => {
+                        let id = self.body.push_expr(
+                            ExprKind::TupleField { base: base.id, index: index as u32 },
+                            element,
+                            span,
+                        );
+                        Typed { id, ty: InferTy::Known(element) }
+                    }
+                    open => self.push_typed(
+                        ExprKind::TupleField { base: base.id, index: index as u32 },
+                        open,
+                        span,
+                    ),
+                };
+            }
+        }
         let base_ty = self.known_or_error(base.ty);
         let revealed = self.revealed(base_ty, span);
         // `via_borrow` remembers which kind of borrow this field was read
         // through, if any, for Decision 27's rule below — `None` if `base`
         // was not a borrow at all.
         let mut via_borrow: Option<bool> = None;
+        // `pair.0`: the parser keeps a positional name as digits. A tuple
+        // (possibly behind a borrow) is the only thing it can mean.
+        if let Ok(index) = name.name.parse::<u32>() {
+            let mut tuple = revealed;
+            if let TyKind::Borrowed { inner, mutable } = self.types.kind(revealed).clone() {
+                via_borrow = Some(mutable);
+                tuple = self.revealed(inner, span);
+            }
+            if let TyKind::Tuple(elements) = self.types.kind(tuple).clone() {
+                return match elements.get(index as usize).copied() {
+                    Some(element) => {
+                        let element = self.borrow_ergonomics(element, via_borrow);
+                        let id = self.body.push_expr(
+                            ExprKind::TupleField { base: base.id, index },
+                            element,
+                            span,
+                        );
+                        self.narrowed(id, InferTy::Known(element), span)
+                    }
+                    None => {
+                        let rendered = self.types.render(self.defs, tuple);
+                        self.diagnostics.push(no_such_field(name.span, &name.name, &rendered));
+                        self.error_expr(span)
+                    }
+                };
+            }
+            via_borrow = None;
+        }
         let (def, args) = match self.types.kind(revealed).clone() {
             TyKind::Named { def, args } => (def, args),
             // A borrow is transparent to a field read: `borrowed Doc` has a
@@ -9019,7 +9082,9 @@ impl<'a> BodyChecker<'a> {
             }
             match &self.body.expr(id).kind {
                 ExprKind::Local(def) | ExprKind::SelfValue(def) => return Some((*def, whole)),
-                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
+                ExprKind::Field { base, .. }
+                | ExprKind::TupleField { base, .. }
+                | ExprKind::Index { base, .. } => {
                     id = *base;
                     whole = false;
                 }

@@ -296,6 +296,13 @@ pub enum ExprKind {
         base: ExprId,
         field: Option<DefId>,
     },
+    /// `base.0`: element `index` of a tuple. The parser keeps the digits as a
+    /// field name; the checker is the first phase that knows the base is a
+    /// tuple, so the position is settled here and nothing below reads a name.
+    TupleField {
+        base: ExprId,
+        index: u32,
+    },
     Index {
         base: ExprId,
         index: ExprId,

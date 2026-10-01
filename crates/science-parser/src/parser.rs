@@ -72,7 +72,7 @@
 //! long, and every `.` after it belongs to the postfix chain.
 
 use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
-use science_lexer::{DocComment, ReservedWord, Token, TokenKind};
+use science_lexer::{DocComment, IntBase, ReservedWord, Token, TokenKind};
 
 use crate::ast::*;
 
@@ -3854,7 +3854,15 @@ impl<'t> Parser<'t> {
                 let mut names = Vec::new();
                 loop {
                     let name_start = self.span();
-                    let name = self.expect_ident()?;
+                    // `_` discards: `let value, _ be f()`. It is kept as a
+                    // name spelled `_` and the resolver binds it to nothing
+                    // nameable, so any number of them may share a list.
+                    let name = if self.at(&TokenKind::Underscore) {
+                        let span = self.advance().span;
+                        Ident::new("_", span)
+                    } else {
+                        self.expect_ident()?
+                    };
                     let ty = if self.eat(&TokenKind::Colon).is_some() {
                         Some(self.parse_type())
                     } else {
@@ -4400,7 +4408,24 @@ impl<'t> Parser<'t> {
                 }
                 TokenKind::Dot => {
                     self.advance();
-                    let Some(name) = self.expect_ident() else {
+                    // `pair.0`: a tuple element is named by its position. It is
+                    // kept as a `Field` whose name is the digits, and the type
+                    // checker — the first phase that knows the base is a
+                    // tuple — turns it into the element read. `t.0.1` lexes
+                    // as `t`, `.`, the float `0.1`, and is not supported.
+                    let positional = match self.peek() {
+                        TokenKind::Int { value, base: IntBase::Dec, suffix: None } => {
+                            Some(value.to_string())
+                        }
+                        _ => None,
+                    };
+                    let name = if let Some(digits) = positional {
+                        let span = self.advance().span;
+                        Some(Ident::new(digits, span))
+                    } else {
+                        self.expect_ident()
+                    };
+                    let Some(name) = name else {
                         return error_expr(start.merge(self.last_text_span()));
                     };
                     expr = if self.at(&TokenKind::LParen) {
