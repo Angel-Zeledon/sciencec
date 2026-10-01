@@ -122,6 +122,40 @@ pub unsafe extern "C" fn science_array_with_capacity(
     array
 }
 
+/// `Array::clone(&self) -> Array[T]` for an element that owns nothing.
+///
+/// Allocates a buffer of `src.len` slots and copies the elements' bytes. That
+/// is a duplicate only where the type has no destructor, so a descriptor with a
+/// `drop_fn` is refused here as a backstop: `science-codegen-llvm` refuses it
+/// first, by name, and never emits this call for one.
+///
+/// # Safety
+///
+/// `src` must be a non-null, aligned pointer to a live [`ScienceArray`] and
+/// `info` the descriptor it was created with.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_clone(
+    src: *const ScienceArray,
+    info: *const ScienceTypeInfo,
+) -> ScienceArray {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (src, info) = unsafe { (&*src, &*info) };
+    assert!(
+        info.drop_fn.is_none(),
+        "Array.clone of an element type that owns memory is not supported"
+    );
+    let mut out = ScienceArray::empty(info);
+    // SAFETY: `out` is live and described by `info`.
+    unsafe { out.reserve(info, src.len) };
+    // SAFETY: after `reserve`, `out` has room for `src.len` elements; `src`'s
+    // first `len` slots are initialised and live in a different allocation.
+    unsafe {
+        std::ptr::copy_nonoverlapping(src.ptr, out.ptr, info.offset_of(src.len));
+    }
+    out.len = src.len;
+    out
+}
+
 /// Ensure room for `additional` more elements without reallocating.
 ///
 /// **Codegen support**, as [`science_array_with_capacity`].

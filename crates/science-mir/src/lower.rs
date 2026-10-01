@@ -1845,6 +1845,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Coerce { operand, coercion: Coercion::BorrowThroughBox } => {
                 self.borrow_through_box(dest, *operand, block, span, false)
             }
+            ExprKind::Coerce { operand, coercion: Coercion::Reborrow } => {
+                self.shared_reborrow(dest, *operand, block, span, false)
+            }
             ExprKind::Coerce { operand, coercion } => {
                 let coercion = *coercion;
                 let (value, block) = self.operand(*operand, block);
@@ -2735,6 +2738,35 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         }
         .unwrap_or(Ty::ERROR);
         let place = place.project(Projection::Deref { ty: payload });
+        self.borrow_place(dest, false, place, block, span, in_argument)
+    }
+
+    /// `Coercion::Reborrow`: the exclusive borrow `operand` evaluates to is not
+    /// moved but looked through, and what it points at is borrowed shared for
+    /// as long as the result lives. `r` stays usable afterwards, and the region
+    /// engine sees an ordinary shared loan of `*r`.
+    fn shared_reborrow(
+        &mut self,
+        dest: Place,
+        operand: ExprId,
+        block: BlockId,
+        span: Span,
+        in_argument: bool,
+    ) -> BlockId {
+        let (place, block) = match self.as_place(operand, block) {
+            Some(found) => found,
+            None => {
+                let ty = self.thir.ty(operand);
+                let temp = self.temp(ty, span, block);
+                let block = self.expr_into(Place::local(temp), operand, block);
+                (Place::local(temp), block)
+            }
+        };
+        let held = self.revealed(self.place_ty(&place));
+        let place = match *self.context.types.kind(held) {
+            TyKind::Borrowed { inner, .. } => place.project(Projection::Deref { ty: inner }),
+            _ => place,
+        };
         self.borrow_place(dest, false, place, block, span, in_argument)
     }
 
@@ -5642,12 +5674,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // declared type *is* Decision 25's narrowed conclusion — read
                 // off the node, never recomputed — and the field is
                 // projected from there.
+                //
+                // **Projected, not materialised.** Materialising moved the
+                // whole payload out of a non-`Copy` option into a temporary
+                // that owned it: `best.tag` inside `if best?:` then dropped the
+                // record at the end of the statement, and a second read was a
+                // use after move. `Projection::Payload` names the payload
+                // where it is, and the field is read from there.
                 let (place, block) = if self.narrowed_payload_is_not_a_borrow(&place, *base) {
-                    let narrowed_ty = thir.expr(*base).ty;
-                    let narrow_span = thir.expr(*base).span;
-                    let temp = self.temp(narrowed_ty, narrow_span, block);
-                    let block = self.expr_into(Place::local(temp), *base, block);
-                    (Place::local(temp), block)
+                    (self.narrowed_place(place, *base), block)
                 } else {
                     let place = self.auto_deref(place);
                     let place = self.deref_to_hole(place, *base);
@@ -6059,6 +6094,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let temp = self.temp(ty, span, block);
                 let block =
                     self.borrow_through_box(Place::local(temp), *operand, block, span, true);
+                (Operand::Move(Place::local(temp)), block)
+            }
+            // `mutable borrowed T` into `borrowed T`: a shared loan of `*r`.
+            ExprKind::Coerce { operand, coercion: Coercion::Reborrow } => {
+                let temp = self.temp(ty, span, block);
+                let block = self.shared_reborrow(Place::local(temp), *operand, block, span, true);
                 (Operand::Move(Place::local(temp)), block)
             }
             // A coercion over a borrow — `assign`'s §4 unsizing — is still a

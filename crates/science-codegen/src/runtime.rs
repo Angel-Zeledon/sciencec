@@ -738,6 +738,7 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // targets, and indistinguishable from `science_array_new` beside it.
     RuntimeFn { symbol: "science_array_with_capacity", params: &[D, Z], ret: RtRet::Aggregate(RtAggregate::Array) },
     RuntimeFn { symbol: "science_array_reserve", params: &[P, D, Z], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_clone", params: &[P, D], ret: RtRet::Aggregate(RtAggregate::Array) },
     RuntimeFn { symbol: "science_array_free", params: &[P, D], ret: RtRet::Void },
     RuntimeFn { symbol: "science_array_len", params: &[P], ret: RtRet::Int },
     RuntimeFn { symbol: "science_array_is_empty", params: &[P], ret: RtRet::Bool },

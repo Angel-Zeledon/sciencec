@@ -335,4 +335,165 @@ fn an_unannotated_let_closure_infers_its_parameter_from_its_body() {
     print(half(5.0))
 ";
     assert_eq!(prints("let_closure_infers", source), "7\n2.5\n");
+
+/// `x.clone()` on an `Int` or a `Float`. The prelude listed `Int`/`Float` *and*
+/// `I64`/`F64` as implementing `Clone`, and they are one definition, so the
+/// call had two candidates (`SC0531`) whose diagnostic then panicked
+/// `sciencec` itself rendering a label in the prelude's file.
+#[test]
+fn clone_on_an_int_and_a_float_runs() {
+    let source = "def main():
+    let x be 2.5
+    let y be x.clone()
+    print(y)
+    let n be 7
+    print(n.clone() + 1)
+    let f: F32 be 1.5
+    print(f.clone())
+";
+    assert_eq!(prints("clone_scalar", source), "2.5\n8\n1.5\n");
+}
+
+/// `let held be items[i]` over a `Copy` element copies it out, so a later
+/// `push` or write into the array is not a conflict with a live loan.
+#[test]
+fn a_let_of_an_indexed_copy_element_is_a_copy() {
+    let source = "def main():
+    let mutable items be Array[Int].new()
+    items.push(1)
+    items.push(2)
+    let held be items[0]
+    items.push(5)
+    items[0] be 9
+    print(held + 10)
+    print(items[0])
+";
+    assert_eq!(prints("let_index_copy", source), "11\n9\n");
+}
+
+/// `&mut Array[T]` where `&Array[T]` is expected: a shared reborrow of the
+/// exclusive borrow, which stays usable afterwards.
+#[test]
+fn an_exclusive_borrow_passes_where_a_shared_one_is_expected() {
+    let source = "def total(items: &Array[Int]) -> Int:
+    let mutable s be 0
+    for i in items:
+        s be s + i
+    s
+
+def fill(items: &mut Array[Int]) -> Int:
+    items.push(4)
+    let a be total(items)
+    items.push(5)
+    let b be total(items)
+    a * 100 + b
+
+def main():
+    let mutable a be [1]
+    print(fill(a))
+";
+    assert_eq!(prints("mut_to_shared", source), "510\n");
+}
+
+/// `Array.clone()` of an element that owns nothing is an independent copy.
+#[test]
+fn array_clone_copies_a_plain_element_array() {
+    let source = "def main():
+    let mutable a be [1, 2]
+    let b be a.clone()
+    a.push(3)
+    a[0] be 99
+    print(b.length())
+    print(a.length())
+    print(b[0])
+    let fs be [1.5, 2.5]
+    let g be fs.clone()
+    print(g[1])
+";
+    assert_eq!(prints("array_clone", source), "2\n3\n1\n2.5\n");
+}
+
+/// `&[]` passed to a `&Array[Int]` parameter takes its element type from the
+/// parameter instead of `SC0282`.
+#[test]
+fn an_empty_borrowed_literal_takes_its_type_from_the_parameter() {
+    let source = "def count(items: &Array[Int]) -> Int:
+    items.length()
+
+def main():
+    print(count(&[]))
+    print(count(&[1, 2, 3]))
+";
+    assert_eq!(prints("empty_borrowed_literal", source), "0\n3\n");
+}
+
+/// A field read off a narrowed owned nullable record neither moves the record
+/// nor drops it early: `best.tag` twice inside `if best?:`, and every record is
+/// dropped exactly once, at the end of `main`.
+#[test]
+fn a_field_of_a_narrowed_owned_record_does_not_drop_it() {
+    let source = "type Rec:
+    tag: Int
+
+Rec implements Drop:
+    def drop(mutable self):
+        print(f\"drop {self.tag}\")
+
+def main():
+    let xs be [1, 2, 3]
+    let best be xs.iterate().map(x giving Rec(tag: x * 10)).find(each.tag > 15)
+    if best?:
+        print(f\"{best.tag} {best.tag}\")
+        print(\"in\")
+    print(\"after if\")
+    print(\"end\")
+";
+    assert_eq!(
+        prints("narrowed_field_no_drop", source),
+        "drop 10\n20 20\nin\nafter if\nend\ndrop 20\n"
+    );
+}
+
+/// `map(each.item)` over `numbered()` of borrowed items: `Numbered[&Doc]`'s
+/// `item` is a region of the record parameter, so the returned borrow is tied
+/// to it and `SC0340` does not fire.
+#[test]
+fn map_of_each_item_over_numbered_borrows_runs() {
+    let source = "type Doc:
+    title: String
+
+def count(docs: &Array[Doc]) -> Int:
+    docs.iterate().numbered().map(each.item).count()
+
+def main():
+    let docs be [Doc(title: \"ab\"), Doc(title: \"cde\")]
+    print(count(docs))
+    let mutable total be 0
+    for t in docs.iterate().numbered().map(each.item):
+        total be total + t.title.length()
+    print(total)
+";
+    assert_eq!(prints("numbered_item_borrow", source), "2\n5\n");
+}
+
+/// `panic(err)` with an `Error` prints the error's `message()`.
+#[test]
+fn panic_of_an_error_prints_its_message() {
+    let source = "def save() -> Error?:
+    let e be write_file(\"/nonexistent-science-dir/x.txt\", \"hi\")
+    if e?: return e
+    null
+
+def main():
+    let e be save()
+    if e?:
+        panic(e)
+";
+    let dir = scratch("valid_programs", "panic_error");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "panic_error"), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_ne!(ran.status, Some(0));
+    assert!(ran.stderr.contains("panic: not found"), "stderr: {}", ran.stderr);
 }

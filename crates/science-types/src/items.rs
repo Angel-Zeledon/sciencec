@@ -391,6 +391,10 @@ impl Prelude {
         self.is(types, ty, "Never")
     }
 
+    pub fn is_string(&self, types: &Types, ty: Ty) -> bool {
+        self.is(types, ty, "String")
+    }
+
     pub fn is_bool(&self, types: &Types, ty: Ty) -> bool {
         self.is(types, ty, "Bool")
     }

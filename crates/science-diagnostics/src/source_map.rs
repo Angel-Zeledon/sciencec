@@ -63,6 +63,12 @@ impl SourceMap {
         id
     }
 
+    /// Whether `file` was added to this map. A span in a prelude declaration
+    /// carries a `FileId` no map owns, and has no line to point at.
+    pub fn contains(&self, file: FileId) -> bool {
+        (file.0 as usize) < self.files.len()
+    }
+
     /// How many files are registered.
     pub fn file_count(&self) -> usize {
         self.files.len()

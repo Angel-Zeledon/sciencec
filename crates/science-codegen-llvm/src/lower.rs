@@ -7192,6 +7192,13 @@ impl<'a> Lowerer<'a> {
                 "a `&Box[T]` into `&T` as an `Rvalue::Coerce`: `science-mir` lowers this \
                  coercion as a reborrow through a `Deref`, and no other producer should emit it",
             )),
+            // The same pointer, read-only: `science-mir` lowers it as a shared
+            // reborrow, and were one to arrive it is the assignment underneath.
+            Coercion::Reborrow => {
+                let value = self.typed_operand(ctx, operand, layout, insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                Ok(())
+            }
         }
     }
 
@@ -9830,6 +9837,8 @@ impl<'a> Lowerer<'a> {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if self.array_method(def) == Some("sort") {
             self.lower_array_sort(body, ctx, args, destination, insts)?;
+        } else if self.array_method(def) == Some("clone") {
+            self.lower_array_clone(body, ctx, args, destination, insts)?;
         } else if self.array_method(def) == Some("replace") {
             self.lower_array_replace(body, ctx, args, destination, insts)?;
         } else if let Some(symbol) = self.owned_nullable_method(def) {
@@ -12087,6 +12096,38 @@ impl<'a> Lowerer<'a> {
     /// way `push`'s is: the operand's own place when it is the element, the
     /// pointer it holds when it is a borrow of one, a spill when it has no
     /// place.
+    /// `xs.clone()`: `science_array_clone`, for an element that owns nothing.
+    ///
+    /// The runtime copies the element bytes, which duplicates a value only
+    /// where there is no destructor to run twice — so an element with drop glue
+    /// (`String`, a record owning one, a nested `Array`) is refused here by
+    /// name, since a per-element clone function is not in `ScienceTypeInfo`.
+    fn lower_array_clone(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let element = self.array_operand_element(body, args, destination).ok_or_else(|| {
+            Unlowered::new("an `Array.clone` with no operand this crate can read an element off")
+        })?;
+        let owns = match self.direct_release(element)? {
+            Some(_) => true,
+            None => self.intern_drop_glue(element, 0)?.is_some(),
+        };
+        if owns {
+            return Err(Unlowered::new(format!(
+                "`clone` on an `Array of {}`: an element that owns memory needs a clone function \
+                 per element, which `ScienceTypeInfo` does not carry; `Array.clone` copies the \
+                 elements of an array whose element type owns nothing",
+                self.types.render(self.defs, element)
+            )));
+        }
+        self.lower_runtime_call(body, ctx, "science_array_clone", args, destination, insts)
+    }
+
     fn lower_array_replace(
         &mut self,
         body: &MirBody,

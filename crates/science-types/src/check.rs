@@ -1403,6 +1403,28 @@ impl<'a> BodyChecker<'a> {
                 let typed = self.synth(expr);
                 self.demand(typed, expected, site, expr.span)
             }
+            // `&[]` where a `&Array[T]` is expected: the expectation crosses the
+            // borrow into the literal, so an empty one takes its element type
+            // from the slot instead of reporting `SC0282`. Only an array
+            // literal under the borrow, and only at the same mutability.
+            hir::ExprKind::Borrowed { mutable, expr: inner }
+                if matches!(inner.kind, hir::ExprKind::ArrayLit(_)) =>
+            {
+                let revealed = self.revealed(expected, expr.span);
+                if let TyKind::Borrowed { mutable: want, inner: held } = *self.types.kind(revealed)
+                {
+                    if want == *mutable {
+                        let operand = self.check(inner, held, Site::Elsewhere);
+                        return self.body.push_expr(
+                            ExprKind::Borrow { mutable: *mutable, operand },
+                            expected,
+                            expr.span,
+                        );
+                    }
+                }
+                let typed = self.synth(expr);
+                self.demand(typed, expected, site, expr.span)
+            }
             hir::ExprKind::Tuple(elements) => {
                 // §2: the elements are visited one at a time, at this site,
                 // which is what makes Decision 14's own example compile.
@@ -3169,7 +3191,11 @@ impl<'a> BodyChecker<'a> {
                 // path"* — that is a property of the body.
                 Some(Named::Function(def)) if Some(def) == self.decls.prelude().panic() => {
                     let callee = self.body.push_expr(ExprKind::Item(def), Ty::ERROR, span);
-                    let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+                    let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let typed = self.synth(&arg.value);
+                        ids.push(self.panic_message(typed, arg.span));
+                    }
                     let id = self
                         .body
                         .push_expr(
@@ -4573,6 +4599,19 @@ impl<'a> BodyChecker<'a> {
         }
 
         let recv = self.synth(receiver);
+        self.method_call_on(recv, name, generics, args, span)
+    }
+
+    /// [`BodyChecker::method_call`] from the point the receiver is synthesised,
+    /// for a caller that already has the receiver's node.
+    fn method_call_on(
+        &mut self,
+        recv: Typed,
+        name: &hir::Ident,
+        generics: &[hir::Type],
+        args: &[hir::Arg],
+        span: Span,
+    ) -> Typed {
         // Decision 2's default, taken at a *receiver* for the same reason
         // `literal_unsizes` takes it at a slot: the lookup below needs a head
         // now, and `finish` runs when the body ends. `Pair(first: 1, second:
@@ -4656,6 +4695,23 @@ impl<'a> BodyChecker<'a> {
             }
         }
         typed
+    }
+
+    /// The message `panic` is handed. A `String` is the message itself; any
+    /// other value (an `Error` that came back beside a result, an `IoError`) is
+    /// asked for its `message()`, so `panic(err)` prints what `err.message()`
+    /// does and not whatever bytes the value's own layout holds.
+    fn panic_message(&mut self, typed: Typed, span: Span) -> ExprId {
+        let InferTy::Known(ty) = self.infer.resolve(typed.ty) else { return typed.id };
+        if self.types.references_error(ty) {
+            return typed.id;
+        }
+        let peeled = self.peel_borrow(ty, span);
+        if self.decls.prelude().is_string(self.types, peeled) {
+            return typed.id;
+        }
+        let name = hir::Ident::new("message", span);
+        self.method_call_on(typed, &name, &[], &[], span).id
     }
 
     /// `DefTable.new()` — a method reached through a type rather than a value.
@@ -8509,6 +8565,48 @@ impl<'a> BodyChecker<'a> {
                         matches!(binding.value.kind, hir::ExprKind::Closure { .. });
                     let typed = self.synth(&binding.value);
                     self.report_closure_param = false;
+                    // `let held be items[i]`: an element that is `Copy` is
+                    // copied out, so the binding is a value and not a loan on
+                    // the container that a later `push` or write refuses.
+                    // Only an index read: a `get` or a `for` binding is a
+                    // borrow on purpose, and a non-`Copy` element stays one.
+                    if matches!(binding.value.kind, hir::ExprKind::Index { .. }) {
+                        if let InferTy::Known(found) = typed.ty {
+                            let found = self.revealed(found, binding.span);
+                            if let TyKind::Borrowed { mutable: false, inner } =
+                                *self.types.kind(found)
+                            {
+                                let methods = self.decls.methods();
+                                if assignable(
+                                    self.types,
+                                    methods,
+                                    self.coercions,
+                                    Site::Elsewhere,
+                                    found,
+                                    inner,
+                                )
+                                .is_some_and(|coercion| coercion == Coercion::Copy)
+                                {
+                                    let id = self.coerce(
+                                        typed.id,
+                                        found,
+                                        inner,
+                                        Site::Elsewhere,
+                                        binding.value.span,
+                                    );
+                                    self.bind_local(
+                                        binding.bindings[0].def,
+                                        InferTy::Known(inner),
+                                        declared,
+                                    );
+                                    return StmtKind::Let {
+                                        bindings: vec![binding.bindings[0].def],
+                                        value: id,
+                                    };
+                                }
+                            }
+                        }
+                    }
                     self.bind_local(binding.bindings[0].def, typed.ty, declared);
                     typed.id
                 }

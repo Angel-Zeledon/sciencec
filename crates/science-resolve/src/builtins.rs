@@ -968,8 +968,9 @@ const IMPLEMENTS: &[(&str, &[&str])] = &[
     ("BF16", FLOATING),
     ("F32", FLOATING),
     ("F64", FLOATING),
-    ("Int", NUMERIC),
-    ("Float", FLOATING),
+    // No `Int` or `Float` row: they are `ALIASED_PRIMITIVES` and name `I64` and
+    // `F64`, so a row for each would declare every relation twice and make
+    // `x.clone()` on an `Int` two candidates (`SC0531`).
     ("Bool", &["Eq", "Copy", "Clone", "Display"]),
     ("Char", &["Eq", "Ord", "Copy", "Clone", "Display"]),
     // §6.9. `Copy` is *not* among them and that is the point of §6.2: an owned
@@ -1707,6 +1708,19 @@ const BLOCKS: &[Block] = &[
             },
             // §13.4 verbatim.
             Method { name: "reverse", generics: &[], recv: Some(SelfKind::Mutable), params: &[], ret: None },
+            // An independent copy, `-> Array[T]`. **The bound `where T: Clone`
+            // is not written** ([`Method`] has no `where_clause`, and
+            // [`IMPLEMENTS`] cannot say `Array[T]: Clone` conditionally), and
+            // what stands in for it is the backend: it copies the element
+            // bytes, which is a duplicate only for an element that owns
+            // nothing, so it refuses an element with drop glue by name.
+            Method {
+                name: "clone",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Var("T")])),
+            },
             // §13.4 verbatim, less `where T: Eq` (see above). Equality is
             // `Set.contains`'s: the backend passes the `(T, ())` map descriptor
             // a `Set of T` already uses, so the element types are the ones a
@@ -3192,7 +3206,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
         // was here was that `ArrayIterate[T]` is *"a type the prelude does not
         // have"*, and the prelude has it now. Its two siblings stay, for the
         // reason `iterate`'s own declaration gives.
-        "iterate_mutably", "iterate_consuming", "clone", "filled", "concat", "join", "slice",
+        "iterate_mutably", "iterate_consuming", "filled", "concat", "join", "slice",
     ]),
     // `Map` — `keys`, `values` and `values_mutably` are
     // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the

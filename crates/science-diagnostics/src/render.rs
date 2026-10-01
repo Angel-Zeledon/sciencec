@@ -148,7 +148,10 @@ fn group_by_file<'a>(map: &SourceMap, d: &'a Diagnostic) -> Vec<FileGroup<'a>> {
     let mut groups: Vec<FileGroup<'a>> = Vec::new();
 
     let primary_file = d.primary_span().map(|s| s.file);
-    let mut ordered: Vec<&'a Label> = d.labels.iter().collect();
+    // A label in a file the map does not own (a prelude declaration's
+    // `BUILTIN_FILE`) has no line to print; the message names the thing.
+    let mut ordered: Vec<&'a Label> =
+        d.labels.iter().filter(|l| map.contains(l.span.file)).collect();
     if let Some(pf) = primary_file {
         // Stable partition: the primary file first, everything else untouched.
         ordered.sort_by_key(|l| l.span.file != pf);

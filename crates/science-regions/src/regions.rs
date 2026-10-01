@@ -350,7 +350,7 @@ impl Context<'_> {
                     path.pop();
                 }
             }
-            TyKind::Named { def, .. } => self.walk_named(def, path, seen, depth, out),
+            TyKind::Named { def, args } => self.walk_named(def, &args, path, seen, depth, out),
             // §2 items 1 and 2, and the three types with no fields to walk.
             TyKind::Param { .. }
             | TyKind::Closure { .. }
@@ -362,9 +362,15 @@ impl Context<'_> {
         }
     }
 
+    /// `args` are the type's generic arguments, put in for the declaration's
+    /// parameters before a field is walked, so `Numbered[&Doc]`'s `item` is
+    /// the `&Doc` it holds and not a `T` with no region. Only a *record's* or a
+    /// *choice's* own fields are walked this way; a prelude container with no
+    /// fields (`Array[&T]`) is still invisible, §2 item 1.
     fn walk_named(
         &mut self,
         def: DefId,
+        args: &[science_types::ty::GenericArg],
         path: &mut Path,
         seen: &mut Vec<DefId>,
         depth: usize,
@@ -378,7 +384,14 @@ impl Context<'_> {
         match self.defs.get(def).kind {
             DefKind::Record => {
                 if let Some(record) = self.decls.record(def) {
+                    let subst = (!args.is_empty() && !record.generics.is_empty()).then(|| {
+                        science_types::subst::Substitution::of_generics(&record.generics, args)
+                    });
                     for (field, ty) in record.fields.clone() {
+                        let ty = match &subst {
+                            Some(subst) => subst.apply(self.types, ty).unwrap_or(ty),
+                            None => ty,
+                        };
                         path.push(Step::Field(field));
                         self.walk(ty, path, seen, depth + 1, out);
                         path.pop();
@@ -387,9 +400,19 @@ impl Context<'_> {
             }
             DefKind::Choice => {
                 for variant in self.variants_of(def) {
-                    let payload =
-                        self.decls.variant(variant).map(|it| it.payload.clone()).unwrap_or_default();
+                    let (payload, generics) = self
+                        .decls
+                        .variant(variant)
+                        .map(|it| (it.payload.clone(), it.generics.clone()))
+                        .unwrap_or_default();
+                    let subst = (!args.is_empty() && !generics.is_empty()).then(|| {
+                        science_types::subst::Substitution::of_generics(&generics, args)
+                    });
                     for (at, ty) in payload.into_iter().enumerate() {
+                        let ty = match &subst {
+                            Some(subst) => subst.apply(self.types, ty).unwrap_or(ty),
+                            None => ty,
+                        };
                         path.push(Step::Variant { variant, index: at as u32 });
                         self.walk(ty, path, seen, depth + 1, out);
                         path.pop();

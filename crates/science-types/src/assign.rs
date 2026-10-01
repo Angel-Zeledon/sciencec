@@ -632,6 +632,17 @@ pub enum Coercion {
     /// [`Coercion::Copy`] produces an owned value. None of them is a
     /// dereference, and no existing variant is.
     BorrowThroughBox,
+
+    /// `mutable borrowed T` into `borrowed T`, at an argument and nowhere else.
+    ///
+    /// **A shared reborrow of what the exclusive borrow points at.** The
+    /// exclusive borrow is not consumed: it is usable again once the callee
+    /// returns, and while the shared loan lives nothing else may write through
+    /// it, which is the region engine's check and not this relation's.
+    /// `science-mir` lowers it as a shared borrow of the place one
+    /// `Projection::Deref` further in, as it does [`Coercion::BorrowThroughBox`],
+    /// and never as an `Rvalue::Coerce`.
+    Reborrow,
 }
 
 /// The six definitions this relation has to know by name.
@@ -881,6 +892,16 @@ pub fn assignable(
             if let Some(payload) = through_box(types, coercions, source) {
                 if types.compatible(payload, object) {
                     return Some(Coercion::BorrowThroughBox);
+                }
+            }
+        }
+        // Rule 6b. A shared view of an exclusive borrow: `mutable borrowed T`
+        // into `borrowed T`, one reborrow, at an argument. Read-only, so
+        // nothing is weakened that a caller could write through.
+        if site == Site::Argument && !mutable {
+            if let TyKind::Borrowed { mutable: true, inner } = *types.kind(source) {
+                if types.compatible(inner, object) {
+                    return Some(Coercion::Reborrow);
                 }
             }
         }

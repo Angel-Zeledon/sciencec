@@ -1013,7 +1013,7 @@ def first(xs: &Array[I64]) -> String:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `String`, found `&I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `I64`"]);
 }
 
 #[test]

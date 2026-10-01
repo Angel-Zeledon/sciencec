@@ -226,3 +226,18 @@ fn a_warning_says_warning() {
 
     insta::assert_snapshot!(render(&map, &d));
 }
+
+/// A label whose span is in a file the map does not own — a prelude
+/// declaration's span carries `FileId(u32::MAX)` — has no line to print. It is
+/// left out, and the diagnostic still renders; it used to panic the compiler.
+#[test]
+fn a_label_in_a_file_the_map_does_not_own_is_left_out() {
+    let mut map = SourceMap::new();
+    let f = map.add_file("a.science".into(), "let x be 1\n".into());
+    let d = Diagnostic::error(Code(531), "ambiguous")
+        .with_label(Label::primary(Span::new(f, 4, 5), "here"))
+        .with_label(Label::secondary(Span::new(FileId(u32::MAX), 0, 0), "declared in the prelude"));
+    let out = render(&map, &d);
+    assert!(out.contains("a.science:1:5"), "{out}");
+    assert!(!out.contains("prelude"), "{out}");
+}
