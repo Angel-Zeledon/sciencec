@@ -381,9 +381,11 @@ There are two layers, and the difference is one `use` line.
   (directories, removal), `path` (`Path`), `os` (`args`, `env`), `time`
   (`Duration`, `Monotonic`, `Instant`, `now`, `sleep`), `complex`
   (`Complex`), `random` (`Key`, `Stream`, `uniform`, `normal`),
-  `collections` (`Deque`), `ndarray` (`NdArray`) and `linalg` (`solve`, `inverse`,
+  `collections` (`Deque`), `ndarray` (`NdArray`), `linalg` (`solve`, `inverse`,
   `determinant`, `lu`, `cholesky`, `qr`, norms; each fallible one returns
-  `(value, LinalgError?)`). Read the module's header before using it: each one
+  `(value, LinalgError?)`) and `string` (free functions over `&String`:
+  `to_upper`, `to_lower`, `title_case`, `pad_start`, `center`, `wrap`,
+  `levenshtein`, …). Read the module's header before using it: each one
   states the decisions it made.
 
 ```science
