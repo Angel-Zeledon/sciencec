@@ -712,7 +712,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 128 entry points. §2.6: *"They are the whole list."*
+/// The 130 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -739,6 +739,7 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_array_with_capacity", params: &[D, Z], ret: RtRet::Aggregate(RtAggregate::Array) },
     RuntimeFn { symbol: "science_array_reserve", params: &[P, D, Z], ret: RtRet::Void },
     RuntimeFn { symbol: "science_array_clone", params: &[P, D], ret: RtRet::Aggregate(RtAggregate::Array) },
+    RuntimeFn { symbol: "science_array_clone_strings", params: &[P, D], ret: RtRet::Aggregate(RtAggregate::Array) },
     RuntimeFn { symbol: "science_array_free", params: &[P, D], ret: RtRet::Void },
     RuntimeFn { symbol: "science_array_len", params: &[P], ret: RtRet::Int },
     RuntimeFn { symbol: "science_array_is_empty", params: &[P], ret: RtRet::Bool },
@@ -1440,8 +1441,8 @@ mod tests {
     /// aggregate — `replace` writes the element it moves out through a slot —
     /// so the `sret` lists did not move.
     #[test]
-    fn there_are_one_hundred_and_twenty_eight_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 128, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_thirty_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 130, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1572,6 +1573,8 @@ mod tests {
             "science_string_replace",
             "science_array_new",
             "science_array_with_capacity",
+            "science_array_clone",
+            "science_array_clone_strings",
             "science_map_new",
             "science_string_chars",
             "science_string_lines",

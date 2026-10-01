@@ -206,6 +206,10 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// an element back, writes it through a slot because its size is the
 /// descriptor's and not the signature's, and the rest return `()`, a `Bool`,
 /// an `Int` or `get`'s niche pointer.
+///
+/// **Twenty-two — twenty-four on Windows — with one hundred and thirty rows.**
+/// `science_array_clone` and `science_array_clone_strings` return the cloned
+/// `Array` header, three words, through a hidden pointer as `array_new` does.
 #[test]
 fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_times() {
     let triple = Triple::host().expect("a supported host");
@@ -214,13 +218,13 @@ fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_ti
         .map(|entry| runtime_signature(triple, entry))
         .filter(|sig| sig.ret.is_sret())
         .count();
-    let expected = if triple == Triple::X86_64WindowsMsvc { 22 } else { 20 };
+    let expected = if triple == Triple::X86_64WindowsMsvc { 24 } else { 22 };
     assert_eq!(
         indirect, expected,
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 128, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 130, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

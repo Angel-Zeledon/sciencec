@@ -1,0 +1,8 @@
+error[SC0532]: `any Error?` has no method `message`
+  --> tests/ui/types/method_on_nullable.science:16:13
+   |
+16 |     print(e.message())
+   |             ^^^^^^^ no such method
+   |
+   = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name
+   = note: the value may be absent, and a method is called on the value and not on the possibility of one: test it first with `?` (`if e?:`), which narrows it to the type inside

@@ -497,3 +497,49 @@ def main():
     assert_ne!(ran.status, Some(0));
     assert!(ran.stderr.contains("panic: not found"), "stderr: {}", ran.stderr);
 }
+
+/// `&x` where `x` is already a `&T`, at a call expecting `&T`. The checker
+/// types it as the one borrow, but the place was `x`'s own slot, so the callee
+/// was handed a pointer to a pointer: `show(&record)` printed the length of
+/// whatever the slot's address pointed at. It is a reborrow of what `x`
+/// points at now, shared and exclusive.
+#[test]
+fn a_borrow_of_a_borrow_is_a_reborrow() {
+    let source = "def show(rows: &Array[String]) -> Int:
+    rows.length()
+
+def bump(xs: &mut Array[Int]):
+    xs.push(1)
+
+def twice(xs: &mut Array[Int]) -> Int:
+    bump(&mut xs)
+    bump(&mut xs)
+    xs.length()
+
+def main():
+    let rows be [[\"a\", \"b\"], [\"c\", \"d\"]]
+    for record in rows:
+        print(show(&record))
+    let r be &rows[0]
+    print(show(&r))
+    print(show(r))
+    let mutable a be [0]
+    print(twice(&mut a))
+";
+    assert_eq!(prints("borrow_of_a_borrow", source), "2\n2\n2\n2\n3\n");
+}
+
+/// `Array[String].clone()` clones every string into its own buffer.
+#[test]
+fn array_clone_of_strings_is_independent() {
+    let source = "def main():
+    let mutable a be [\"x\", \"yy\"]
+    let b be a.clone()
+    a[0].push_str(\"zz\")
+    print(b.length())
+    print(b[0])
+    print(a[0])
+    print(b[1])
+";
+    assert_eq!(prints("array_clone_strings", source), "2\nx\nxzz\nyy\n");
+}

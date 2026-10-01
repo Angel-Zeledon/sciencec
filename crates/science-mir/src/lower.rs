@@ -1833,7 +1833,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 block
             }
             ExprKind::Borrow { mutable, operand } => {
-                self.lower_borrow(dest, *mutable, *operand, block, span, false)
+                self.lower_borrow(dest, *mutable, *operand, ty, block, span, false)
             }
             ExprKind::Range { start, end, inclusive } => {
                 let (low, block) = self.operand(*start, block);
@@ -5434,12 +5434,46 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         dest: Place,
         mutable: bool,
         operand: ExprId,
+        result: Ty,
         block: BlockId,
         span: Span,
         in_argument: bool,
     ) -> BlockId {
         let (place, block) = self.borrow_source(operand, block, span);
+        // **`&r` where `r` is already a borrow is a reborrow of what `r` points
+        // at.** The checker types it as the single borrow (`&&T` is collapsed:
+        // the author wrote one `&` and the language has no pointer to a
+        // pointer), but the place is still `r`'s own slot, so borrowing it as
+        // it stands builds a pointer to a pointer typed as a pointer to the
+        // referent, and the callee reads the slot's address as the value.
+        let place = self.collapse_borrow_of_a_borrow(place, operand, result);
         self.borrow_place(dest, mutable, place, block, span, in_argument)
+    }
+
+    /// The place `&operand` borrows when `operand` is itself a borrow and the
+    /// node's own type is the single borrow: one `Deref` further in.
+    ///
+    /// Asked of the *place's* type as well as the expression's, because a field
+    /// read through a borrow is typed as a borrow (Decision 27) while its place
+    /// is the field itself, and that one is borrowed as it stands.
+    fn collapse_borrow_of_a_borrow(&mut self, place: Place, operand: ExprId, result: Ty) -> Place {
+        let result = self.revealed(result);
+        let TyKind::Borrowed { inner: referent, .. } = *self.context.types.kind(result) else {
+            return place;
+        };
+        let written = self.revealed(self.thir.expr(operand).ty);
+        let TyKind::Borrowed { inner: held, .. } = *self.context.types.kind(written) else {
+            return place;
+        };
+        if held != referent {
+            return place;
+        }
+        let place_ty = self.revealed(self.place_ty(&place));
+        if matches!(self.context.types.kind(place_ty), TyKind::Borrowed { .. }) {
+            return place.project(Projection::Deref { ty: held });
+        }
+        // A narrowed `(&T)?` is still written as the nullable.
+        self.deref_to_hole(place, operand)
     }
 
     /// The place a borrow of this expression is taken *from*.
@@ -6084,7 +6118,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Borrow { mutable, operand } => {
                 let temp = self.temp(ty, span, block);
                 let block =
-                    self.lower_borrow(Place::local(temp), *mutable, *operand, block, span, true);
+                    self.lower_borrow(Place::local(temp), *mutable, *operand, ty, block, span, true);
                 (Operand::Move(Place::local(temp)), block)
             }
             // Decision 28's AMENDMENT 6: a reborrow through a `Box`, never an

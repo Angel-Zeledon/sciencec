@@ -746,9 +746,17 @@ fn a_field_of_a_narrowed_nullable_reads_the_narrowed_type() {
         "a field of a narrowed nullable degraded to a hole: {}",
         lowered.dump("f")
     );
+    // The field is read from the payload where it sits (`Projection::Payload`,
+    // dumped as `?`), and not out of a temporary the narrowed value was moved
+    // into: that moved a non-`Copy` record at a mere field read.
     assert!(
-        lowered.statements("f").iter().any(|s| s == "assign narrow"),
-        "the narrowed read did not materialise `Rvalue::Narrow`: {}",
+        !lowered.statements("f").iter().any(|s| s == "assign narrow"),
+        "the narrowed read materialised a moved copy of the payload: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        lowered.dump("f").contains("?.hits") || lowered.dump("f").contains(".?"),
+        "the field was not read through the payload projection: {}",
         lowered.dump("f")
     );
 }

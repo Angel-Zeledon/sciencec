@@ -1,0 +1,7 @@
+error[SC0525]: expected `any Error?`, found `IoError?`
+ --> tests/ui/types/nullable_error_widening.science:9:12
+  |
+9 |     (text, err)
+  |            ^^^ this is `IoError?`
+  |
+  = note: there is no implicit widening of a whole `E?` to `Error?`: test the error and return it narrowed, which boxes it — `if err?: return (value, err)` — and return `null` otherwise

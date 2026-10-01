@@ -337,7 +337,9 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   xs.truncate(1)\n\
          \x20   xs.clear()\n\
          \x20   let mutable ws be [\"b\", \"a\"]\n\
-         \x20   ws.sort()\n",
+         \x20   ws.sort()\n\
+         \x20   let ys be xs.clone()\n\
+         \x20   let vs be ws.clone()\n",
     ),
     // The chain's one barrier. `collections-and-chains.md` §1.4 makes
     // `sorted(by:)` the link that buffers, and `science-mir`'s

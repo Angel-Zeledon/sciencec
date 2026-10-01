@@ -1211,6 +1211,20 @@ impl<'a> BodyChecker<'a> {
                     self.diagnostics.push(mutable_through_box(span, &expected, &found));
                     expr
                 }
+                // `IoError?` into `Error?`: each side is a nullable and the
+                // concrete error would box if it were present, but the
+                // conversion is the caller's to write at the return (core spec
+                // §5.5, `stdlib-core.md` §7.3), so say how.
+                None if self.boxes_once_present(source, target) => {
+                    let found = self.types.render(self.defs, from);
+                    let expected = self.types.render(self.defs, to);
+                    self.diagnostics.push(mismatched_types(span, &expected, &found).with_note(
+                        "there is no implicit widening of a whole `E?` to `Error?`: test the \
+                         error and return it narrowed, which boxes it — \
+                         `if err?: return (value, err)` — and return `null` otherwise",
+                    ));
+                    expr
+                }
                 None => {
                     self.mismatch(from, to, span);
                     // The node stays. Decision 3 makes THIR the tree a
@@ -1221,6 +1235,21 @@ impl<'a> BodyChecker<'a> {
                 }
             },
         }
+    }
+
+    /// Whether `source` is `E?` and `target` is `Error?` with an `E` that
+    /// would box into `any Error` were it present.
+    fn boxes_once_present(&mut self, source: Ty, target: Ty) -> bool {
+        let (TyKind::Nullable(held), TyKind::Nullable(wanted)) =
+            (self.types.kind(source).clone(), self.types.kind(target).clone())
+        else {
+            return false;
+        };
+        let methods = self.decls.methods();
+        matches!(
+            assignable(self.types, methods, self.coercions, Site::Return, held, wanted),
+            Some(Coercion::Box)
+        )
     }
 
     /// §6.3 of the core spec: **auto-borrow at call sites**.
@@ -4643,6 +4672,21 @@ impl<'a> BodyChecker<'a> {
         }
         let recv_ty = self.known_or_error(recv.ty);
         let revealed = self.revealed(recv_ty, span);
+        // A method is not called through an absent-able value: `e.message()`
+        // on an `Error?` that nothing has narrowed. Without this the lookup
+        // found no head, said nothing, and the backend refused the call.
+        if matches!(self.types.kind(revealed), TyKind::Nullable(_))
+            && !self.types.references_error(revealed)
+        {
+            let rendered = self.types.render(self.defs, revealed);
+            self.diagnostics.push(
+                no_such_method(name.span, &name.name, &rendered).with_note(
+                    "the value may be absent, and a method is called on the value and not on \
+                     the possibility of one: test it first with `?` (`if e?:`), which narrows it \
+                     to the type inside",
+                ),
+            );
+        }
         let self_ty = self.receiver_self_ty(revealed, span);
         let found = self.lookup(revealed, name, Form::Value, args, self_ty);
 

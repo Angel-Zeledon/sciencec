@@ -12113,13 +12113,23 @@ impl<'a> Lowerer<'a> {
         let element = self.array_operand_element(body, args, destination).ok_or_else(|| {
             Unlowered::new("an `Array.clone` with no operand this crate can read an element off")
         })?;
+        if self.is_string(element) {
+            return self.lower_runtime_call(
+                body,
+                ctx,
+                "science_array_clone_strings",
+                args,
+                destination,
+                insts,
+            );
+        }
         let owns = match self.direct_release(element)? {
             Some(_) => true,
             None => self.intern_drop_glue(element, 0)?.is_some(),
         };
         if owns {
             return Err(Unlowered::new(format!(
-                "`clone` on an `Array of {}`: an element that owns memory needs a clone function \
+                "`clone` on an `Array of {}`: an element that owns memory (other than a `String`) needs a clone function \
                  per element, which `ScienceTypeInfo` does not carry; `Array.clone` copies the \
                  elements of an array whose element type owns nothing",
                 self.types.render(self.defs, element)

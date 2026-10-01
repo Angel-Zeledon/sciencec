@@ -1,0 +1,16 @@
+# UI test: a method called on a value that may be absent (SC0532).
+#
+# `save()` returns `Error?`, and nothing has tested it, so `e` is still
+# nullable at the call. The lookup used to find no head, say nothing, and leave
+# the backend to refuse the call as `SC0400`. The fix the note names is the
+# presence test, which narrows `e` to the type inside.
+
+def save() -> Error?:
+    let e be write_file("/nonexistent-science-dir/x.txt", "hi")
+    if e?:
+        return e
+    null
+
+def main():
+    let e be save()
+    print(e.message())

@@ -1,0 +1,9 @@
+# UI test: an `IoError?` returned where `Error?` is expected (SC0525).
+#
+# Conversion between error types is written by the caller, at the return (core
+# spec §5.5, `stdlib-core.md` §7.3). A narrowed error boxes; the whole nullable
+# does not widen, and the note says how to write the one-line form.
+
+def load(path: &String) -> (String, Error?):
+    let text, err be read_file(path)
+    (text, err)

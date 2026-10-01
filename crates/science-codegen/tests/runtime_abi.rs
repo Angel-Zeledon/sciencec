@@ -133,6 +133,8 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
                 | "science_array_index_of"
                 | "science_map_new"
                 | "science_map_free"
+                | "science_array_clone"
+                | "science_array_clone_strings"
                 | "science_map_insert"
                 | "science_map_get"
                 | "science_map_contains"
@@ -245,6 +247,8 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     assert_eq!(
         derived,
         [
+            "science_array_clone",
+            "science_array_clone_strings",
             "science_array_new",
             "science_array_with_capacity",
             "science_format_spec_default",
@@ -468,7 +472,7 @@ fn nothing_outside_the_table_is_callable() {
     // answer `get`'s niche the way `get` does. Nothing on the tempting list
     // joined: the bounds checks are inside the operations they guard, not a
     // `science_bounds_check` a call site makes.
-    assert_eq!(RUNTIME.len(), 128);
+    assert_eq!(RUNTIME.len(), 130);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [
