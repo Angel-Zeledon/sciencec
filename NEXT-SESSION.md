@@ -366,8 +366,7 @@ Muchos agentes en paralelo, cada uno en su worktree, integrados por
   `Hash` estructural, así que `Map`/`Set` aceptan registros, tuplas, `choice`s y
   enteros angostos como clave (`SC0548` para una clave que no se puede hashear);
   un `loop:` sin `break` es `Never`; operadores con varios lados derechos
-  (`Complex implements Mul[F64]:`, así que `z * 2.0` funciona — `2.0 * z` no, es
-  un impl huérfano, `SC0207`); especificaciones de formato en f-strings
+  (`Complex implements Mul[F64]:`, así que `z * 2.0` y `2.0 * z` funcionan); especificaciones de formato en f-strings
   (`{x:>10.3f}`, `{n:+,}`); la API completa de `Array` (`insert`, `remove`,
   `swap`, `sort`, `contains`…); cadenas `numbered`, `zip`, `last`,
   `take_while`/`skip_while`, `every`, `minimum/maximum(by:)`, `Map.keys()/
@@ -419,7 +418,9 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
    sin sufijo, y pasar `members[i]` a un parámetro `&mut M`;
 5. un closure que captura algo propio y no `Copy` no puede escapar, y los
    entornos de closures escapados no se liberan;
-6. `2.0 * z` (escalar a la izquierda) es un impl huérfano, `SC0207`.
+6. ~~`2.0 * z` es un impl huérfano~~ (cerrado: un tipo local entre los
+   argumentos de la interfaz hace local el impl; `complex` y `ndarray`
+   escriben `F64 implements Mul[…]`).
 
 No están en la especificación (decisión de diseño, no huecos): guardas en
 `match` y argumentos con nombre en funciones propias.

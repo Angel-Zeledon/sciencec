@@ -8,8 +8,11 @@
 //! - **A user record** answers `a * b` and `a * 2.0` with the right method each.
 //! - **The bundled `complex`** takes `z * 2.0`, `z / 2.0`, `z + 1.0`, `z - 1.0`.
 //! - **The bundled `ndarray`** takes the same four scalars on the right.
-//! - **The scalar on the left** is not writable: `F64 implements Mul[V]` is an
-//!   orphan, `SC0207`.
+//! - **The scalar on the left** is writable beside the local type:
+//!   `F64 implements Mul[V]` is local because `V` is an argument of the
+//!   interface, and `2.0 * z` works in the bundled `complex`. With only foreign
+//!   types in play (`F64 implements Mul[String]`) it is still an orphan,
+//!   `SC0207`.
 
 #![cfg(feature = "llvm")]
 
@@ -114,9 +117,10 @@ def main():
 }
 
 #[test]
-fn a_scalar_on_the_left_is_an_orphan() {
-    let caught = std::panic::catch_unwind(|| {
-        lower(
+fn a_scalar_on_the_left_is_legal_beside_the_local_type() {
+    assert_eq!(
+        prints(
+            "scalar_left",
             "type V:
     x: F64
 
@@ -127,6 +131,62 @@ V implements Mul[F64]:
 F64 implements Mul[V]:
     def mul(self, other: V) -> V:
         V(x: self * other.x)
+
+def main():
+    let v be V(x: 1.5)
+    let k: F64 be 2.0
+    print((2.0 * v).x)
+    print((k * v).x)
+    print((v * 2.0).x)
+    print(k * k + 1.0)
+",
+        ),
+        "3.0\n3.0\n3.0\n5.0\n"
+    );
+}
+
+#[test]
+fn complex_takes_a_real_on_the_left() {
+    assert_eq!(
+        prints(
+            "complex_left",
+            "use complex (Complex)
+
+def main():
+    let z be Complex(re: 1.5, im: -2.0)
+    print(2.0 * z)
+    print(z * 2.0)
+"
+        ),
+        "3.0-4.0i\n3.0-4.0i\n"
+    );
+}
+
+#[test]
+fn ndarray_takes_a_scalar_on_the_left() {
+    assert_eq!(
+        prints(
+            "ndarray_left",
+            "use ndarray (NdArray)
+
+def main():
+    let a be NdArray.arange(1.0, 4.0, 1.0)
+    let b be NdArray.arange(1.0, 4.0, 1.0)
+    print(2.0 * a)
+    print(1.0 + b)
+"
+        ),
+        "[2.0 4.0 6.0]\n[2.0 3.0 4.0]\n"
+    );
+}
+
+#[test]
+fn a_scalar_on_the_left_with_only_foreign_types_is_an_orphan() {
+    let caught = std::panic::catch_unwind(|| {
+        lower(
+            "F64 implements Mul[String]:
+    def mul(self, other: String) -> String:
+        other
 
 def main():
     print(1)

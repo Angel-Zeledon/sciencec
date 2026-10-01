@@ -1506,6 +1506,9 @@ impl Resolver {
     /// type, because `T implements Copy:` would otherwise pass — a type
     /// parameter's module is the one that declared the implementation.
     ///
+    /// A local record or choice among the interface's *arguments* is an owner
+    /// too (`F64 implements Mul[Complex]`), by the head of the argument only.
+    ///
     /// A type alias is not an owner either. `type MyText is String` in this
     /// module does not make `String` this module's to implement on, so an
     /// alias resolves to a `DefKind::Alias` and falls outside the set below.
@@ -1543,6 +1546,22 @@ impl Resolver {
         }
         if let Some(id) = interface_owner {
             if self.defs.module_of(id) == home {
+                return;
+            }
+        }
+        // A local type among the interface's own arguments makes the
+        // implementation local, as Rust's orphan rule has it: `F64 implements
+        // Mul[Complex]` written beside `Complex` cannot collide with anyone
+        // else's, because nobody else can name `Mul[Complex]`. Only the
+        // argument's head counts, so `Mul[Array[Complex]]` is still foreign.
+        // `2.0 * z` is this.
+        if let Some(hir::BoundKind::Interface { generics, .. }) = interface.map(|b| &b.kind) {
+            let local_argument = generics.iter().any(|argument| {
+                self::type_owner(argument)
+                    .filter(|id| matches!(self.defs.get(*id).kind, DefKind::Record | DefKind::Choice))
+                    .is_some_and(|id| self.defs.module_of(id) == home)
+            });
+            if local_argument {
                 return;
             }
         }

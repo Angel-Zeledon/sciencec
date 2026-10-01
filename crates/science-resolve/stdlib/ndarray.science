@@ -63,9 +63,10 @@
 #   `a / 2.0`, `a + 1.0` and `a - 1.0` (`NdArray implements Mul[F64]` and its
 #   three siblings, chosen by the right operand's type), and also
 #   `a.scaled(by: 2.0)` and `a.shifted(by: 1.0)`. The scalar on the *left*,
-#   `2.0 * a`, is not written: it would be `F64 implements Mul[NdArray]`, an
-#   orphan (`SC0207`) under §5.4. `broadcasting.md` §2.1's carve-out is met
-#   from the right only.
+#   `2.0 * a` and `1.0 + a`, are `F64 implements Mul[NdArray]` and
+#   `F64 implements Add[NdArray]`: legal here because `NdArray` is a local
+#   argument of the interface (§5.4). The other two are not commutative and
+#   are not written.
 # - A reduction is a method with the axis as an argument: `sum_axis(axis)`
 #   where `broadcasting.md` §7.2 writes `sum(axis: 0)`. The axis there is a
 #   const so that a bad one is a compile error; it is a runtime `Int` here, and
@@ -610,6 +611,14 @@ NdArray implements Sub[F64]:
 NdArray implements Mul[F64]:
     def mul(self, other: F64) -> NdArray:
         self.scaled(other)
+
+F64 implements Mul[NdArray]:
+    def mul(self, other: NdArray) -> NdArray:
+        other.scaled(self)
+
+F64 implements Add[NdArray]:
+    def add(self, other: NdArray) -> NdArray:
+        other.shifted(self)
 
 NdArray implements Div[F64]:
     def div(self, other: F64) -> NdArray:

@@ -6525,6 +6525,40 @@ impl<'a> BodyChecker<'a> {
             _ => {
                 let left = self.synth(lhs);
                 let right = self.synth(rhs);
+                // `2.0 * z`: a literal on the left has no type until something
+                // gives it one, and a user type on the right is where a scalar
+                // implementation (`F64 implements Mul[Complex]`) lives. Settle
+                // the literal to its default so the operator can be looked up
+                // on that primitive; if no such implementation exists the
+                // ordinary report follows, now about the default type.
+                if let (InferTy::Var(var), InferTy::Known(right_ty)) =
+                    (self.infer.resolve(left.ty), self.infer.resolve(right.ty))
+                {
+                    let right_ty = self.unreported_reveal(right_ty);
+                    let right_is_user = self
+                        .decls
+                        .methods()
+                        .receiver(self.defs, self.types, right_ty)
+                        .is_some_and(|head| !self.defs.get(head).is_builtin());
+                    if right_is_user {
+                        let default = match self.literal_kind(var) {
+                            Some(Numeric::Integer) => {
+                                self.decls.prelude().default_int(self.types)
+                            }
+                            Some(Numeric::Float) => {
+                                self.decls.prelude().default_float(self.types)
+                            }
+                            _ => None,
+                        };
+                        if let Some(default) = default {
+                            let _ = self.infer.unify(
+                                self.types,
+                                left.ty,
+                                InferTy::Known(default),
+                            );
+                        }
+                    }
+                }
                 if let Some((interface, method)) = binary_operator(op) {
                     let dispatched = self.operator(
                         op.as_str(),
@@ -6822,6 +6856,37 @@ impl<'a> BodyChecker<'a> {
             let candidate = self.bound_operator(param, interface_def, method)?;
             return self.operator_call(receiver, operand, candidate, self_ty, span);
         };
+        // **A user's implementation on a primitive does not take over the
+        // primitive's own arithmetic.** `F64 implements Mul[Complex]` (the
+        // scalar on the left, legal because `Complex` is local) puts a user
+        // `mul` on `F64`'s head; `a * b` over two `F64`s must still be the
+        // structural `Binary`. The user implementation is in play only when
+        // the right operand is itself not a primitive (or a literal).
+        if self.defs.get(head).is_builtin() {
+            if let Some((value, _)) = &operand {
+                let operand_is_primitive = match self.infer.resolve(value.ty) {
+                    InferTy::Var(_) => true,
+                    InferTy::Known(ty) => {
+                        let ty = self.unreported_reveal(ty);
+                        self.decls
+                            .methods()
+                            .receiver(self.defs, self.types, ty)
+                            .is_none_or(|operand_head| self.defs.get(operand_head).is_builtin())
+                    }
+                };
+                let all_user_written = match self.decls.methods().lookup(head, method, Form::Value)
+                {
+                    Found::One(candidate) => !self.defs.get(candidate.method).is_builtin(),
+                    Found::Instances(candidates) => candidates
+                        .iter()
+                        .all(|candidate| !self.defs.get(candidate.method).is_builtin()),
+                    _ => false,
+                };
+                if operand_is_primitive && all_user_written {
+                    return None;
+                }
+            }
+        }
         let candidate = match self.decls.methods().lookup(head, method, Form::Value) {
             Found::One(candidate) if candidate.interface() == Some(interface_def) => candidate,
             // **One operator at several right-hand sides**: `Complex

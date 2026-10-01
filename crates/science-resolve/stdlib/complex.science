@@ -26,8 +26,8 @@
 # - A real operand is `z * 2.0`, `z / 2.0`, `z + 1.0` and `z - 1.0`:
 #   `Complex implements Mul[F64]` beside `Complex implements Mul`, the
 #   operand's type picking the implementation. `scaled(by)` stays. The scalar
-#   on the left, `2.0 * z`, is refused: it would be `F64 implements
-#   Mul[Complex]`, an orphan (`SC0207`) under §5.4. Write `z * 2.0`.
+#   on the left, `2.0 * z`, is `F64 implements Mul[Complex]`: legal here
+#   because `Complex` is a local argument of the interface (§5.4).
 # - Division is Smith's algorithm (1962), not the textbook
 #   `(a·c + b·d) / (c² + d²)`: the textbook squares the divisor's parts, so it
 #   overflows to `inf` or underflows to `0` for any divisor with a part beyond
@@ -274,9 +274,9 @@ Complex implements Div:
 
 # A real right-hand side: `Mul[Rhs]` is `Mul` at a second right operand, and the
 # operand's type picks the implementation (`z * w` and `z * 2.0` both work).
-# The scalar on the *left*, `2.0 * z`, would be `F64 implements Mul[Complex]`,
-# which §5.4's orphan rule refuses: neither `F64` nor `Mul` is this module's.
-# Spell it `z * 2.0`.
+# The scalar on the *left*, `2.0 * z`, is `F64 implements Mul[Complex]` below:
+# `F64` and `Mul` are not this module's, but `Complex` is an argument of the
+# interface, and a local type there makes the implementation local (§5.4).
 Complex implements Add[F64]:
     def add(self, other: F64) -> Complex:
         Complex(re: self.re + other, im: self.im)
@@ -292,6 +292,10 @@ Complex implements Mul[F64]:
 Complex implements Div[F64]:
     def div(self, other: F64) -> Complex:
         Complex(re: self.re / other, im: self.im / other)
+
+F64 implements Mul[Complex]:
+    def mul(self, other: Complex) -> Complex:
+        Complex(re: self * other.re, im: self * other.im)
 
 Complex implements Neg:
     def neg(self) -> Complex:
