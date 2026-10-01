@@ -6,7 +6,7 @@
 # one; this is the `native` leg of that diagram and nothing in its signatures
 # mentions how it is computed, so a backend replaces a body and not a caller.
 #
-# Nine decisions are this file's:
+# These are this file's decisions:
 #
 # - **Free functions, not methods.** §16.1 writes `linalg.matmul(a, b)`, so
 #   each operation is a function of the module over `&NdArray`. `use linalg
@@ -39,7 +39,8 @@
 #   `-1.0`. `lower()`, `upper()` and `permutation()` build the three matrices.
 # - **`determinant` is the product of `U`'s diagonal times `sign`.** It is
 #   `(F64, LinalgError?)` because a non-square matrix has none. It overflows
-#   where a large determinant does; `slogdet` is not written.
+#   where a large determinant does; `slogdet` returns the sign and the log of
+#   the magnitude instead (sign `0.0` and log `-inf` for a singular matrix).
 # - **`cholesky` reads and checks both triangles.** It returns the lower `L`
 #   with `A = L * L^T`. A matrix that is not symmetric (within `1e-12` times
 #   the largest magnitude) is `NOT_SYMMETRIC`; one that is symmetric and whose
@@ -49,13 +50,45 @@
 #   `A = Q * R`. Each reflection maps the column to `-sign(x0) * ||x||`, as
 #   LAPACK's does, so the diagonal of `R` is not made non-negative. A column
 #   that is already zero below the diagonal gets no reflection.
-# - **Norms are named, not an `ord` argument.** §16.1 has `norm(a, ord:
-#   Norm)` with `Norm` a choice, which has no use until the tensor type does;
-#   here `norm_frobenius` (any rank), `norm_1` (matrix, largest absolute
-#   column sum), `norm_inf` (matrix, largest absolute row sum) and `norm_2`
-#   (vector, the Euclidean length) are the four asked for. The matrix 2-norm,
-#   the nuclear norm and `svd`, `eig`, `eigh`, `lstsq`, `pinv`, `rank`, `cond`
-#   and `slogdet` of §16.1 are not written.
+# - **`norm(a, ord)` takes a `Norm` choice** (`Frobenius`, `One`, `Infinity`,
+#   `Two`, `Nuclear`), as numpy's does; for a vector `One`, `Infinity` and
+#   `Two` are the sum, the maximum and the Euclidean length of the absolute
+#   values. The matrix `Two` norm is the largest singular value, `Nuclear`
+#   the sum of them. The named `norm_frobenius`, `norm_1`, `norm_inf` and
+#   `norm_2` stay, as the cheap forms that need no `svd`.
+# - **`eigh` is cyclic Jacobi.** For a symmetric matrix (checked within `1e-12`
+#   times the largest magnitude, else `NOT_SYMMETRIC`) it returns the
+#   eigenvalues ascending and the orthonormal eigenvectors as the *columns* of
+#   `vectors`, so `A * V = V * diag(values)`. The sign of an eigenvector is
+#   whatever the rotations leave; do not compare it to numpy's.
+# - **`svd` is one-sided Jacobi (Hestenes)**, thin form: for `A` of `(m, n)` and
+#   `k = min(m, n)`, `u` is `(m, k)`, `s` a vector of `k` singular values in
+#   descending order and `vt` is `(k, n)`, with `A = U * diag(s) * Vt`. Columns
+#   of `U` that belong to a (numerically) zero singular value are completed to
+#   an orthonormal set, so `U` always has orthonormal columns. Signs of paired
+#   singular vectors are not numpy's. A wide matrix is decomposed through its
+#   transpose. The full (square `U`, `Vt`) form is not provided.
+# - **Numerical rank** is the count of singular values above `max(m, n) * eps *
+#   s_max` (numpy's `matrix_rank` default), or above a `rcond * s_max` the
+#   caller gives `pinv`. `cond` is the 2-norm condition `s_max / s_min`, `inf`
+#   when `s_min` is zero (not an error, as numpy's).
+# - **`lstsq` goes through QR** when `A` has at least as many rows as columns
+#   and `R` has no negligible diagonal entry, and otherwise (rank deficient,
+#   or wide) through the SVD pseudo-inverse, which gives the minimum-norm
+#   solution. `Lstsq` carries `x` (of `b`'s trailing shape, `n` or `(n, k)`),
+#   the rank, and `residuals`, the squared 2-norm of `b - A*x` per column of
+#   `b`, always computed (numpy leaves them empty when rank-deficient).
+# - **`eig` is real-only.** The general eigenproblem is solved by shifted QR
+#   iteration to a real Schur form `A = Z T Z^T` and back-substitution for the
+#   eigenvectors of the triangular `T`. If a 2 by 2 block has a complex-conjugate
+#   pair the matrix has non-real eigenvalues and `eig` is `COMPLEX_EIGENVALUES`;
+#   there is no complex result (a `Complex` array type does not exist yet). The
+#   eigenvalues are in Schur order, not sorted; eigenvectors are unit length,
+#   in the columns of `vectors`. A defective matrix returns its eigenvalues and
+#   a (numerically) repeated eigenvector rather than an error, as LAPACK's does.
+# - **The matrix norms**: `norm_frobenius` (any rank), `norm_1` (matrix,
+#   largest absolute column sum), `norm_inf` (matrix, largest absolute row
+#   sum) and `norm_2` (vector, the Euclidean length) take no `svd`.
 #
 # Every sum runs in index order, so a result is deterministic.
 
@@ -70,6 +103,8 @@ public const NOT_SYMMETRIC: Int be 2
 public const NOT_POSITIVE_DEFINITE: Int be 3
 public const SHAPE_MISMATCH: Int be 4
 public const BAD_RANK: Int be 5
+public const COMPLEX_EIGENVALUES: Int be 6
+public const NO_CONVERGENCE: Int be 7
 
 # Why an operation was refused: `kind` is one of the constants above and
 # `reason` is the whole sentence.
@@ -462,3 +497,582 @@ public def norm_2(a: &NdArray) -> (F64, LinalgError?):
     if a.dims.length() is not 1:
         return (0.0, fail(BAD_RANK, f"norm_2 needs a vector, not dims {dims_of(a)}"))
     (norm_frobenius(a), null)
+
+# --- Records for the spectral operations ---------------------------------------
+
+# `eigh` and `eig`: `A * vectors = vectors * diag(values)`; the eigenvectors
+# are the columns of `vectors`.
+public type Eigen:
+    values: NdArray
+    vectors: NdArray
+
+# A thin SVD: `A = u * diag(s) * vt`, `s` descending.
+public type Svd:
+    u: NdArray
+    s: NdArray
+    vt: NdArray
+
+# A least-squares solution (see the header).
+public type Lstsq:
+    x: NdArray
+    rank: Int
+    residuals: NdArray
+
+# `slogdet`: `det = sign * exp(logabsdet)`.
+public type Slogdet:
+    sign: F64
+    logabsdet: F64
+
+# Which norm `norm` computes.
+public choice Norm:
+    Frobenius
+    One
+    Infinity
+    Two
+    Nuclear
+
+def empty_eigen() -> Eigen:
+    Eigen(values: none(), vectors: none())
+
+def empty_svd() -> Svd:
+    Svd(u: none(), s: none(), vt: none())
+
+# `a` transposed; `a` is known to be a matrix.
+def flipped(a: &NdArray) -> NdArray:
+    let rows: Int be a.dims[0]
+    let columns: Int be a.dims[1]
+    let mutable result be NdArray.zeros(& [columns, rows])
+    for row in 0..rows:
+        for column in 0..columns:
+            result.data[column * rows + row] be a.data[row * columns + column]
+    result
+
+# `a * b` for operands whose shapes agree by construction.
+def times(a: &NdArray, b: &NdArray) -> NdArray:
+    let product, err be a.matmul(b)
+    if err?:
+        panic(err.message())
+    product
+
+def vector_of(values: Array[F64]) -> NdArray:
+    let n be values.length()
+    let result, err be NdArray.from_array(values, & [n])
+    if err?:
+        panic(err.message())
+    result
+
+# `b` (a vector or a matrix of `m` rows) as the matrix `(m, k)`.
+def as_matrix(b: &NdArray, m: Int, k: Int) -> NdArray:
+    let result, err be b.clone().reshape(& [m, k])
+    if err?:
+        panic(err.message())
+    result
+
+# --- Symmetric eigenproblem ---------------------------------------------------
+
+# Cyclic Jacobi (see the header).
+public def eigh(a: &NdArray) -> (Eigen, LinalgError?):
+    let bad be square_check(a, "eigh")
+    if bad?:
+        return (empty_eigen(), bad)
+    let n: Int be a.dims[0]
+    let tolerance be 1e-12 * scale_of(a)
+    for row in 0..n:
+        for column in 0..row:
+            if (a.data[row * n + column] - a.data[column * n + row]).abs() > tolerance:
+                return (empty_eigen(), fail(NOT_SYMMETRIC, "eigh needs a symmetric matrix"))
+    let mutable work be a.clone()
+    let mutable vectors be identity(n)
+    let total: F64 be norm_frobenius(a)
+    for _sweep in 0..100:
+        let mutable off be 0.0
+        for p in 0..n:
+            for q in (p + 1)..n:
+                off be off + work.data[p * n + q] * work.data[p * n + q]
+        if off.sqrt() <= 1e-17 * total:
+            break
+        for p in 0..n:
+            for q in (p + 1)..n:
+                let apq be work.data[p * n + q]
+                if apq is not 0.0:
+                    let theta be (work.data[q * n + q] - work.data[p * n + p]) / (2.0 * apq)
+                    let mutable t be 0.5 / theta
+                    if theta.abs() < 1e150:
+                        let root be (theta * theta + 1.0).sqrt()
+                        if theta >= 0.0:
+                            t be 1.0 / (theta + root)
+                        else:
+                            t be -1.0 / (-theta + root)
+                    let c be 1.0 / (t * t + 1.0).sqrt()
+                    let s be t * c
+                    for k in 0..n:
+                        let akp be work.data[k * n + p]
+                        let akq be work.data[k * n + q]
+                        work.data[k * n + p] be c * akp - s * akq
+                        work.data[k * n + q] be s * akp + c * akq
+                    for k in 0..n:
+                        let apk be work.data[p * n + k]
+                        let aqk be work.data[q * n + k]
+                        work.data[p * n + k] be c * apk - s * aqk
+                        work.data[q * n + k] be s * apk + c * aqk
+                    work.data[p * n + q] be 0.0
+                    work.data[q * n + p] be 0.0
+                    for k in 0..n:
+                        let vkp be vectors.data[k * n + p]
+                        let vkq be vectors.data[k * n + q]
+                        vectors.data[k * n + p] be c * vkp - s * vkq
+                        vectors.data[k * n + q] be s * vkp + c * vkq
+    # Ascending order: selection by repeated minimum, ties by index.
+    let mutable taken be Array[Bool].new()
+    for _ in 0..n:
+        taken.push(false)
+    let mutable values be Array[F64].new()
+    let mutable sorted be NdArray.zeros(& [n, n])
+    for position in 0..n:
+        let mutable best be 0
+        let mutable found be false
+        for index in 0..n:
+            if not taken[index]:
+                if not found or work.data[index * n + index] < work.data[best * n + best]:
+                    best be index
+                    found be true
+        taken[best] be true
+        values.push(work.data[best * n + best])
+        for k in 0..n:
+            sorted.data[k * n + position] be vectors.data[k * n + best]
+    (Eigen(values: vector_of(values), vectors: sorted), null)
+
+# --- SVD ----------------------------------------------------------------------
+
+# One-sided Jacobi for `m >= n`; the wide case goes through the transpose.
+def svd_tall(a: &NdArray) -> Svd:
+    let m: Int be a.dims[0]
+    let n: Int be a.dims[1]
+    let mutable work be a.clone()
+    let mutable v be identity(n)
+    for _sweep in 0..60:
+        let mutable rotated be false
+        for p in 0..n:
+            for q in (p + 1)..n:
+                let mutable alpha be 0.0
+                let mutable beta be 0.0
+                let mutable gamma be 0.0
+                for i in 0..m:
+                    let x be work.data[i * n + p]
+                    let y be work.data[i * n + q]
+                    alpha be alpha + x * x
+                    beta be beta + y * y
+                    gamma be gamma + x * y
+                if gamma.abs() > 1e-15 * (alpha * beta).sqrt() and gamma is not 0.0:
+                    rotated be true
+                    let zeta be (beta - alpha) / (2.0 * gamma)
+                    let mutable t be 0.5 / zeta
+                    if zeta.abs() < 1e150:
+                        let root be (1.0 + zeta * zeta).sqrt()
+                        if zeta >= 0.0:
+                            t be 1.0 / (zeta + root)
+                        else:
+                            t be -1.0 / (-zeta + root)
+                    let c be 1.0 / (1.0 + t * t).sqrt()
+                    let s be c * t
+                    for i in 0..m:
+                        let x be work.data[i * n + p]
+                        let y be work.data[i * n + q]
+                        work.data[i * n + p] be c * x - s * y
+                        work.data[i * n + q] be s * x + c * y
+                    for i in 0..n:
+                        let x be v.data[i * n + p]
+                        let y be v.data[i * n + q]
+                        v.data[i * n + p] be c * x - s * y
+                        v.data[i * n + q] be s * x + c * y
+        if not rotated:
+            break
+    # Singular values are the column norms; order them descending.
+    let mutable norms be Array[F64].new()
+    for column in 0..n:
+        let mutable total be 0.0
+        for i in 0..m:
+            total be total + work.data[i * n + column] * work.data[i * n + column]
+        norms.push(total.sqrt())
+    let mutable taken be Array[Bool].new()
+    for _ in 0..n:
+        taken.push(false)
+    let mutable order be Array[Int].new()
+    for _ in 0..n:
+        let mutable best be 0
+        let mutable found be false
+        for index in 0..n:
+            if not taken[index]:
+                if not found or norms[index] > norms[best]:
+                    best be index
+                    found be true
+        taken[best] be true
+        order.push(best)
+    let mutable top be 0.0
+    if n > 0:
+        top be norms[order[0]]
+    let cutoff be (m as F64) * 2.2e-16 * top
+    let mutable u be NdArray.zeros(& [m, n])
+    let mutable vt be NdArray.zeros(& [n, n])
+    let mutable s be Array[F64].new()
+    for position in 0..n:
+        let source be order[position]
+        s.push(norms[source])
+        for j in 0..n:
+            vt.data[position * n + j] be v.data[j * n + source]
+        if norms[source] > cutoff:
+            for i in 0..m:
+                u.data[i * n + position] be work.data[i * n + source] / norms[source]
+        else:
+            # Complete U with the unit vector least explained by the columns so far.
+            let mutable best_norm be -1.0
+            let mutable best_vector be Array[F64].new()
+            for unit in 0..m:
+                let mutable candidate be Array[F64].new()
+                for i in 0..m:
+                    if i is unit:
+                        candidate.push(1.0)
+                    else:
+                        candidate.push(0.0)
+                for _pass in 0..2:
+                    for done in 0..position:
+                        let mutable projection be 0.0
+                        for i in 0..m:
+                            projection be projection + candidate[i] * u.data[i * n + done]
+                        for i in 0..m:
+                            candidate[i] be candidate[i] - projection * u.data[i * n + done]
+                let mutable length be 0.0
+                for i in 0..m:
+                    length be length + candidate[i] * candidate[i]
+                if length > best_norm:
+                    best_norm be length
+                    best_vector be candidate
+            let root be best_norm.sqrt()
+            for i in 0..m:
+                u.data[i * n + position] be best_vector[i] / root
+    Svd(u: u, s: vector_of(s), vt: vt)
+
+# The thin SVD (see the header).
+public def svd(a: &NdArray) -> (Svd, LinalgError?):
+    if not is_matrix(a):
+        return (empty_svd(), fail(BAD_RANK, f"svd needs a matrix, not dims {dims_of(a)}"))
+    if a.dims[0] >= a.dims[1]:
+        return (svd_tall(a), null)
+    let t be svd_tall(flipped(a))
+    (Svd(u: flipped(t.vt), s: t.s, vt: flipped(t.u)), null)
+
+# The count of singular values above `tolerance`.
+def count_above(s: &NdArray, tolerance: F64) -> Int:
+    let mutable count be 0
+    for index in 0..s.data.length():
+        if s.data[index] > tolerance:
+            count be count + 1
+    count
+
+def default_tolerance(a: &NdArray, s: &NdArray) -> F64:
+    let mutable top be 0.0
+    if s.data.length() > 0:
+        top be s.data[0]
+    (a.dims[0].max(a.dims[1]) as F64) * 2.2e-16 * top
+
+# The numerical rank (see the header).
+public def rank(a: &NdArray) -> (Int, LinalgError?):
+    let d, err be svd(a)
+    if err?:
+        return (0, err)
+    (count_above(d.s, default_tolerance(a, d.s)), null)
+
+# The 2-norm condition number `s_max / s_min`; `inf` if `s_min` is zero.
+public def cond(a: &NdArray) -> (F64, LinalgError?):
+    let d, err be svd(a)
+    if err?:
+        return (0.0, err)
+    let k: Int be d.s.data.length()
+    if k is 0:
+        return (0.0, fail(BAD_RANK, "cond needs a matrix with at least one element"))
+    let smallest: F64 be d.s.data[k - 1]
+    if smallest is 0.0:
+        return (F64.INFINITY, null)
+    (d.s.data[0] / smallest, null)
+
+# `V * diag(1/s) * U^T` over the singular values above `cutoff`.
+def pinv_from(d: &Svd, cutoff: F64) -> NdArray:
+    let k: Int be d.s.data.length()
+    let m: Int be d.u.dims[0]
+    let n: Int be d.vt.dims[1]
+    let mutable result be NdArray.zeros(& [n, m])
+    for index in 0..k:
+        if d.s.data[index] > cutoff:
+            let inverse_s be 1.0 / d.s.data[index]
+            for row in 0..n:
+                let left be d.vt.data[index * n + row] * inverse_s
+                for column in 0..m:
+                    result.data[row * m + column] be result.data[row * m + column] + left * d.u.data[column * k + index]
+    result
+
+# The Moore-Penrose pseudo-inverse, dropping singular values at or below
+# `rcond * s_max` (numpy's default `rcond` is `1e-15`).
+public def pinv(a: &NdArray, rcond: F64) -> (NdArray, LinalgError?):
+    let d, err be svd(a)
+    if err?:
+        return (none(), err)
+    let mutable top be 0.0
+    if d.s.data.length() > 0:
+        top be d.s.data[0]
+    (pinv_from(d, rcond * top), null)
+
+# --- Sign and logarithm of the determinant ---------------------------------------
+
+# `(sign, log|det|)`: sign `0.0` and log `-inf` for a singular matrix; refused
+# if not square. Safe where `determinant` would overflow.
+public def slogdet(a: &NdArray) -> (Slogdet, LinalgError?):
+    let factored, err be lu(a)
+    if err?:
+        return (Slogdet(sign: 0.0, logabsdet: 0.0), err)
+    if factored.singular:
+        return (Slogdet(sign: 0.0, logabsdet: -F64.INFINITY), null)
+    let n: Int be a.dims[0]
+    let mutable sign be factored.sign
+    let mutable total be 0.0
+    for index in 0..n:
+        let pivot be factored.lu.data[index * n + index]
+        if pivot < 0.0:
+            sign be -sign
+        total be total + pivot.abs().ln()
+    (Slogdet(sign: sign, logabsdet: total), null)
+
+# --- Least squares -----------------------------------------------------------
+
+# Minimizes `||A * x - b||_2`; `b` is a vector of `m` or a matrix `(m, k)`.
+public def lstsq(a: &NdArray, b: &NdArray) -> (Lstsq, LinalgError?):
+    let blank be Lstsq(x: none(), rank: 0, residuals: none())
+    if not is_matrix(a):
+        return (blank, fail(BAD_RANK, f"lstsq needs a matrix, not dims {dims_of(a)}"))
+    let m: Int be a.dims[0]
+    let n: Int be a.dims[1]
+    if b.dims.length() < 1 or b.dims.length() > 2 or b.dims[0] is not m:
+        return (
+            blank,
+            fail(SHAPE_MISMATCH, f"lstsq needs b to have {m} rows, not dims {dims_of(b)}")
+        )
+    let mutable k be 1
+    if b.dims.length() is 2:
+        k be b.dims[1]
+    let rhs be as_matrix(b, m, k)
+    let mutable solution be NdArray.zeros(& [n, k])
+    let mutable used_rank be n
+    let mutable by_qr be false
+    if m >= n and n > 0:
+        let f, _err be qr(a)
+        let mutable top be 0.0
+        for index in 0..n:
+            let magnitude be f.r.data[index * n + index].abs()
+            if magnitude > top:
+                top be magnitude
+        let mutable bottom be top
+        for index in 0..n:
+            let magnitude be f.r.data[index * n + index].abs()
+            if magnitude < bottom:
+                bottom be magnitude
+        if bottom > (m as F64) * 2.2e-16 * top:
+            by_qr be true
+            # x solves R x = Q^T b over the first n rows.
+            let qtb be times(flipped(f.q), rhs)
+            for column in 0..k:
+                let mutable row be n
+                loop:
+                    if row is 0:
+                        break
+                    row be row - 1
+                    let mutable total be qtb.data[row * k + column]
+                    for step in (row + 1)..n:
+                        total be total - f.r.data[row * n + step] * solution.data[step * k + column]
+                    solution.data[row * k + column] be total / f.r.data[row * n + row]
+    if not by_qr:
+        let d, _err be svd(a)
+        let tolerance be default_tolerance(a, d.s)
+        used_rank be count_above(d.s, tolerance)
+        solution be times(pinv_from(d, tolerance), rhs)
+    # Squared residual norm per column of b.
+    let fitted be times(a, solution)
+    let mutable residuals be Array[F64].new()
+    for column in 0..k:
+        let mutable total be 0.0
+        for row in 0..m:
+            let difference be rhs.data[row * k + column] - fitted.data[row * k + column]
+            total be total + difference * difference
+        residuals.push(total)
+    if b.dims.length() is 1:
+        let flat, _shape be solution.reshape(& [n])
+        return (Lstsq(x: flat, rank: used_rank, residuals: vector_of(residuals)), null)
+    (Lstsq(x: solution, rank: used_rank, residuals: vector_of(residuals)), null)
+
+# --- Norms by name -------------------------------------------------------------
+
+# `||a||` for the chosen `Norm` (see the header). `Frobenius` takes any rank;
+# `One`, `Infinity` and `Two` a vector or a matrix; `Nuclear` a matrix.
+public def norm(a: &NdArray, order: Norm) -> (F64, LinalgError?):
+    let rank_of: Int be a.dims.length()
+    match order:
+        Frobenius: return (norm_frobenius(a), null)
+        One:
+            if rank_of is 1:
+                let mutable total be 0.0
+                for index in 0..a.data.length():
+                    total be total + a.data[index].abs()
+                return (total, null)
+            return norm_1(a)
+        Infinity:
+            if rank_of is 1:
+                let mutable best be 0.0
+                for index in 0..a.data.length():
+                    if a.data[index].abs() > best:
+                        best be a.data[index].abs()
+                return (best, null)
+            return norm_inf(a)
+        Two:
+            if rank_of is 1:
+                return norm_2(a)
+            let d, err be svd(a)
+            if err?:
+                return (0.0, err)
+            if d.s.data.length() is 0:
+                return (0.0, null)
+            return (d.s.data[0], null)
+        Nuclear:
+            let d, err be svd(a)
+            if err?:
+                return (0.0, err)
+            let mutable total be 0.0
+            for index in 0..d.s.data.length():
+                total be total + d.s.data[index]
+            return (total, null)
+
+# --- General eigenproblem (real eigenvalues) --------------------------------------
+
+# True when the entries of row `row` left of column `limit` are all negligible.
+def row_negligible(h: &NdArray, n: Int, row: Int, limit: Int, bound: F64) -> Bool:
+    for column in 0..limit:
+        if h.data[row * n + column].abs() > bound:
+            return false
+    true
+
+# Shifted QR to a real Schur form, then back-substitution (see the header).
+public def eig(a: &NdArray) -> (Eigen, LinalgError?):
+    let bad be square_check(a, "eig")
+    if bad?:
+        return (empty_eigen(), bad)
+    let n: Int be a.dims[0]
+    let mutable h be a.clone()
+    let mutable z be identity(n)
+    let bound be 2.2e-15 * scale_of(a)
+    let mutable active be n
+    let mutable spent be 0
+    loop:
+        if active <= 1:
+            break
+        let last be active - 1
+        if row_negligible(h, n, last, last, bound):
+            for column in 0..last:
+                h.data[last * n + column] be 0.0
+            active be last
+            spent be 0
+            continue
+        # The trailing 2 by 2 block [[p, q], [r, d]] of the active window.
+        let p be h.data[(last - 1) * n + last - 1]
+        let q be h.data[(last - 1) * n + last]
+        let r be h.data[last * n + last - 1]
+        let d be h.data[last * n + last]
+        let half_gap be (p - d) / 2.0
+        let discriminant be half_gap * half_gap + q * r
+        if discriminant < 0.0 and row_negligible(h, n, last, last - 1, bound) and row_negligible(h, n, last - 1, last - 1, bound):
+            return (
+                empty_eigen(),
+                fail(COMPLEX_EIGENVALUES, "eig: the matrix has complex eigenvalues, which eig does not return")
+            )
+        spent be spent + 1
+        if spent > 500:
+            return (empty_eigen(), fail(NO_CONVERGENCE, "eig: the QR iteration did not converge"))
+        # Wilkinson's shift: the eigenvalue of the block nearer `d`; `d` if complex.
+        let mutable shift be d
+        if discriminant >= 0.0:
+            let root be discriminant.sqrt()
+            let middle be (p + d) / 2.0
+            let first be middle + root
+            let second be middle - root
+            if (first - d).abs() < (second - d).abs():
+                shift be first
+            else:
+                shift be second
+        if spent % 11 is 10:
+            shift be d + 0.75 * r.abs()
+        let mutable window be NdArray.zeros(& [active, active])
+        for row in 0..active:
+            for column in 0..active:
+                window.data[row * active + column] be h.data[row * n + column]
+            window.data[row * active + row] be window.data[row * active + row] - shift
+        let f, _err be qr(window)
+        let stepped be times(f.r, f.q)
+        for row in 0..active:
+            for column in 0..active:
+                h.data[row * n + column] be stepped.data[row * active + column]
+            h.data[row * n + row] be h.data[row * n + row] + shift
+        # The rows above the window: Q^T applied to the columns right of it.
+        let qt be flipped(f.q)
+        let width be n - active
+        let mutable right be Array[F64].new()
+        for row in 0..active:
+            for offset in 0..width:
+                let mutable total be 0.0
+                for step in 0..active:
+                    total be total + qt.data[row * active + step] * h.data[step * n + active + offset]
+                right.push(total)
+        for row in 0..active:
+            for offset in 0..width:
+                h.data[row * n + active + offset] be right[row * width + offset]
+        # Z := Z * diag(Q, I).
+        for row in 0..n:
+            let mutable mixed be Array[F64].new()
+            for column in 0..active:
+                let mutable total be 0.0
+                for step in 0..active:
+                    total be total + z.data[row * n + step] * f.q.data[step * active + column]
+                mixed.push(total)
+            for column in 0..active:
+                z.data[row * n + column] be mixed[column]
+    # h is upper triangular now; its diagonal is the spectrum.
+    let floor be 2.2e-16 * scale_of(a) + 1e-300
+    let mutable values be Array[F64].new()
+    let mutable vectors be NdArray.zeros(& [n, n])
+    for k in 0..n:
+        values.push(h.data[k * n + k])
+    for k in 0..n:
+        let mutable x be Array[F64].new()
+        for _ in 0..n:
+            x.push(0.0)
+        x[k] be 1.0
+        let mutable i be k
+        loop:
+            if i is 0:
+                break
+            i be i - 1
+            let mutable total be 0.0
+            for j in (i + 1)..(k + 1):
+                total be total + h.data[i * n + j] * x[j]
+            let mutable gap be h.data[i * n + i] - values[k]
+            if gap.abs() < floor:
+                gap be floor
+            x[i] be -total / gap
+        # v = Z x, normalized.
+        let mutable length be 0.0
+        let mutable column_values be Array[F64].new()
+        for row in 0..n:
+            let mutable total be 0.0
+            for j in 0..(k + 1):
+                total be total + z.data[row * n + j] * x[j]
+            column_values.push(total)
+            length be length + total * total
+        let root be length.sqrt()
+        for row in 0..n:
+            vectors.data[row * n + k] be column_values[row] / root
+    (Eigen(values: vector_of(values), vectors: vectors), null)
