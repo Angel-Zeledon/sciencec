@@ -6364,6 +6364,21 @@ impl<'a> BodyChecker<'a> {
                 // primitive per operator.
                 let left = self.read_value(left, lhs.span);
                 let right = self.read_value(right, rhs.span);
+                // `stdlib-core.md` §6.3: `String implements Add` and `a + b`
+                // on two `String`s concatenates. `Add` declares no method (see
+                // `INTERFACE_DECLS`), so there is nothing to dispatch to and
+                // the answer is structural, as it is for a number: a `String`.
+                // Either side may be a `borrowed String` — the operands are
+                // only read — which is why this runs before `unify`, whose
+                // equality would call `String` and `borrowed String` different.
+                if op == BinaryOp::Add && self.is_string_operand(left.ty) && self.is_string_operand(right.ty) {
+                    let string = self.string_of(left.ty);
+                    return self.push_typed(
+                        ExprKind::Binary { op, lhs: left.id, rhs: right.id },
+                        InferTy::Known(string),
+                        span,
+                    );
+                }
                 let ty = match self.infer.unify(self.types, left.ty, right.ty) {
                     Ok(unified) => unified,
                     Err(_) => {
@@ -8881,6 +8896,38 @@ impl<'a> BodyChecker<'a> {
     fn record_pending(&mut self, id: ExprId, ty: InferTy) {
         if let InferTy::Var(var) = ty {
             self.pending.push((id, var));
+        }
+    }
+
+    /// Whether an operand is a `String`, or a borrow of one.
+    fn is_string_operand(&mut self, ty: InferTy) -> bool {
+        let InferTy::Known(ty) = self.infer.resolve(ty) else { return false };
+        self.string_of_known(ty).is_some()
+    }
+
+    /// The `String` type an operand of [`BodyChecker::is_string_operand`]
+    /// stands for, with a borrow peeled.
+    fn string_of(&mut self, ty: InferTy) -> Ty {
+        match self.infer.resolve(ty) {
+            InferTy::Known(ty) => self.string_of_known(ty).unwrap_or(Ty::ERROR),
+            InferTy::Var(_) => Ty::ERROR,
+        }
+    }
+
+    fn string_of_known(&self, ty: Ty) -> Option<Ty> {
+        let inner = match self.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => *inner,
+            _ => ty,
+        };
+        match self.types.kind(inner) {
+            TyKind::Named { def, args }
+                if args.is_empty()
+                    && self.defs.get(*def).is_builtin()
+                    && self.defs.get(*def).name == "String" =>
+            {
+                Some(inner)
+            }
+            _ => None,
         }
     }
 

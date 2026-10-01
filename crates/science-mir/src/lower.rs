@@ -1766,6 +1766,11 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     // in a loop freed once per iteration and not zero times.
                     BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le
                     | BinaryOp::Ge => (force_copy(left), force_copy(right), block),
+                    // `stdlib-core.md` §6.3's `String + String` reads both
+                    // operands and builds a fresh buffer, so neither is
+                    // consumed: the bindings keep their `Drop`s. On a number
+                    // every operand is `Copy` already and this is the identity.
+                    BinaryOp::Add => (force_copy(left), force_copy(right), block),
                     _ => (left, right, block),
                 };
                 self.assign(block, dest, Rvalue::Binary { op: *op, lhs: left, rhs: right }, span);

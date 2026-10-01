@@ -8301,6 +8301,11 @@ impl<'a> Lowerer<'a> {
         if comparison && is_str(lhs) && is_str(rhs) {
             return self.lower_string_comparison(ctx, op, lhs, rhs, dest, insts);
         }
+        // `stdlib-core.md` §6.3's `String + String`: the destination's type is
+        // the evidence, because two literals name no operand type at all.
+        if op == BinaryOp::Add && self.is_string(dest_ty) {
+            return self.lower_string_concat(ctx, lhs, rhs, dest, insts);
+        }
         let operand_ty = self
             .operand_ty(body, lhs)
             .or_else(|| self.operand_ty(body, rhs))
@@ -8782,6 +8787,62 @@ impl<'a> Lowerer<'a> {
             negated
         };
         insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// `a + b` on two `String`s: a fresh buffer holding `a` and then `b`.
+    ///
+    /// Built from the two entry points a program already reaches —
+    /// `science_string_clone` writes the left operand into the destination's
+    /// slot and `science_string_push_str` appends the right — so the runtime
+    /// table is unchanged. Neither operand is consumed: MIR hands both over as
+    /// `copy`, and a literal operand is a temporary this function frees.
+    fn lower_string_concat(
+        &mut self,
+        ctx: &mut BodyCtx,
+        lhs: &mir::Operand,
+        rhs: &mir::Operand,
+        dest: LocalId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let (left, left_temp) = self.string_pointer(ctx, lhs, insts)?;
+        let (right, right_temp) = self.string_pointer(ctx, rhs, insts)?;
+        let clone = self.declare("science_string_clone")?;
+        if !clone.ret.is_sret() {
+            return Err(Unlowered::new(
+                "`String + String`, on a target where `science_string_clone` does not return \
+                 through a slot",
+            ));
+        }
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Runtime("science_string_clone"),
+            args: vec![Operand::Value(left)],
+            ret: clone.ret.clone(),
+            sret_slot: Some(dest),
+        }));
+        let push = self.declare("science_string_push_str")?;
+        let address = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: address, local: dest });
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Runtime("science_string_push_str"),
+            args: vec![Operand::Value(address), Operand::Value(right)],
+            ret: push.ret.clone(),
+            sret_slot: None,
+        }));
+        for slot in [left_temp, right_temp].into_iter().flatten() {
+            let free = self.declare("science_string_free")?;
+            let address = ctx.value();
+            insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Runtime("science_string_free"),
+                args: vec![Operand::Value(address)],
+                ret: free.ret.clone(),
+                sret_slot: None,
+            }));
+        }
         Ok(())
     }
 

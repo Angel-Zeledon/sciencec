@@ -235,3 +235,35 @@ def main():
         "1\n2\n13\ntrue\n10.0\n14\nfalse\n4\n"
     );
 }
+
+/// `stdlib-core.md` §6.3: `String implements Add` and `+` concatenates.
+///
+/// The checker refused it with `SC0535` because `Add` declares no method, so
+/// nothing could dispatch and the structural fall-through knew only numbers.
+/// It now answers `String` for two strings (either may be a `borrowed String`),
+/// MIR reads both operands without consuming them, and the backend builds the
+/// result from `science_string_clone` and `science_string_push_str`.
+#[test]
+fn string_plus_string_concatenates() {
+    let source = "def greet(name: &String) -> String:
+    \"hello, \" + name + \"!\"
+
+def main():
+    let mutable acc be \"\"
+    for i in 0..3:
+        acc be acc + \"x\"
+    print(acc)
+    let a be \"foo\"
+    let b be \"bar\"
+    let c be a + b
+    print(c)
+    print(a)
+    print(\"lit\" + \"eral\")
+    print(greet(b))
+    print((a + b + a).length())
+";
+    assert_eq!(
+        prints("string_concat", source),
+        "xxx\nfoobar\nfoo\nliteral\nhello, bar!\n9\n"
+    );
+}
