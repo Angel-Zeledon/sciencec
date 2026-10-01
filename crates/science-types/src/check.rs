@@ -4773,7 +4773,59 @@ impl<'a> BodyChecker<'a> {
         let ret = self.apply(&block, ret, span);
         let ret = self.apply(&generic, ret, span);
         let ret = self.instantiate(ret, span);
+        if self.is_chain_sum(candidate.method) {
+            return (ids, InferTy::Known(self.chain_total(ret, span)));
+        }
         (ids, InferTy::Known(ret))
+    }
+
+    /// Whether this callee is `sum()` on one of the prelude's chain types.
+    ///
+    /// By name, because the prelude's definitions are allocated at build time
+    /// and this is the lookup `science-resolve`'s [`CHAIN_TYPES`] is published
+    /// for. A user's own `sum` on a user's own type is never this: the
+    /// definition has to be a builtin *and* its block one of the seven.
+    ///
+    /// [`CHAIN_TYPES`]: science_resolve::builtins::CHAIN_TYPES
+    fn is_chain_sum(&self, method: DefId) -> bool {
+        let def = self.defs.get(method);
+        if !def.is_builtin() || def.name != "sum" {
+            return false;
+        }
+        def.parent.is_some_and(|owner| {
+            science_resolve::builtins::CHAIN_TYPES.contains(&self.defs.get(owner).name.as_str())
+        })
+    }
+
+    /// `sum()`'s type: the item with one shared borrow taken off, held to
+    /// §5.1's numbers.
+    ///
+    /// **`collections-and-chains.md` §1.4 gives `sum` a bound this prelude
+    /// cannot write** — `Self.Item: Add of Output = Total` — and §1.5 says a
+    /// chain of borrowed numbers sums to a number rather than to a borrow.
+    /// `builtins.rs`' chain section declares the item as the return and
+    /// argues why; this is the other half of that decision. A chain over an
+    /// `Array[Int]` has `borrowed Int` items and its `sum()` is an `Int`; a
+    /// chain after `map(each.score * 2.0)` has `F64` items and sums to one.
+    ///
+    /// **Anything that is not a numeric primitive is `SC0547`**, `String`
+    /// included although `String implements Add`: §1.5 lists *"`sum()` with
+    /// no `Add` bound on strings"* among the things deliberately left out,
+    /// because *"concatenation is not summation"*. A type parameter is refused
+    /// too, and that is the narrowing this costs — the note would admit a
+    /// `T: Add`, and F0 has no `Output` to say what such a sum's type is.
+    fn chain_total(&mut self, ret: Ty, span: Span) -> Ty {
+        let total = match *self.types.kind(ret) {
+            TyKind::Borrowed { mutable: false, inner } => inner,
+            _ => ret,
+        };
+        if self.types.references_error(total) || self.decls.prelude().is_numeric(self.types, total)
+        {
+            return total;
+        }
+        let rendered = self.types.render(self.defs, total);
+        self.diagnostics.push(not_summable(span, &rendered));
+        Ty::ERROR
     }
 
     /// `Self`, the block's associated types, and the block's generics.
@@ -5829,6 +5881,9 @@ impl<'a> BodyChecker<'a> {
         let TyKind::Borrowed { inner, .. } = *self.types.kind(source) else {
             return Typed { id: typed.id, ty: InferTy::Known(source) };
         };
+        if let Some(read) = self.read_through_borrows(typed, source, span) {
+            return read;
+        }
         let target = self.revealed(inner, span);
         // `Site::Operand` is what admits §7 for an *exclusive* borrow, and
         // this is the only caller that may: `read_value` is reached from the
@@ -5851,6 +5906,55 @@ impl<'a> BodyChecker<'a> {
             span,
         );
         Typed { id, ty: InferTy::Known(target) }
+    }
+
+    /// `read_value` for a borrow **of a borrow**: one layer peeled, and the
+    /// rest read by `read_value` again — or `None`, and nothing peeled, when
+    /// what is at the bottom would not read as a value anyway.
+    ///
+    /// **Why the layers are not left to `read_value`'s own relation.** `assign`
+    /// answers §7 by asking whether the referent implements `Copy`, and a
+    /// borrow has no head to look an implementation up by, so `borrowed
+    /// borrowed Int` was not peeled at all and the operator met a reference —
+    /// `SC0400` in the backend, *"`>` applied to a `borrowed &I64`"*. A shared
+    /// borrow is `Copy` by §6.1 whatever the index says, so the outer layer
+    /// is a load like any other; what decides is the bottom.
+    ///
+    /// **The chain vocabulary is where two layers are ordinary rather than
+    /// contrived.** A predicate takes `borrowed Item` (§1.2), and after a
+    /// `keep`, a `take` or a `skip` over an `Array[Int]` the item is already
+    /// `borrowed Int`, so `xs.iterate().take(2).discard(each is 1)` writes
+    /// one. Each layer is its own `Copy` coercion, a load apiece.
+    fn read_through_borrows(&mut self, typed: Typed, source: Ty, span: Span) -> Option<Typed> {
+        let TyKind::Borrowed { mutable: false, inner } = *self.types.kind(source) else {
+            return None;
+        };
+        let target = self.revealed(inner, span);
+        if !matches!(self.types.kind(target), TyKind::Borrowed { mutable: false, .. }) {
+            return None;
+        }
+        let mut bottom = target;
+        while let TyKind::Borrowed { mutable: false, inner } = *self.types.kind(bottom) {
+            bottom = self.revealed(inner, span);
+        }
+        let shared = self.types.borrowed(false, bottom);
+        let verdict = assignable(
+            self.types,
+            self.decls.methods(),
+            self.coercions,
+            Site::Operand,
+            shared,
+            bottom,
+        );
+        if verdict != Some(Coercion::Copy) {
+            return None;
+        }
+        let id = self.body.push_expr(
+            ExprKind::Coerce { operand: typed.id, coercion: Coercion::Copy },
+            target,
+            span,
+        );
+        Some(self.read_value(Typed { id, ty: InferTy::Known(target) }, span))
     }
 
     /// §6's operator dispatch: `a + b` is `a.add(b)` and `-a` is `a.neg()`.
@@ -8402,6 +8506,25 @@ fn unsatisfied_bound(
     .with_note(format!(
         "an implementation is a block the program writes: `{ty} implements {interface}:`"
     ))
+}
+
+/// `SC0547` — `sum()` over a chain whose items are not numbers.
+///
+/// **The fix is named, because there is one for each case the author is
+/// likely to be in.** A chain of strings wanted concatenation, which §1.5
+/// sends to `String.from(chain)`; a chain of records wanted a number out of
+/// each, which is a `map` before the `sum`.
+fn not_summable(span: Span, ty: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::NOT_SUMMABLE,
+        format!("`sum()` needs numeric items, and these are `{ty}`"),
+    )
+    .with_label(Label::primary(span, format!("a chain of `{ty}` has no sum")))
+    .with_note(
+        "`collections-and-chains.md` §1.4 sums §5.1's numeric types only: concatenation is not \
+         summation, and a record needs a `map` to the number it holds first — \
+         `.map(each.score).sum()`",
+    )
 }
 
 /// `SC0532` — a method the receiver's type does not have.

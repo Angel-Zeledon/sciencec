@@ -1084,6 +1084,25 @@ pub mod codes {
     /// reads like an oversight — where this one says the scope is deliberate.
     pub const MUTABLE_THROUGH_BOX: Code = Code(546);
 
+    // --- the chain's sum, `SC0547` ----------------------------------------
+
+    /// `sum()` over a chain whose items are not one of §5.1's numeric types.
+    ///
+    /// **`collections-and-chains.md` §1.4's bound, held by the checker because
+    /// the prelude cannot write it.** The note gives `sum` a `where Self.Item:
+    /// Add of Output = Total`, and `builtins.rs` has no `where` clause and no
+    /// `Output` to write one with; `check`'s `BodyChecker::chain_total` is
+    /// where the call is held to it instead.
+    ///
+    /// **Not [`UNSATISFIED_BOUND`]**, because the sentence that code prints
+    /// would be false in the case that matters most: `String` *does*
+    /// implement `Add` (§6.3 makes it concatenation), and §1.5 refuses a
+    /// `sum()` over strings anyway — *"concatenation is not summation"*.
+    /// **Not [`MISMATCHED_TYPES`]** either: there is no slot the chain was
+    /// being assigned to, and `expected a number, found String` would name a
+    /// type the author never wrote an annotation for.
+    pub const NOT_SUMMABLE: Code = Code(547);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1124,6 +1143,7 @@ pub mod codes {
         PRIVATE_METHOD,
 
         MUTABLE_THROUGH_BOX,
+        NOT_SUMMABLE,
     ];
 
     #[cfg(test)]

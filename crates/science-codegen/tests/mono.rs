@@ -708,21 +708,33 @@ def main():
 }
 
 #[test]
-fn the_corpus_reports_where_the_walk_stops() {
-    // Not an assertion about a number: an assertion that the numbers exist and
-    // that the container boundary is where they come from. `science-mir`'s §7
-    // item 6 says every `Array` and `Map` method in the corpus is an
-    // unresolved callee, and this is that fact arriving one phase later.
-    let mut unresolved = 0;
-    for (_, source) in corpus() {
+fn the_corpus_has_no_unresolved_callee_left() {
+    // **Was `the_corpus_reports_where_the_walk_stops`, asserting `unresolved >
+    // 0`**, with the reason *"`science-mir`'s §7 item 6 says every `Array` and
+    // `Map` method in the corpus is an unresolved callee, and this is that
+    // fact arriving one phase later"*. That stopped being true one container
+    // at a time, and the last callee in the corpus the walk could not name was
+    // `examples/16_indentation.science`'s `.first()` — a chain terminal the
+    // prelude did not declare, so `lower_method_call` built
+    // `Unresolved::Method` for it. `first()` is declared and fused now, and
+    // the count is zero.
+    //
+    // So the assertion is turned round rather than deleted: the hole it
+    // measured is closed, and the stronger claim — nothing in the corpus
+    // reaches mono as an unresolved callee — is the one that fails the day a
+    // corpus program acquires one. Every file that contributes is named.
+    let mut unresolved = Vec::new();
+    for (name, source) in corpus() {
         if !is_clean(&source) {
             continue;
         }
         let mut lowered = lower(&source);
         let set = lowered.mono(RootSet::EveryBody);
-        unresolved += set.holes().unresolved_callees;
+        if set.holes().unresolved_callees > 0 {
+            unresolved.push((name, set.holes().unresolved_callees));
+        }
     }
-    assert!(unresolved > 0, "the corpus is full of unresolved container methods");
+    assert!(unresolved.is_empty(), "unresolved callees in the corpus: {unresolved:?}");
 }
 
 #[test]

@@ -2,13 +2,13 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, implementation]))"
 ---
-Module `main` #571 @0..32
-  Record `Doc` #572 @0..3
-  Impl #573 @4..32
-    for: Path -> `Doc` #572 @18..21
+Module `main` #756 @0..32
+  Record `Doc` #757 @0..3
+  Impl #758 @4..32
+    for: Path -> `Doc` #757 @18..21
     methods
-      Fn `get` #574 @4..17
-        receiver: SelfParam `self` #575 @8..12
+      Fn `get` #759 @4..17
+        receiver: SelfParam `self` #760 @8..12
         ret: SelfAssoc `Item` -> <error> @13..17
         body: (none)
 --- diagnostics ---

@@ -2839,15 +2839,18 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
-        // **`collect()` is the whole chain**, and it is taken before the
+        // **A terminal is the whole chain**, and it is taken before the
         // ordinary path because there is no receiver *value* to lower: every
         // adapter between here and the source is a type the note says does no
         // work (§2.1), and building one would mean giving `MapOver` a layout
-        // nothing ever reads. See [`Builder::lower_chain_collect`].
+        // nothing ever reads. See [`Builder::lower_chain_terminal`].
         if let Some(def) = method {
-            if matches!(self.chain_method(def), Some((_, "collect"))) {
+            let terminal = self
+                .chain_method(def)
+                .and_then(|(_, name)| Terminal::named(name, args.first().copied()));
+            if let Some(terminal) = terminal {
                 if let Some(chain) = self.chain_of(receiver) {
-                    return self.lower_chain_collect(dest, &chain, block, span);
+                    return self.lower_chain_terminal(dest, terminal, &chain, block, span);
                 }
             }
         }
@@ -5841,29 +5844,83 @@ fn ty_mentions_param(types: &Types, ty: Ty) -> bool {
 
 // --- the chain vocabulary, fused ------------------------------------------
 
-/// The five prelude types a chain link may be reached through.
+/// The prelude types a chain link may be reached through: `science-resolve`'s
+/// own list, read rather than copied.
 ///
 /// A method is a chain link when its own definition is the prelude's and the
 /// block it was declared in is one of these. Matching on the *name* rather
 /// than on a `DefId` is what `science-resolve`'s `builtins` already does for
 /// every other prelude shape reached from this crate — `Builder::push_of`'s
 /// widths, `Lowerer::prelude_method`'s table — and it costs a lookup the
-/// prelude cannot get wrong, because these five names are declared in exactly
+/// prelude cannot get wrong, because these names are declared in exactly
 /// one place.
-const CHAIN_TYPES: &[&str] =
-    &["ArrayIterate", "Discard", "MapOver", "Take", "SortedBy"];
+const CHAIN_TYPES: &[&str] = science_resolve::builtins::CHAIN_TYPES;
 
 /// One link of a chain, with the argument the author wrote at it.
 #[derive(Debug, Clone, Copy)]
 enum Step {
     /// `discard(p)` — drop the items `p` holds for.
     Discard(ExprId),
+    /// `keep(p)` — drop the items `p` does *not* hold for.
+    Keep(ExprId),
     /// `map(f)` — replace each item with `f` of it.
     Map(ExprId),
-    /// `take(n)` — stop after `n` have been pushed.
+    /// `take(n)` — stop after `n` have passed.
     Take(ExprId),
+    /// `skip(n)` — let the first `n` that reach it go by.
+    Skip(ExprId),
     /// `sorted(by: key)` — §1.4's **barrier**: buffer, sort, yield.
     Sorted(ExprId),
+}
+
+/// What a chain ends in: `collections-and-chains.md` §1.4's terminals that
+/// the prelude declares, with the predicate the author wrote where there is
+/// one.
+#[derive(Debug, Clone, Copy)]
+enum Terminal {
+    /// `collect()` — every item, into an `Array`.
+    Collect,
+    /// `count()` — how many items arrived.
+    Count,
+    /// `sum()` — their total, from zero. `science-types`' `chain_total` has
+    /// already made the result a number and taken any borrow off it.
+    Sum,
+    /// `has_any(p)` — whether one item satisfies `p`; leaves at the first.
+    HasAny(ExprId),
+    /// `has_all(p)` — whether every item does; leaves at the first that
+    /// does not.
+    HasAll(ExprId),
+    /// `first()` — the first item, or `null`; leaves at once.
+    First,
+    /// `find(p)` — the first item `p` holds for, or `null`.
+    Find(ExprId),
+}
+
+impl Terminal {
+    /// The terminal a prelude chain method's name is, when it is one.
+    fn named(name: &str, argument: Option<ExprId>) -> Option<Terminal> {
+        Some(match (name, argument) {
+            ("collect", _) => Terminal::Collect,
+            ("count", _) => Terminal::Count,
+            ("sum", _) => Terminal::Sum,
+            ("first", _) => Terminal::First,
+            ("has_any", Some(predicate)) => Terminal::HasAny(predicate),
+            ("has_all", Some(predicate)) => Terminal::HasAll(predicate),
+            ("find", Some(predicate)) => Terminal::Find(predicate),
+            _ => return None,
+        })
+    }
+
+    /// The terminal's own predicate, evaluated once before the loop exactly as
+    /// a link's closure is.
+    fn predicate(self) -> Option<ExprId> {
+        match self {
+            Terminal::HasAny(predicate) | Terminal::HasAll(predicate) | Terminal::Find(predicate) => {
+                Some(predicate)
+            }
+            Terminal::Collect | Terminal::Count | Terminal::Sum | Terminal::First => None,
+        }
+    }
 }
 
 /// A whole chain, read off the THIR spine of a terminal's receiver.
@@ -5925,8 +5982,10 @@ impl Builder<'_, '_> {
             let item = self.chain_item(item)?;
             let step = match (name, args.first()) {
                 ("discard", Some(arg)) => Step::Discard(*arg),
+                ("keep", Some(arg)) => Step::Keep(*arg),
                 ("map", Some(arg)) => Step::Map(*arg),
                 ("take", Some(arg)) => Step::Take(*arg),
+                ("skip", Some(arg)) => Step::Skip(*arg),
                 ("sorted", Some(arg)) => Step::Sorted(*arg),
                 _ => return None,
             };
@@ -5936,7 +5995,7 @@ impl Builder<'_, '_> {
     }
 
     /// The `Item` an adapter type carries: the second argument of
-    /// `Discard[S, I]` and its three siblings.
+    /// `Discard[S, I]` and its five siblings.
     fn chain_item(&self, ty: Ty) -> Option<Ty> {
         match self.context.types.kind(ty) {
             TyKind::Named { args, .. } => args.get(1).and_then(|arg| arg.as_type()),
@@ -5944,7 +6003,7 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// `chain.collect()` — the terminal, and the only link that does work.
+    /// `chain.terminal()` — the only link that does work.
     ///
     /// # Why the chain is fused here rather than built as values
     ///
@@ -5960,7 +6019,9 @@ impl Builder<'_, '_> {
     ///
     /// It also buys the laziness §2.1 is arguing *for* rather than
     /// approximating it: `take(5)` after a `map` over a million rows does
-    /// five units of work here, because the loop leaves at the fifth push.
+    /// five units of work here, because the loop leaves at the fifth push,
+    /// and `has_any` and `find` leave at the first match — the short-circuit
+    /// §1.4 promises them.
     ///
     /// # What this is not, and the decision it sits next to
     ///
@@ -5973,17 +6034,20 @@ impl Builder<'_, '_> {
     /// *can* be a call is the barrier, and it is one:
     /// `science_array_sort_by_int_key`.
     ///
-    /// # The shape that is refused, and why it is refused here
+    /// # The shapes that are refused, and why they are refused here
     ///
-    /// A link **after** `sorted(by:)`. The buffer a barrier leaves holds
-    /// owned items, so a second pass over it either moves them out — and then
-    /// a `discard` after a `sorted` leaks every item it drops — or borrows
-    /// them, and the chain's `Item` says it does not. That is an ownership
-    /// question the note does not answer and this commit does not invent;
-    /// `Unresolved::Chain` carries the refusal so that the backend names it.
-    fn lower_chain_collect(
+    /// Anything **after** `sorted(by:)` other than `collect()` — a link, or
+    /// one of the scalar terminals. The buffer a barrier leaves holds owned
+    /// items, so a second pass over it either moves them out — and then a
+    /// `discard` after a `sorted` leaks every item it drops, and a `first()`
+    /// every item it does not return — or borrows them, and the chain's
+    /// `Item` says it does not. That is an ownership question the note does
+    /// not answer and this commit does not invent; `Unresolved::Chain`
+    /// carries the refusal so that the backend names it.
+    fn lower_chain_terminal(
         &mut self,
         dest: Place,
+        terminal: Terminal,
         chain: &Chain,
         block: BlockId,
         span: Span,
@@ -5991,10 +6055,10 @@ impl Builder<'_, '_> {
         let barrier = chain.steps.iter().position(|(step, _)| matches!(step, Step::Sorted(_)));
         let Some(at) = barrier else {
             let (source, block) = self.chain_source(chain.source, block, span);
-            return self.chain_pass(dest, None, &source, &chain.steps, block, span);
+            return self.chain_pass(dest, terminal, None, &source, &chain.steps, block, span);
         };
-        if at + 1 != chain.steps.len() {
-            // A link after the barrier. Named rather than mis-lowered.
+        if at + 1 != chain.steps.len() || !matches!(terminal, Terminal::Collect) {
+            // Something after the barrier. Named rather than mis-lowered.
             let discard = Place::local(self.temp(Ty::UNIT, span, block));
             return self.emit_call(
                 discard,
@@ -6025,6 +6089,7 @@ impl Builder<'_, '_> {
         let (source, block) = self.chain_source(chain.source, block, span);
         let mut block = self.chain_pass(
             dest.clone(),
+            Terminal::Collect,
             Some((keys.clone(), key)),
             &source,
             &chain.steps[..at],
@@ -6083,10 +6148,17 @@ impl Builder<'_, '_> {
                 self.borrow_place(Place::local(temp), false, value.clone(), block, span, true);
             return (Operand::Move(Place::local(temp)), block);
         }
+        (self.chain_operand(value, consuming), block)
+    }
+
+    /// The item as an operand: moved when it owns something and the reader
+    /// consumes it, copied otherwise.
+    fn chain_operand(&mut self, value: &Place, consuming: bool) -> Operand {
+        let item_ty = self.place_ty(value);
         if consuming && !self.is_copy(item_ty) {
-            (Operand::Move(value.clone()), block)
+            Operand::Move(value.clone())
         } else {
-            (Operand::Copy(value.clone()), block)
+            Operand::Copy(value.clone())
         }
     }
 
@@ -6107,14 +6179,36 @@ impl Builder<'_, '_> {
         self.context.types.named(array, vec![GenericArg::Type(element)])
     }
 
-    /// One pass of the fused loop: read `source`, apply `steps`, push what
-    /// survives into `dest`.
+    /// One pass of the fused loop: read `source`, apply `steps`, hand what
+    /// survives to `terminal`, and leave the answer in `dest`.
     ///
-    /// `dest` is **created** here, so a caller hands over an empty place of
-    /// the right `Array` type and gets it filled.
+    /// `dest` is **written** here, on every path to the block this returns,
+    /// so a caller hands over an uninitialised place of the terminal's type.
+    ///
+    /// # Every item is a scope, and every way out of it drops what it holds
+    ///
+    /// The per-item temporaries — the element borrow, each `map`'s result,
+    /// each predicate's borrow — live in a scope pushed for the body, and
+    /// every edge that leaves the body — to the next item, to the end because
+    /// a `take` ran out, to the end because a `find` matched — runs that
+    /// scope's exits first ([`Builder::chain_leave`]). An item a `discard`
+    /// drops, a `skip` passes over, or a `count` counts is a value the chain
+    /// owns when it is owned at all (anything after a `map` that allocates),
+    /// and the drop elaboration of `crate::drops` is what decides, per path,
+    /// whether it is still there to release: a `collect` has moved it into the
+    /// array and a `first` into the result, and those drops go away.
+    ///
+    /// Before this, the body's temporaries lived in the statement's scope and
+    /// were dropped once, after the loop, so an owned item a `discard` passed
+    /// over was overwritten by the next turn's `map` rather than released —
+    /// and a scalar terminal, which moves nothing, would have made that every
+    /// item. `chains.rs`' `a_discarded_owned_item_is_released` holds the
+    /// resident size flat across a quarter of a million of them.
+    #[allow(clippy::too_many_arguments)]
     fn chain_pass(
         &mut self,
         dest: Place,
+        terminal: Terminal,
         keys: Option<(Place, ExprId)>,
         source: &Place,
         steps: &[(Step, Ty)],
@@ -6129,13 +6223,31 @@ impl Builder<'_, '_> {
         };
         let element_ty = self.element_ty(source);
 
-        block = self.emit_call(
-            dest.clone(),
-            Callee::Runtime(ARRAY_WITH_CAPACITY),
-            vec![Operand::Const(Constant::Count(0))],
-            block,
-            span,
-        );
+        // What `dest` holds before the first item, for the three terminals
+        // that accumulate into it. The other four write it once, at the edge
+        // that decides it.
+        match terminal {
+            Terminal::Collect => {
+                block = self.emit_call(
+                    dest.clone(),
+                    Callee::Runtime(ARRAY_WITH_CAPACITY),
+                    vec![Operand::Const(Constant::Count(0))],
+                    block,
+                    span,
+                );
+            }
+            Terminal::Count => {
+                self.assign(block, dest.clone(), Rvalue::Use(Self::bits(0)), span);
+            }
+            Terminal::Sum => {
+                let zero = self.zero_of(self.place_ty(&dest));
+                self.assign(block, dest.clone(), Rvalue::Use(zero), span);
+            }
+            Terminal::HasAny(_)
+            | Terminal::HasAll(_)
+            | Terminal::First
+            | Terminal::Find(_) => {}
+        }
         // The barrier's parallel key array, built the same way and in step
         // with the buffer, so that index `i` of one describes index `i` of
         // the other for `science_array_sort_by_int_key`.
@@ -6176,26 +6288,35 @@ impl Builder<'_, '_> {
         // **Every closure is evaluated once, before the loop.** A closure
         // expression allocates its capture set, and building it per turn
         // would be both slower and wrong for a capture that owns anything.
+        // `take` and `skip` get a limit and a counter the same way, and the
+        // terminal's own predicate is evaluated beside the links'.
         let mut closures: Vec<Option<(Local, Ty)>> = Vec::with_capacity(steps.len());
         let mut limits: Vec<Option<(Local, Local)>> = Vec::with_capacity(steps.len());
         for (step, _) in steps {
             match step {
-                Step::Discard(arg) | Step::Map(arg) | Step::Sorted(arg) => {
+                Step::Discard(arg) | Step::Keep(arg) | Step::Map(arg) | Step::Sorted(arg) => {
                     let ty = self.thir.expr(*arg).ty;
                     let temp = self.temp(ty, span, block);
                     block = self.expr_into(Place::local(temp), *arg, block);
                     closures.push(Some((temp, ty)));
                     limits.push(None);
                 }
-                Step::Take(arg) => {
+                Step::Take(arg) | Step::Skip(arg) => {
                     let limit = self.temp(int_ty, span, block);
                     block = self.expr_into(Place::local(limit), *arg, block);
-                    let taken = self.temp(int_ty, span, block);
-                    self.assign(block, Place::local(taken), Rvalue::Use(Self::bits(0)), span);
+                    let counted = self.temp(int_ty, span, block);
+                    self.assign(block, Place::local(counted), Rvalue::Use(Self::bits(0)), span);
                     closures.push(None);
-                    limits.push(Some((limit, taken)));
+                    limits.push(Some((limit, counted)));
                 }
             }
+        }
+        let mut predicate = None;
+        if let Some(arg) = terminal.predicate() {
+            let ty = self.thir.expr(arg).ty;
+            let temp = self.temp(ty, span, block);
+            block = self.expr_into(Place::local(temp), arg, block);
+            predicate = Some((temp, ty));
         }
 
         let cursor = self.temp(int_ty, span, block);
@@ -6204,7 +6325,12 @@ impl Builder<'_, '_> {
         let head = self.new_block();
         let body_block = self.new_block();
         let step_block = self.new_block();
-        let exit = self.new_block();
+        // Two ends, not one: `exhausted` is reached when the source or a
+        // `take` runs out, and `done` also from a terminal that has its
+        // answer early. `exhausted` writes the answer running out means —
+        // `false` for `has_any`, `null` for `find` — and falls into `done`.
+        let exhausted = self.new_block();
+        let done = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
 
         // `cursor < length`, compared unsigned, which is
@@ -6237,9 +6363,17 @@ impl Builder<'_, '_> {
         );
         self.terminate(
             head,
-            TerminatorKind::If { cond: Operand::Copy(Place::local(more)), then_block: body_block, else_block: exit },
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: body_block,
+                else_block: exhausted,
+            },
             span,
         );
+
+        // The item's scope. Everything the body makes is registered here.
+        self.push_scope();
+        let depth = self.scopes.len() - 1;
 
         // The element, reached *through* the loan, at an index temporary the
         // body assigns once — `Projection::Index`'s own contract.
@@ -6260,9 +6394,9 @@ impl Builder<'_, '_> {
 
         for (index, (step, item_after)) in steps.iter().enumerate() {
             match step {
-                Step::Discard(_) => {
+                Step::Discard(_) | Step::Keep(_) => {
                     let (closure, closure_ty) =
-                        closures[index].expect("a discard carries a closure");
+                        closures[index].expect("a filter carries a closure");
                     let (argument, next) =
                         self.chain_argument(&value, closure_ty, false, current, span);
                     current = next;
@@ -6275,19 +6409,25 @@ impl Builder<'_, '_> {
                         span,
                     );
                     // §3.1: `discard` drops what matches, so a `true` is the
-                    // *skip*. That direction is the whole reason the note
-                    // carries two verbs instead of one and a negation.
-                    let keep = self.new_block();
+                    // *skip*; `keep` is the same test the other way round.
+                    // That direction is the whole reason the note carries two
+                    // verbs instead of one and a negation.
+                    let (pass, skip) = (self.new_block(), self.new_block());
+                    let (then_block, else_block) = match step {
+                        Step::Discard(_) => (skip, pass),
+                        _ => (pass, skip),
+                    };
                     self.terminate(
                         current,
                         TerminatorKind::If {
                             cond: Operand::Copy(Place::local(matched)),
-                            then_block: step_block,
-                            else_block: keep,
+                            then_block,
+                            else_block,
                         },
                         span,
                     );
-                    current = keep;
+                    self.chain_leave(skip, depth, step_block, span);
+                    current = pass;
                 }
                 Step::Map(_) => {
                     let (closure, closure_ty) = closures[index].expect("a map carries a closure");
@@ -6304,91 +6444,168 @@ impl Builder<'_, '_> {
                     );
                     value = Place::local(mapped);
                 }
-                Step::Take(_) => {
-                    let (limit, taken) = limits[index].expect("a take carries a count");
-                    let enough = self.temp(self.bool_ty, span, current);
+                Step::Take(_) | Step::Skip(_) => {
+                    let (limit, counted) = limits[index].expect("a take or a skip carries a count");
+                    let below = self.temp(self.bool_ty, span, current);
                     self.assign(
                         current,
-                        Place::local(enough),
+                        Place::local(below),
                         Rvalue::Binary {
                             op: BinaryOp::Lt,
-                            lhs: Operand::Copy(Place::local(taken)),
+                            lhs: Operand::Copy(Place::local(counted)),
                             rhs: Operand::Copy(Place::local(limit)),
                         },
                         span,
                     );
-                    // **The loop leaves rather than skipping**, which is the
-                    // laziness §2.1 is arguing for: nothing after the nth
-                    // item is read at all.
-                    let room = self.new_block();
+                    // Below the limit, both count the item; what differs is
+                    // which side of the limit the item *passes* on. A `take`
+                    // passes what it counts and, at the limit, **leaves the
+                    // loop rather than skipping** — the laziness §2.1 is
+                    // arguing for: nothing after the nth item is read at all.
+                    // A `skip` swallows what it counts and passes everything
+                    // after.
+                    let (counting, over) = (self.new_block(), self.new_block());
                     self.terminate(
                         current,
                         TerminatorKind::If {
-                            cond: Operand::Copy(Place::local(enough)),
-                            then_block: room,
-                            else_block: exit,
+                            cond: Operand::Copy(Place::local(below)),
+                            then_block: counting,
+                            else_block: over,
                         },
                         span,
                     );
-                    current = room;
-                    let stepped = self.temp(int_ty, span, current);
+                    let stepped = self.temp(int_ty, span, counting);
                     self.assign(
-                        current,
+                        counting,
                         Place::local(stepped),
                         Rvalue::Binary {
                             op: BinaryOp::Add,
-                            lhs: Operand::Copy(Place::local(taken)),
+                            lhs: Operand::Copy(Place::local(counted)),
                             rhs: Self::bits(1),
                         },
                         span,
                     );
                     self.assign(
-                        current,
-                        Place::local(taken),
+                        counting,
+                        Place::local(counted),
                         Rvalue::Use(Operand::Copy(Place::local(stepped))),
                         span,
                     );
+                    if matches!(step, Step::Take(_)) {
+                        self.chain_leave(over, depth, exhausted, span);
+                        current = counting;
+                    } else {
+                        self.chain_leave(counting, depth, step_block, span);
+                        current = over;
+                    }
                 }
                 Step::Sorted(_) => unreachable!("a barrier is split off before the pass"),
             }
         }
 
-        // **The key before the push**, because the push moves the item and
-        // the key closure only borrows it: reversing the two would compute a
-        // key from a place the array now owns.
-        if let (Some((keys, _)), Some((closure, closure_ty))) = (&keys, key_closure) {
-            let (argument, next) = self.chain_argument(&value, closure_ty, false, current, span);
-            current = next;
-            let key_value = self.temp(int_ty, span, current);
-            current = self.emit_call(
-                Place::local(key_value),
-                Callee::Indirect(Operand::Copy(Place::local(closure))),
-                vec![argument],
-                current,
-                span,
-            );
-            let (key_accumulator, next) = self.accumulator_ref(keys, current, span);
-            current = next;
-            let discard = Place::local(self.temp(Ty::UNIT, span, current));
-            current = self.emit_call(
-                discard,
-                Callee::Runtime(ARRAY_PUSH),
-                vec![key_accumulator, Operand::Move(Place::local(key_value))],
-                current,
-                span,
-            );
+        // The terminal, with the item that survived every link in hand.
+        match terminal {
+            Terminal::Collect => {
+                // **The key before the push**, because the push moves the
+                // item and the key closure only borrows it: reversing the two
+                // would compute a key from a place the array now owns.
+                if let (Some((keys, _)), Some((closure, closure_ty))) = (&keys, key_closure) {
+                    let (argument, next) =
+                        self.chain_argument(&value, closure_ty, false, current, span);
+                    current = next;
+                    let key_value = self.temp(int_ty, span, current);
+                    current = self.emit_call(
+                        Place::local(key_value),
+                        Callee::Indirect(Operand::Copy(Place::local(closure))),
+                        vec![argument],
+                        current,
+                        span,
+                    );
+                    let (key_accumulator, next) = self.accumulator_ref(keys, current, span);
+                    current = next;
+                    let discard = Place::local(self.temp(Ty::UNIT, span, current));
+                    current = self.emit_call(
+                        discard,
+                        Callee::Runtime(ARRAY_PUSH),
+                        vec![key_accumulator, Operand::Move(Place::local(key_value))],
+                        current,
+                        span,
+                    );
+                }
+                let (accumulator, next) = self.accumulator_ref(&dest, current, span);
+                current = next;
+                let discard = Place::local(self.temp(Ty::UNIT, span, current));
+                current = self.emit_call(
+                    discard,
+                    Callee::Runtime(ARRAY_PUSH),
+                    vec![accumulator, Operand::Move(value)],
+                    current,
+                    span,
+                );
+                self.chain_leave(current, depth, step_block, span);
+            }
+            Terminal::Count => {
+                self.chain_add(&dest, Self::bits(1), current, span);
+                self.chain_leave(current, depth, step_block, span);
+            }
+            Terminal::Sum => {
+                // §1.5: a chain of borrowed numbers sums to a number. The
+                // checker has already said the total is one; the item may
+                // still be a borrow of it, and is read through when it is.
+                let operand = match *self.context.types.kind(self.place_ty(&value)) {
+                    TyKind::Borrowed { inner, .. } => {
+                        Operand::Copy(value.project(Projection::Deref { ty: inner }))
+                    }
+                    _ => Operand::Copy(value),
+                };
+                self.chain_add(&dest, operand, current, span);
+                self.chain_leave(current, depth, step_block, span);
+            }
+            Terminal::First => {
+                self.chain_found(&dest, &value, current, span);
+                self.chain_leave(current, depth, done, span);
+            }
+            Terminal::HasAny(_) | Terminal::HasAll(_) | Terminal::Find(_) => {
+                let (closure, closure_ty) = predicate.expect("a terminal predicate was evaluated");
+                let (argument, next) =
+                    self.chain_argument(&value, closure_ty, false, current, span);
+                current = next;
+                let matched = self.temp(self.bool_ty, span, current);
+                current = self.emit_call(
+                    Place::local(matched),
+                    Callee::Indirect(Operand::Copy(Place::local(closure))),
+                    vec![argument],
+                    current,
+                    span,
+                );
+                let (hit, miss) = (self.new_block(), self.new_block());
+                self.terminate(
+                    current,
+                    TerminatorKind::If {
+                        cond: Operand::Copy(Place::local(matched)),
+                        then_block: hit,
+                        else_block: miss,
+                    },
+                    span,
+                );
+                // `has_all` is decided by the first item that *fails*, the
+                // other two by the first that passes. Whichever edge decides
+                // it writes the answer and leaves; the other goes on.
+                let (decided, next_item) = match terminal {
+                    Terminal::HasAll(_) => (miss, hit),
+                    _ => (hit, miss),
+                };
+                match terminal {
+                    Terminal::HasAny(_) => self.chain_assign_bool(&dest, true, decided, span),
+                    Terminal::HasAll(_) => self.chain_assign_bool(&dest, false, decided, span),
+                    _ => self.chain_found(&dest, &value, decided, span),
+                }
+                self.chain_leave(decided, depth, done, span);
+                self.chain_leave(next_item, depth, step_block, span);
+            }
         }
-        let (accumulator, next) = self.accumulator_ref(&dest, current, span);
-        current = next;
-        let discard = Place::local(self.temp(Ty::UNIT, span, current));
-        current = self.emit_call(
-            discard,
-            Callee::Runtime(ARRAY_PUSH),
-            vec![accumulator, Operand::Move(value)],
-            current,
-            span,
-        );
-        self.terminate(current, TerminatorKind::Goto { target: step_block }, span);
+        // Every path out of the body has run the item scope's exits.
+        self.scopes.pop();
 
         let stepped = self.temp(int_ty, span, step_block);
         self.assign(
@@ -6408,6 +6625,68 @@ impl Builder<'_, '_> {
             span,
         );
         self.terminate(step_block, TerminatorKind::Goto { target: head }, span);
-        exit
+
+        // What running out means, per terminal.
+        match terminal {
+            Terminal::HasAny(_) => self.chain_assign_bool(&dest, false, exhausted, span),
+            Terminal::HasAll(_) => self.chain_assign_bool(&dest, true, exhausted, span),
+            Terminal::First | Terminal::Find(_) => {
+                let null = Operand::Const(Constant::Literal(Literal::Null));
+                self.assign(exhausted, dest.clone(), Rvalue::Use(null), span);
+            }
+            Terminal::Collect | Terminal::Count | Terminal::Sum => {}
+        }
+        self.terminate(exhausted, TerminatorKind::Goto { target: done }, span);
+        done
+    }
+
+    /// Leave the item's scope from `from` and go to `target`: the drops and
+    /// `StorageDead`s of everything the body made, then the edge.
+    fn chain_leave(&mut self, from: BlockId, depth: usize, target: BlockId, span: Span) {
+        let block = self.exit_scopes(depth, from, span);
+        self.terminate(block, TerminatorKind::Goto { target }, span);
+    }
+
+    /// `dest = dest + operand`, through a temporary, which is how `take`'s
+    /// counter has always been stepped.
+    fn chain_add(&mut self, dest: &Place, operand: Operand, block: BlockId, span: Span) {
+        let ty = self.place_ty(dest);
+        let stepped = self.temp(ty, span, block);
+        self.assign(
+            block,
+            Place::local(stepped),
+            Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(dest.clone()), rhs: operand },
+            span,
+        );
+        self.assign(block, dest.clone(), Rvalue::Use(Operand::Copy(Place::local(stepped))), span);
+    }
+
+    /// `dest = value?` — Decision 6's widening, the item moved in when it owns
+    /// something, which is what makes its drop at the scope exit go away.
+    fn chain_found(&mut self, dest: &Place, value: &Place, block: BlockId, span: Span) {
+        let ty = self.place_ty(dest);
+        let operand = self.chain_operand(value, true);
+        self.assign(
+            block,
+            dest.clone(),
+            Rvalue::Coerce { operand, coercion: Coercion::Widen, ty },
+            span,
+        );
+    }
+
+    fn chain_assign_bool(&mut self, dest: &Place, answer: bool, block: BlockId, span: Span) {
+        let constant = Operand::Const(Constant::Literal(Literal::Bool(answer)));
+        self.assign(block, dest.clone(), Rvalue::Use(constant), span);
+    }
+
+    /// The zero `sum()` starts from, spelled for the total's type: a float
+    /// literal for a float, so that nothing downstream has to reinterpret an
+    /// integer's bits as one.
+    fn zero_of(&self, ty: Ty) -> Operand {
+        if self.context.decls.prelude().is_float(self.context.types, ty) {
+            Operand::Const(Constant::Literal(Literal::Float { value: 0.0, suffix: None }))
+        } else {
+            Self::bits(0)
+        }
     }
 }

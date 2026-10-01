@@ -23,7 +23,7 @@
 //! `for` in the source. The reading that keeps the test honest is that the
 //! author **did** write a traversal — in the spelling
 //! `collections-and-chains.md` §4.6 calls *"the shape most Science code
-//! takes"* — and `lower`'s `Builder::lower_chain_collect` emits exactly one
+//! takes"* — and `lower`'s `Builder::lower_chain_terminal` emits exactly one
 //! header per terminal, folding the barrier's key pass into the same loop
 //! rather than adding a second. So a terminal is counted the same way a `for`
 //! is, and the test keeps its teeth: a chain that acquired *two* loops, or any
@@ -84,18 +84,28 @@ fn back_edges(body: &Body) -> Vec<(BlockId, BlockId)> {
 
 /// The traversals the author wrote: a `loop`, a `for`, and a chain terminal.
 ///
-/// A terminal is counted by occurrences of `.collect()` and not by lines,
-/// because a short chain fits on one — `xs.iterate().take(2).collect()` is one
-/// traversal on one line, and this corpus writes both the long form and the
-/// short one. `collect` is the only terminal the prelude declares; the day a
-/// second lands it belongs in this list, and the failure that says so is this
-/// test.
+/// A terminal is counted by occurrences and not by lines, because a short
+/// chain fits on one — `xs.iterate().take(2).collect()` is one traversal on
+/// one line, and this corpus writes both the long form and the short one.
+///
+/// [`TERMINALS`] is every terminal the prelude declares. The list grew from
+/// `collect()` alone the day the scalar terminals landed, and the failure that
+/// said so was this test, on `examples/16_indentation.science`'s `.first()`.
+/// `.find(` and `.has_any(` are spelled up to the parenthesis because they
+/// take a predicate; `String.find` counts too, which over-counts what the
+/// author wrote and so can only make this test more lenient, never wrong.
 fn loops_written(source: &str) -> usize {
     let lines = || source.lines().map(str::trim_start).filter(|line| !line.starts_with('#'));
     let statements = lines().filter(|line| *line == "loop:" || line.starts_with("for ")).count();
-    let terminals: usize = lines().map(|line| line.matches(".collect()").count()).sum();
+    let terminals: usize = lines()
+        .map(|line| TERMINALS.iter().map(|terminal| line.matches(terminal).count()).sum::<usize>())
+        .sum();
     statements + terminals
 }
+
+/// The chain terminals, as they are written at a call.
+const TERMINALS: &[&str] =
+    &[".collect()", ".count()", ".sum()", ".first()", ".has_any(", ".has_all(", ".find("];
 
 #[test]
 fn a_body_with_no_loop_has_no_back_edge() {

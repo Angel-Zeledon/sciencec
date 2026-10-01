@@ -108,7 +108,7 @@
 //! sentence as it stood was false the day `collect()` lowered. What it is
 //! *not* is an invented loop: the author wrote a traversal, in the spelling
 //! `collections-and-chains.md` §4.6 calls *"the shape most Science code
-//! takes"*, and [`lower`]'s `Builder::lower_chain_collect` emits exactly one
+//! takes"*, and [`lower`]'s `Builder::lower_chain_terminal` emits exactly one
 //! header per terminal — the barrier folds its key pass into the same loop
 //! rather than adding a second.
 //!

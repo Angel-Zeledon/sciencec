@@ -110,7 +110,13 @@ def mixed(a: &String, b: &String) -> Int:
 # Not every indented continuation opens a block. A chain broken by a leading
 # `.` is indented too (§4.6), and it is one logical line: the indentation
 # after `docs` belongs to the expression, not to a new body.
-def first_headline(docs: &Array[Doc]) -> String?:
+#
+# The result is `(&String)?` and not `String?`: `collections-and-chains.md`
+# §4.3 makes `.map(each.title)` a chain of borrows, and `first()` hands back
+# its item — `00_kitchen_sink`'s `headlines` collects the same borrows into
+# an `Array[&String]` for the same reason. This line said `String?` while
+# `first()` was a name the prelude had not declared, and nothing checked it.
+def first_headline(docs: &Array[Doc]) -> (&String)?:
     docs
         .iterate()
         .map(each.title)

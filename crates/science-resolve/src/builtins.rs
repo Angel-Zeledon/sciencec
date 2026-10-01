@@ -172,15 +172,18 @@ const LIBRARY_TYPES: &[&str] = &[
     "TextError",
     "Formatter",
     // `collections-and-chains.md` §1.4's chain, narrowed to the links
-    // `examples/00_kitchen_sink.science` writes. `ArrayIterate` is §5.4's
-    // source type by name; the other four are §1.4's adapter names —
-    // `Discard of (Self, P)`, `MapOver of (Self, F)`, `Take of Self`,
-    // `SortedBy of (Self, F)`. What each one's parameters are, and why they
-    // are not the note's, is argued at [`BLOCKS`]' chain section.
+    // [`BLOCKS`] transcribes. `ArrayIterate` is §5.4's source type by name;
+    // the other six are §1.4's adapter names — `Discard of (Self, P)`,
+    // `Keep of (Self, P)`, `MapOver of (Self, F)`, `Take of Self`,
+    // `Skip of Self`, `SortedBy of (Self, F)`. What each one's parameters
+    // are, and why they are not the note's, is argued at [`BLOCKS`]' chain
+    // section.
     "ArrayIterate",
     "Discard",
+    "Keep",
     "MapOver",
     "Take",
+    "Skip",
     "SortedBy",
 ];
 
@@ -849,6 +852,121 @@ const IMPLEMENTS: &[(&str, &[&str])] = &[
     ("IoError", &["Display", "Eq", "Clone"]),
     ("TextError", &["Display", "Eq", "Clone"]),
 ];
+
+/// The thirteen chain links one chain type answers, as [`Method`]s.
+///
+/// `this` is the chain type itself — what a link consumes and names as its
+/// new source; `item` its `Item`; `borrowed` how a predicate or a key closure
+/// takes that item (collapsed to `item` on `ArrayIterate`, whose item is
+/// already a borrow); `total` what `sum()` declares. [`BLOCKS`]' chain section
+/// says why this is a macro and not a hand-written table, and why each
+/// signature is the one it is.
+macro_rules! chain_links {
+    ($this:expr, item: $item:expr, borrowed: $borrowed:expr, total: $total:expr $(,)?) => {
+        &[
+            // The adapters. Each returns a chain type whose source is `this`.
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::App("Discard", &[$this, $item])),
+            },
+            Method {
+                name: "keep",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::App("Keep", &[$this, $item])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[$item], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[$this, Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[$this, $item])),
+            },
+            Method {
+                name: "skip",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Skip", &[$this, $item])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[$borrowed], &INT))],
+                ret: Some(Ty::App("SortedBy", &[$this, $item])),
+            },
+            // The terminals. Each runs the chain.
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[$item])),
+            },
+            Method { name: "count", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some(INT) },
+            Method { name: "sum", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some($total) },
+            Method {
+                name: "has_any",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(BOOL),
+            },
+            Method {
+                name: "has_all",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(BOOL),
+            },
+            Method {
+                name: "first",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::Opt(&$item)),
+            },
+            Method {
+                name: "find",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::Opt(&$item)),
+            },
+        ]
+    };
+}
+
+/// One adapter's block: `X[S, I]`, the chain it consumed and the item it
+/// yields, answering [`chain_links!`]' thirteen names.
+macro_rules! chain_adapter {
+    ($name:literal) => {
+        Block {
+            ty: $name,
+            generics: &["S", "I"],
+            interface: None,
+            assoc: &[],
+            methods: chain_links!(
+                Ty::App($name, &[Ty::Var("S"), Ty::Var("I")]),
+                item: Ty::Var("I"),
+                borrowed: Ty::Ref(&Ty::Var("I")),
+                total: Ty::Var("I"),
+            ),
+        }
+    };
+}
 
 /// The prelude's blocks with methods in them.
 ///
@@ -1790,14 +1908,20 @@ const BLOCKS: &[Block] = &[
 
     // --- the chain vocabulary -------------------------------------------
     //
-    // `collections-and-chains.md` §1.4's closed set, narrowed to the six links
-    // `examples/00_kitchen_sink.science` writes: the source `iterate()`, the
-    // adapters `discard`, `map`, `take` and `sorted(by:)`, and the terminal
-    // `collect()`. Nothing else from that table is declared, under §10's own
-    // rule that a name is transcribed when a program that runs it arrives with
-    // it.
+    // `collections-and-chains.md` §1.4's closed set, narrowed to the thirteen
+    // links below: the source `iterate()`; the adapters `discard`, `keep`,
+    // `map`, `take`, `skip` and `sorted(by:)`; and the terminals `collect()`,
+    // `count()`, `sum()`, `has_any`, `has_all`, `first()` and `find`. The
+    // first six were the ones `examples/00_kitchen_sink.science` writes;
+    // `first()` is the one `examples/16_indentation.science` writes; the rest
+    // are the group every pipeline reaches for next — the positive filter,
+    // the other half of `take`, and the terminals that answer with a scalar
+    // instead of an `Array`. Nothing else from that table is declared, under
+    // §10's own rule that a name is transcribed when a program that runs it
+    // arrives with it — `chains.rs` in `science-codegen-llvm` is that program
+    // for every name here.
     //
-    // # The three places this departs from the note, each priced
+    // # The four places this departs from the note, each priced
     //
     // 1. **The combinators are inherent methods on each adapter, not provided
     //    methods on `Iterate`.** §1.1 wants the second — *"Users implement
@@ -1826,6 +1950,22 @@ const BLOCKS: &[Block] = &[
     //    The example wrote `.sort(by:)` mid-chain, which is the `Array`
     //    method in a position no `Array` is in; the example is what moved.
     //
+    // 4. **`first`, `find`, `has_any` and `has_all` take `self`, where §1.4
+    //    writes `mutable self`.** The note's reason for the exclusive
+    //    receiver is §2.3's point 2 — *"so that a chain can be probed and
+    //    then continued; those require `let mutable`"* — and a probed chain
+    //    is a chain **stored in a variable**, which is the one shape this
+    //    compiler refuses outright (no adapter has a runtime
+    //    representation; `science-mir` fuses at the terminal). So the
+    //    exclusive receiver would buy nothing a program can reach, and it
+    //    would cost every chain written in one expression — every corpus
+    //    site — an exclusive borrow of a temporary. By value is what the
+    //    other terminals take and what a one-expression chain is. The day a
+    //    chain can be stored, these four go back to `mutable self` and
+    //    nothing that compiles today stops compiling: a by-value receiver is
+    //    the stricter of the two at a stored chain, and the laxer one at a
+    //    temporary.
+    //
     // # Why the closure parameters are written as arrows
     //
     // See [`Ty::Fn`]. A bare `f: F` would type-check and then bind `each` at
@@ -1852,6 +1992,31 @@ const BLOCKS: &[Block] = &[
     // `K: Ord` bound and one comparison in `science_array_sort_by_int_key`,
     // the day `Ord` has a method.
 
+    // # `sum()` returns the item with its borrow peeled, and the checker says so
+    //
+    // §1.4 writes `sum(self) -> Total where Self.Item: Add of Output =
+    // Total`, and §1.5 adds that there is no separate *"`sum` over
+    // references"* — a chain of `borrowed Int` sums to an `Int`. Neither half
+    // is a signature [`Method`] can carry: it has no `where` clause, and
+    // *"`I` with one shared borrow taken off"* is not a type a declaration
+    // can spell while `I` is still a parameter.
+    //
+    // **Decision. The declaration says the item, and `science-types`'
+    // `BodyChecker::chain_total` peels it and holds it to §5.1's numbers.**
+    // `ArrayIterate[T]` declares `-> T`, which is already exact; each adapter
+    // declares `-> I`, which is exact after a `map` and one borrow too many
+    // anywhere else. The checker reads the call's result, takes one shared
+    // borrow off, and refuses anything that is not a numeric primitive with
+    // `SC0547` — `String` included, although `String implements Add`, because
+    // §1.5 says in as many words that *"concatenation is not summation"*.
+    //
+    // **The reason is the diagnostic.** Without the checker's half, `sum()`
+    // over `String`s checks clean and reaches the backend as a hole — an
+    // `SC0400` about MIR, for a mistake that is one word in the source. The
+    // cost is one prelude method the checker knows by name, which is the
+    // lookup `science-mir` already makes for every link here; it goes away
+    // when `Add` has an `Output` this file can bound on.
+
     // # A predicate and a key closure take a **borrow** of the item; `map`
     // # takes the item
     //
@@ -1861,7 +2026,8 @@ const BLOCKS: &[Block] = &[
     // `sorted(by:)` *destroy* the value they were asked to inspect, because a
     // by-value closure parameter is dropped at the end of the closure body.
     // It is a use-after-free with a length of zero for a symptom, and it is
-    // what the first version of this table produced.
+    // what the first version of this table produced. `keep`, `has_any`,
+    // `has_all` and `find` are predicates by the same sentence.
     //
     // `map` is the exception and stays `(Self.Item) -> U`, per §1.4: a map
     // *consumes* the item and hands back another, which is exactly what its
@@ -1871,8 +2037,19 @@ const BLOCKS: &[Block] = &[
     // item `borrowed T`, so `borrowed Self.Item` would be `borrowed borrowed
     // T` — a spelling that says nothing the first borrow does not. It
     // collapses, and the declaration below is written `(borrowed T)` on all
-    // three. `science-mir`'s `Builder::chain_argument` reads whichever of the
-    // two spellings a link was declared with rather than assuming either.
+    // of them. `science-mir`'s `Builder::chain_argument` reads whichever of
+    // the two spellings a link was declared with rather than assuming either.
+
+    // # Thirteen links on seven types, written once
+    //
+    // Every chain type answers the same thirteen names, and the only things
+    // that differ between them are the type itself, its `Item`, the spelling
+    // of a borrowed item (collapsed on the source, above) and what `sum()`
+    // declares. [`chain_links!`] takes those four and writes the thirteen. By
+    // hand this table was five copies of five methods; at thirteen it would
+    // be ninety-one entries whose only content is those four facts, and a
+    // copy that drifted — a `keep` returning `Discard`, a `find` taking its
+    // item by value — would be a miscompile nothing reports.
 
     // The source. §5.4: *"`def iterate(self) -> ArrayIterate of T`"*, and §4.3
     // fixes its `Item`: *"`iterate()` yields `borrowed Item` uniformly"*, which
@@ -1886,219 +2063,22 @@ const BLOCKS: &[Block] = &[
         generics: &["T"],
         interface: None,
         assoc: &[],
-        methods: &[
-            Method {
-                name: "discard",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &BOOL))],
-                ret: Some(Ty::App("Discard", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
-            },
-            Method {
-                name: "map",
-                generics: &["U"],
-                recv: Some(SelfKind::Value),
-                params: &[("f", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &Ty::Var("U")))],
-                ret: Some(Ty::App("MapOver", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Var("U")])),
-            },
-            Method {
-                name: "take",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("n", INT)],
-                ret: Some(Ty::App("Take", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
-            },
-            Method {
-                name: "sorted",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &INT))],
-                ret: Some(Ty::App("SortedBy", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
-            },
-            Method {
-                name: "collect",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[],
-                ret: Some(Ty::App("Array", &[Ty::Ref(&Ty::Var("T"))])),
-            },
-        ],
+        methods: chain_links!(
+            Ty::App("ArrayIterate", &[Ty::Var("T")]),
+            item: Ty::Ref(&Ty::Var("T")),
+            borrowed: Ty::Ref(&Ty::Var("T")),
+            total: Ty::Var("T"),
+        ),
     },
-    // The four adapters. Each is `X[S, I]` — the chain it consumed, and the
-    // `Item` it yields — so the five links read identically on all of them and
-    // a chain's type still spells the chain out.
-    Block {
-        ty: "Discard",
-        generics: &["S", "I"],
-        interface: None,
-        assoc: &[],
-        methods: &[
-            Method {
-                name: "discard",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
-                ret: Some(Ty::App("Discard", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "map",
-                generics: &["U"],
-                recv: Some(SelfKind::Value),
-                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
-                ret: Some(Ty::App("MapOver", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
-            },
-            Method {
-                name: "take",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("n", INT)],
-                ret: Some(Ty::App("Take", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "sorted",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
-                ret: Some(Ty::App("SortedBy", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "collect",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[],
-                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
-            },
-        ],
-    },
-    Block {
-        ty: "MapOver",
-        generics: &["S", "I"],
-        interface: None,
-        assoc: &[],
-        methods: &[
-            Method {
-                name: "discard",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
-                ret: Some(Ty::App("Discard", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "map",
-                generics: &["U"],
-                recv: Some(SelfKind::Value),
-                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
-                ret: Some(Ty::App("MapOver", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
-            },
-            Method {
-                name: "take",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("n", INT)],
-                ret: Some(Ty::App("Take", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "sorted",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
-                ret: Some(Ty::App("SortedBy", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "collect",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[],
-                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
-            },
-        ],
-    },
-    Block {
-        ty: "Take",
-        generics: &["S", "I"],
-        interface: None,
-        assoc: &[],
-        methods: &[
-            Method {
-                name: "discard",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
-                ret: Some(Ty::App("Discard", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "map",
-                generics: &["U"],
-                recv: Some(SelfKind::Value),
-                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
-                ret: Some(Ty::App("MapOver", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
-            },
-            Method {
-                name: "take",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("n", INT)],
-                ret: Some(Ty::App("Take", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "sorted",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
-                ret: Some(Ty::App("SortedBy", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "collect",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[],
-                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
-            },
-        ],
-    },
-    Block {
-        ty: "SortedBy",
-        generics: &["S", "I"],
-        interface: None,
-        assoc: &[],
-        methods: &[
-            Method {
-                name: "discard",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
-                ret: Some(Ty::App("Discard", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "map",
-                generics: &["U"],
-                recv: Some(SelfKind::Value),
-                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
-                ret: Some(Ty::App("MapOver", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
-            },
-            Method {
-                name: "take",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("n", INT)],
-                ret: Some(Ty::App("Take", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "sorted",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
-                ret: Some(Ty::App("SortedBy", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
-            },
-            Method {
-                name: "collect",
-                generics: &[],
-                recv: Some(SelfKind::Value),
-                params: &[],
-                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
-            },
-        ],
-    },
+    // The six adapters. Each is `X[S, I]` — the chain it consumed, and the
+    // `Item` it yields — so the thirteen links read identically on all of
+    // them and a chain's type still spells the chain out.
+    chain_adapter!("Discard"),
+    chain_adapter!("Keep"),
+    chain_adapter!("MapOver"),
+    chain_adapter!("Take"),
+    chain_adapter!("Skip"),
+    chain_adapter!("SortedBy"),
 ];
 
 /// The surface a note gives a prelude type and [`BLOCKS`] has not transcribed.
@@ -2238,6 +2218,71 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
             "clone",
         ],
     ),
+    // **The seven chain types, each with the same list: the names of
+    // `collections-and-chains.md` §1.4 that [`BLOCKS`] has not transcribed.**
+    // These rows used to be [`WHOLLY_OPEN`] entries, and that row's own
+    // reason — *"listing the other thirty-two in [`UNWRITTEN`], five times
+    // over, is transcribing the vocabulary into the wrong table"* — stopped
+    // holding once thirteen names were transcribed: the remainder is
+    // one list, [`CHAIN_UNWRITTEN`], named once and pointed at seven times,
+    // and what closing the types buys is `SC0532` on a misspelled link —
+    // `.frist()`, `.colect()` — which until now reached the backend as a
+    // hole and was reported as an `SC0400` about MIR.
+    ("ArrayIterate", CHAIN_UNWRITTEN),
+    ("Discard", CHAIN_UNWRITTEN),
+    ("Keep", CHAIN_UNWRITTEN),
+    ("MapOver", CHAIN_UNWRITTEN),
+    ("Take", CHAIN_UNWRITTEN),
+    ("Skip", CHAIN_UNWRITTEN),
+    ("SortedBy", CHAIN_UNWRITTEN),
+];
+
+/// `collections-and-chains.md` §1.4's names that no chain type in [`BLOCKS`]
+/// declares yet, in the note's own order.
+///
+/// Twenty-six names. §1.4 counts *rows* — thirty-eight — and a row is not a
+/// name: `minimum`/`maximum` and `has_any`/`has_all` are one row and two
+/// names each, and `sorted()`/`sorted(by:)` and `unique()`/`unique(by:)` are
+/// two rows and one name each. Thirteen names are declared; these are the
+/// rest, and the two lists together are every name the table gives.
+///
+/// **Two names in §1.4 are not here although only one of their forms is
+/// declared**: `sorted()` beside `sorted(by:)`, and `unique()` beside
+/// `unique(by:)`. `sorted` is declared, with its `by:` parameter, so a bare
+/// `sorted()` is a wrong argument count and not a silence — the same
+/// narrowing [`BLOCKS`]' `sorted(by:)` comment already prices, which is that
+/// there is no `Ord` to sort a bare item by. `unique` is here, both forms.
+const CHAIN_UNWRITTEN: &[&str] = &[
+    // Transforming.
+    "expand",
+    "flatten",
+    "owned",
+    "numbered",
+    "accumulate",
+    // Filtering and selecting.
+    "keep_some",
+    "keep_ok",
+    "take_while",
+    "skip_while",
+    "every",
+    "unique",
+    // Pairing, grouping, windowing.
+    "zip",
+    "followed_by",
+    "batches",
+    "windows",
+    "reverse",
+    // Terminals.
+    "collect_or_error",
+    "partition_results",
+    "partition",
+    "reduce",
+    "product",
+    "minimum",
+    "maximum",
+    "last",
+    "group",
+    "tally",
 ];
 
 /// Prelude types whose method surface is open *entirely*, with the reason.
@@ -2270,7 +2315,10 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 ///   methods (`collections-and-chains.md` §1.4), and the prelude declares
 ///   `Iterate` with `next` alone. Listing thirty-eight names in [`UNWRITTEN`]
 ///   would be transcribing the vocabulary into the wrong table; the type is
-///   open until `Iterate` carries them.
+///   open until `Iterate` carries them. (The seven chain types took the
+///   other road once [`BLOCKS`] declared thirteen of those names on them:
+///   the rest is [`CHAIN_UNWRITTEN`], one list. `Chars` declares none of the
+///   thirteen, so for it the list would be the whole vocabulary again.)
 ///
 /// - **Every numeric primitive, plus `Bool` and `Char`.** Found while landing
 ///   `Clone.clone`, and it is the same finding one layer down: `Methods`'
@@ -2297,27 +2345,11 @@ const WHOLLY_OPEN: &[&str] = &[
     // `Lines`, for `Chars`' reason: its surface is `Iterate`'s provided
     // methods and only `next` is transcribed.
     "Lines",
-    // **The five chain types, for `Chars`' reason and not a new one.** Each
-    // one's surface is `collections-and-chains.md` §1.4's thirty-eight
-    // provided methods, and [`BLOCKS`] transcribes the six
-    // `examples/00_kitchen_sink.science` writes. Listing the other
-    // thirty-two in [`UNWRITTEN`], five times over, is what that row already
-    // refuses as *"transcribing the vocabulary into the wrong table"*.
-    //
-    // **What it costs, measured rather than assumed.** A misspelled link is
-    // silent, which is the cost `Chars` pays. What paid for it is
-    // `examples/16_indentation.science`: it writes `.first()` — §1.4's
-    // terminal, and a real name — mid-chain, and before these types existed
-    // the whole chain was excused because `MapOver` was not a type. Leaving
-    // them closed would make that file stop building on a name the note
-    // gives, to no one's benefit; the honest answer is that the vocabulary
-    // is six-thirty-eighths transcribed and says so. The row shrinks as the
-    // set lands, and disappears when it is whole.
-    "ArrayIterate",
-    "Discard",
-    "MapOver",
-    "Take",
-    "SortedBy",
+    // **The chain types are not here any more.** They were, for `Chars`'
+    // reason, while six of §1.4's thirty-eight were transcribed; with
+    // thirteen, the remainder is one list and [`UNWRITTEN`] points each of
+    // the seven types at it. `examples/16_indentation.science`'s `.first()`,
+    // which is what held them open, is declared now.
     // The numeric primitives, `Bool` and `Char`, which `Clone.clone` gave an
     // index entry and therefore a closed surface they have no note for.
     "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F16", "BF16", "F32", "F64", "Int",
@@ -2335,6 +2367,17 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
     WHOLLY_OPEN.contains(&ty)
         || UNWRITTEN.iter().any(|(name, methods)| *name == ty && methods.contains(&method))
 }
+
+/// The seven prelude types a chain link is declared on: §5.4's source and
+/// §1.4's six adapters that [`BLOCKS`] transcribes.
+///
+/// **Public because two crates ask "is this a chain link" by name** —
+/// `science-types`, to peel `sum()`'s borrow (see [`BLOCKS`]' chain
+/// section), and `science-mir`, to fuse a chain at its terminal — and a
+/// list each of them kept would be a third place to update the day an
+/// adapter lands, which is exactly the edit nothing would report missing.
+pub const CHAIN_TYPES: &[&str] =
+    &["ArrayIterate", "Discard", "Keep", "MapOver", "Take", "Skip", "SortedBy"];
 
 /// The free functions' signatures.
 ///

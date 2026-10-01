@@ -278,7 +278,7 @@ const CORPUS: &[(&str, &str)] = &[
     ),
     // The chain's one barrier. `collections-and-chains.md` §1.4 makes
     // `sorted(by:)` the link that buffers, and `science-mir`'s
-    // `Builder::lower_chain_collect` fuses everything around it into one loop
+    // `Builder::lower_chain_terminal` fuses everything around it into one loop
     // — so `science_array_sort_by_int_key` is the only symbol in `RUNTIME`
     // that no `for`, no literal and no method call can reach. A chain is the
     // only thing that emits it, and this is the chain.
