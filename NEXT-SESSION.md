@@ -360,21 +360,73 @@ Muchos agentes en paralelo, cada uno en su worktree, integrados por
 - **Una prueba que lee archivos del repo en tiempo de ejecución** (el corpus de
   regiones lee `examples/`) se rompe si el árbol cambia a mitad de una corrida.
 
+### Segunda tanda, ya en `master` (2026-10-01)
+
+- **Núcleo:** `Ord` con su único método `less` (`<` sobre tipos propios);
+  `Hash` estructural, así que `Map`/`Set` aceptan registros, tuplas, `choice`s y
+  enteros angostos como clave (`SC0548` para una clave que no se puede hashear);
+  un `loop:` sin `break` es `Never`; operadores con varios lados derechos
+  (`Complex implements Mul[F64]:`, así que `z * 2.0` funciona — `2.0 * z` no, es
+  un impl huérfano, `SC0207`); especificaciones de formato en f-strings
+  (`{x:>10.3f}`, `{n:+,}`); la API completa de `Array` (`insert`, `remove`,
+  `swap`, `sort`, `contains`…); cadenas `numbered`, `zip`, `last`,
+  `take_while`/`skip_while`, `every`, `minimum/maximum(by:)`, `Map.keys()/
+  values()/iterate()`, y `for` sobre cualquier cadena.
+- **Rechazos nuevos en el front end:** `true < false`, `<` sobre un `T` sin
+  cota `Ord`, un float pasado a `T: Ord` (los floats salieron de `Ord`, §5.1),
+  y `let mutable x be null` sin anotación (`SC0526`, pide `Int?`).
+- **Backend:** siete programas válidos que se rechazaban o compilaban mal
+  (borrow nullable reasignado en un loop, `IoError` dentro de `Error?`,
+  `"a" < "b"`, closures pasados a genéricos, argumentos de tipo tupla/nullable).
+- **Biblioteca:** `scargo` (`sciencec new`, paquetes con dependencias `path`),
+  `stats`, lectura en `io` (`read_line`, `File.open`, `BufferedReader`),
+  `ndarray` (F64, broadcasting por método, reducciones por eje, `matmul`),
+  `csv` (RFC 4180, `Table`, columnas tipadas), `json` (RFC 8259 estricto, línea
+  y columna en errores, todo número es `F64`) y `encoding` (base64, hex,
+  UTF-8/UTF-16).
+
 ### Lo que sigue abierto
 
-En curso al cerrar este traspaso (agentes en sus ramas): un iterador
-`Lines`/`Chars` guardado en una variable lee memoria liberada
-(`let it be "x\ny".lines()` y luego `for l in it:`); el uso tras movimiento no
-se reporta para un tipo que no posee nada (`random` lo esquiva con un `Drop`
-vacío en `Key`); especificaciones de formato en f-strings (`{x:.2}` es
-`SC0173` hoy); `Ord`/`Ordering` (`<` sobre tipos propios); `Hash` y claves de
-`Map`/`Set` que sean registros o tuplas; la API completa de `Array`; lectura
-(`read_line`, `File.open`, `BufferedReader`); `path`; y `scargo`.
+**Cerrados al final de la sesión:** un closure en un `let` sin anotar infiere
+su parámetro del cuerpo (`SC0526` si el cuerpo no lo fija); una función que
+devuelve un closure captura los `Copy` por valor (§8.7 de `science-mir`; el
+entorno no se libera todavía); `Stack[String](items: …)` construye; `String +
+String` concatena; closures de varios parámetros `(acc, x) giving …`.
 
-Sin dueño todavía: `let mutable x be null` seguido de `x be 5` llega al backend
-como `SC0400` (decidir si infiere `I64?` o se rechaza); un `loop:` que solo sale
-por `return` se tipa `()` y no puede cerrar una función; operadores mixtos
-(`z * 2.0` con `Complex`) necesitan un `Mul[Rhs]`; métodos de `math` sobre los
-enteros angostos; `numbered()`, `Map.keys()/values()` y los demás eslabones de
-cadena; un tipo vista de `String` si se quiere volver a las firmas de §6.9; y
-Windows y Linux, que casi no se probaron — todo se ejecutó en este Mac.
+**Huecos del núcleo todavía abiertos:**
+1. **miscompilación:** `show(&r)` con `r` ya un `&T` pasa un puntero a puntero
+   y lee basura (había un agente de bugs encima; mirar su rama);
+2. `.message()` sobre un `Error?` sin estrechar pasa `check` y el backend lo
+   rechaza; `match` sobre un `(&T)?` estrechado, igual;
+3. `clone()` de `Array[String]`; `clone()` sobre `&String` devuelve `&String`;
+   `IoError?` no se convierte a `Error?`; `panic(err)` imprime vacío;
+4. leer un campo de un nullable estrechado y después otro da un `SC0301` falso
+   (layout de par etiquetado, `Narrow` en `science-mir`); `if top?:` sobre un
+   `T?` propio libera el contenido al final del `if`;
+5. no hay borrows en dos fases (`fail(c, "…", c.pos)` es `SC0330`); reasignar
+   un préstamo (`current be next`) lo rechazan las regiones;
+6. `members[i].value be v` falla; `let a, _ be f()` y `f().0` no parsean;
+   el nombre de una función no es un valor (`map(half)` es `SC0400`);
+7. un closure que captura algo propio y no `Copy` no puede escapar, y los
+   entornos de closures escapados no se liberan.
+
+No están en la especificación (decisión de diseño, no huecos): guardas en
+`match` y argumentos con nombre en funciones propias.
+
+**Cadenas:** ya están `reduce`, `product`, `accumulate`, `keep_some` y
+`reverse`, y `sorted(by:)`/`reverse()` son barreras generales (lo que sigue a un
+`sort` funciona). Faltan `unique`, `tally`, `group` (emitir llamadas a `Map`
+desde MIR), `partition`/`partition_results` (necesitan registros `Parts` y
+`Outcome` en el preludio), `batches`, `windows`, `flatten`, `expand`,
+`followed_by`, `owned`, `keep_ok`, `collect_or_error`; una cadena guardada en
+variable (§2.3); `sorted(by: each)` tras otro eslabón ve `&&Int`.
+
+**Biblioteca, siguiente:** `linalg` sobre `ndarray`, `text` (mayúsculas,
+graphemes), `dataframe`; en `ndarray`, vistas, `xs[i, j]`, operadores `.+`.
+
+**Decisiones pendientes del usuario** (de un agente de planificación): si
+`agent` entra ahora (revierte la Decisión 2 de `mcp-servers.md`); si la
+validez estadística es de tipos de biblioteca y no avisos del compilador; si la
+forma de `ndarray` se vuelve `(nombre?, extensión)` desde ya.
+
+Windows y Linux casi no se probaron — todo corrió en este Mac.
