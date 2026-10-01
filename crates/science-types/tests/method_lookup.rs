@@ -1511,3 +1511,19 @@ def flip():
         .collect();
     assert_eq!(calls, vec!["Pair[String, I64]".to_string()]);
 }
+
+/// `each` in a labelled argument. `docs.sort(by: each.length())` on a bare
+/// local is written exactly like a record literal, so the parser used to leave
+/// its `each` unclaimed and the resolver reported `SC0212` for a closure that
+/// is plainly an argument. `support::check` asserts the fixture resolves, so
+/// the call passing is the whole test.
+#[test]
+fn each_in_a_labelled_argument_on_a_local_is_a_closure() {
+    support::check(
+        "\
+def main():
+    let mutable words be [\"bb\", \"a\"]
+    words.sort(by: each.length())
+",
+    );
+}

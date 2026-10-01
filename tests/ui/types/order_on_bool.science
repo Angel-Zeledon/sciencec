@@ -1,0 +1,6 @@
+# UI test: `Bool` has no order (SC0535).
+#
+# `true < false` used to pass the checker and reach the backend as SC0400.
+
+def main():
+    print(true < false)

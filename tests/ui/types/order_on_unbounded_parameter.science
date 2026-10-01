@@ -1,0 +1,10 @@
+# UI test: `<` on a type parameter with no `Ord` bound (SC0535).
+#
+# A parameter implements only what its bounds promise. This used to pass the
+# checker and reach the backend as SC0400.
+
+def smaller[T](a: &T, b: &T) -> Bool:
+    a < b
+
+def main():
+    print(smaller(&1, &2))

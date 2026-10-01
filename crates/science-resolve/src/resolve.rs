@@ -2757,7 +2757,14 @@ impl Resolver {
             .map(|init| hir::FieldInit {
                 field: self.resolve_field(record_def, path, &init.name),
                 name: init.name.clone(),
-                value: self.resolve_expr(&init.value),
+                // A record field is not an argument list: the parser wrapped
+                // an `each` in it as a closure (see `parse_field_inits`), and
+                // here it has no subject, so it is resolved bare and `SC0212`
+                // says so.
+                value: match &init.value.kind {
+                    ast::ExprKind::Closure { param: None, body } => self.resolve_expr(body),
+                    _ => self.resolve_expr(&init.value),
+                },
                 span: init.span,
             })
             .collect();

@@ -898,6 +898,26 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
 const NUMERIC: &[&str] =
     &["Add", "Sub", "Mul", "Div", "Rem", "Neg", "Eq", "Ord", "Copy", "Clone", "Display"];
 
+/// The interfaces a floating-point primitive implements: [`NUMERIC`] without
+/// `Ord`.
+///
+/// **Decision. `F16`, `BF16`, `F32`, `F64` and `Float` implement `Eq` and not
+/// `Ord`.** The core spec's §5.1 says it in one line -- *"`F32`/`F64`
+/// implement `Eq` but **not** `Ord`, because NaN has no total order. Sorting
+/// floats uses an explicit total order function"* -- and
+/// `collections-and-chains.md` §5.3 repeats it as the reason `F32` is not a
+/// `Hash` key. The table listed them under `Ord` anyway, which let `T: Ord`
+/// accept a float and `sorted()` order NaNs by whatever the machine did.
+///
+/// **Reason.** The bound is a promise of a total order and a float cannot keep
+/// it.
+///
+/// **Cost.** `a < b` on two floats is still a primitive comparison -- the
+/// checker's operator arm never asks a numeric primitive for `Ord` -- so
+/// ordinary float arithmetic is untouched. What stops compiling is handing a
+/// float to a `T: Ord` parameter, which is the point.
+const FLOATING: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem", "Neg", "Eq", "Copy", "Clone", "Display"];
+
 /// Every prelude type's interfaces, as `(type, interfaces)`.
 ///
 /// **Decision. These are implementations with no methods in them.** The
@@ -928,12 +948,12 @@ const IMPLEMENTS: &[(&str, &[&str])] = &[
     ("U16", NUMERIC),
     ("U32", NUMERIC),
     ("U64", NUMERIC),
-    ("F16", NUMERIC),
-    ("BF16", NUMERIC),
-    ("F32", NUMERIC),
-    ("F64", NUMERIC),
+    ("F16", FLOATING),
+    ("BF16", FLOATING),
+    ("F32", FLOATING),
+    ("F64", FLOATING),
     ("Int", NUMERIC),
-    ("Float", NUMERIC),
+    ("Float", FLOATING),
     ("Bool", &["Eq", "Copy", "Clone", "Display"]),
     ("Char", &["Eq", "Ord", "Copy", "Clone", "Display"]),
     // §6.9. `Copy` is *not* among them and that is the point of §6.2: an owned

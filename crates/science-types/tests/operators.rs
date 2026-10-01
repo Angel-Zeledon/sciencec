@@ -1290,3 +1290,122 @@ def bump(counter: &mut I64):
     assert_eq!(checked.codes(), vec![525]);
     assert_eq!(checked.messages(), vec!["expected `an integer literal`, found `&mut I64`"]);
 }
+
+// --- what `<` is still refused on --------------------------------------------
+
+/// `true < false` was accepted by the checker and refused by the backend as
+/// `SC0400`. `Bool`'s row in `builtins.rs` is `Eq, Copy, Clone, Display`: it has
+/// no `Ord`, so the front end says so.
+#[test]
+fn a_comparison_of_two_bools_is_refused() {
+    let checked = support::check(
+        "\
+def before(a: Bool, b: Bool) -> Bool:
+    a < b
+",
+    );
+    assert_eq!(checked.codes(), vec![535]);
+    assert_eq!(checked.messages(), vec!["`Bool` does not implement `Ord`"]);
+}
+
+/// `Bool` is still comparable for equality, which it does implement.
+#[test]
+fn two_bools_are_still_equal_or_not() {
+    support::check(
+        "\
+def same(a: Bool, b: Bool) -> Bool:
+    a is b
+",
+    )
+    .assert_clean();
+}
+
+/// `a < b` on a type parameter that was promised nothing was accepted and then
+/// refused by the backend. The bounds in scope are what the parameter
+/// implements, so the question has an answer here.
+#[test]
+fn a_comparison_on_an_unbounded_type_parameter_is_refused() {
+    let checked = support::check(
+        "\
+def before[T](a: &T, b: &T) -> Bool:
+    a < b
+",
+    );
+    assert_eq!(checked.codes(), vec![535]);
+    assert_eq!(checked.messages(), vec!["`T` does not implement `Ord`"]);
+}
+
+/// A bound on a *different* interface does not buy `<`.
+#[test]
+fn a_bound_on_another_interface_does_not_license_order() {
+    let checked = support::check(
+        "\
+def before[T: Clone](a: &T, b: &T) -> Bool:
+    a < b
+",
+    );
+    assert_eq!(checked.codes(), vec![535]);
+}
+
+/// Floats are off `Ord` (`F32`/`F64` implement `Eq` only, §5.1: NaN has no
+/// total order), so a float does not satisfy `T: Ord`...
+#[test]
+fn a_float_does_not_satisfy_an_ord_bound() {
+    let checked = support::check(
+        "\
+def before[T: Ord](a: &T, b: &T) -> Bool:
+    a < b
+
+def main():
+    let x: F64 be 1.5
+    let y: F64 be 2.5
+    let r be before(x, y)
+",
+    );
+    assert_eq!(checked.codes(), vec![534]);
+    assert_eq!(checked.messages(), vec!["`F64` does not implement `Ord`"]);
+}
+
+/// ...and `<` on two floats is still the primitive comparison.
+#[test]
+fn a_comparison_of_two_floats_is_still_primitive() {
+    support::check(
+        "\
+def before(a: F64, b: F64) -> Bool:
+    a < b
+
+def narrower(a: F32, b: F32) -> Bool:
+    a >= b
+",
+    )
+    .assert_clean();
+}
+
+/// `let mutable x be null` followed by `x be 5` put the two literals in one
+/// class and the class defaulted to `Int`, building the `null` as an `Int`.
+/// The author writes the nullable type.
+#[test]
+fn a_null_binding_later_given_a_number_asks_for_an_annotation() {
+    let checked = support::check(
+        "\
+def main():
+    let mutable x be null
+    x be 5
+",
+    );
+    assert_eq!(checked.codes(), vec![526]);
+    assert_eq!(checked.messages(), vec!["the type of this `null` cannot be inferred"]);
+}
+
+/// With the annotation it is the program the note writes.
+#[test]
+fn an_annotated_nullable_binding_takes_a_number() {
+    support::check(
+        "\
+def main():
+    let mutable x: Int? be null
+    x be 5
+",
+    )
+    .assert_clean();
+}

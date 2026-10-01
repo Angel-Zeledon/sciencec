@@ -2,17 +2,17 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #1029 @13..32
-  Fn `f` #1030 @13..32
+Module `main` #1024 @13..32
+  Fn `f` #1025 @13..32
     generics
-      TypeParam `P` #1031 @15..16
+      TypeParam `P` #1026 @15..16
         bounds
           ClosureBound @0..12
             params
               Path -> <error> @0..7
             ret: Path -> `Bool` #14 @8..12
     params
-      Param `p` #1032 @17..30
+      Param `p` #1027 @17..30
         type: Closure @17..28
           params
             Path -> <error> @17..23

@@ -1,0 +1,10 @@
+# UI test: a `null` binding later given a number needs its type written
+# (SC0526).
+#
+# This used to default the binding to `Int` and reach the backend as SC0400:
+# "cannot build a `null` of a type that is not nullable".
+
+def main():
+    let mutable x be null
+    x be 5
+    print(x)

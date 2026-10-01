@@ -4634,8 +4634,26 @@ impl<'t> Parser<'t> {
                 .expect_ident()
                 .filter(|_| self.expect(&TokenKind::Colon, "`:`").is_some())
                 .map(|name| {
+                    // Decision. A field init is an argument scope too.
+                    // Reason. `xs.sort(by: each.length())` on a bare local
+                    // parses as a record literal -- `docs.sort(by: f)` and
+                    // `text.Doc(title: "a")` are the same text -- and an `each`
+                    // in it must claim its argument like any call's, or the
+                    // resolver reports `SC0212` for a closure that is plainly
+                    // an argument. Resolution unwraps it again for a real
+                    // record, where `each` still has no subject.
+                    // Cost. The wrapped node reaches resolution for a record
+                    // too, which has to know to look through it.
+                    self.each_scopes.push(false);
                     let value = self.parse_expr();
-                    FieldInit { name, value, span: start.merge(self.last_text_span()) }
+                    let claimed = self.each_scopes.pop().unwrap_or(false);
+                    let span = start.merge(self.last_text_span());
+                    let value = if claimed {
+                        Expr { kind: ExprKind::Closure { param: None, body: Box::new(value) }, span }
+                    } else {
+                        value
+                    };
+                    FieldInit { name, value, span }
                 });
             match parsed {
                 Some(field) => fields.push(field),

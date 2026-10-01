@@ -1,0 +1,7 @@
+error[SC0526]: the type of this `null` cannot be inferred
+ --> tests/ui/types/null_then_number.science:8:22
+  |
+8 |     let mutable x be null
+  |                      ^^^^ `null` alone does not say what it is a lack of
+  |
+  = note: a binding that starts as `null` and is given a value later needs its nullable type written: `let mutable x: Int? be null`

@@ -1,0 +1,12 @@
+# UI test: `each` in a record's field is still SC0212.
+#
+# `docs.sort(by: each.length())` on a bare local parses as a record literal
+# and resolves as a method call, so its `each` is an argument's (see
+# `parse_field_inits`). A record has no call around its fields: there `each`
+# keeps the diagnostic it always had.
+
+type Doc:
+    title: String
+
+def main():
+    let doc be Doc(title: each)

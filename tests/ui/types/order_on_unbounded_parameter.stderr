@@ -1,0 +1,7 @@
+error[SC0535]: `T` does not implement `Ord`
+ --> tests/ui/types/order_on_unbounded_parameter.science:7:5
+  |
+7 |     a < b
+  |     ^^^^^ `<` needs `Ord` and nothing says `T` has it
+  |
+  = note: a type parameter implements only what its bounds promise: write `T: Ord` where `T` is declared, as in `def largest[T: Ord](…)`

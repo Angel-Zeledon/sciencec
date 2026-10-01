@@ -951,8 +951,34 @@ impl<'a> BodyChecker<'a> {
         // variable that happened to be created first, so the kinds are folded
         // onto roots before anything is defaulted.
         let mut kinds: HashMap<InferVar, Numeric> = HashMap::new();
-        for (var, kind) in std::mem::take(&mut self.numeric) {
+        // **A `null` that met a number in one class has no type.**
+        // `let mutable x be null` followed by `x be 5` puts the two literals
+        // in one inference class, and `widen_numeric` prefers the number, so
+        // the class used to default to `Int` and the `null` was built as an
+        // `Int` -- accepted here, refused by the backend as `SC0400`.
+        // Decision. The front end refuses it and asks for the annotation
+        // (`let mutable x: Int? be null`); `type-checking-and-mir.md` writes
+        // `let missing: Error? be null` with its annotation and no note gives
+        // a nullable-from-later-use inference. Cost. The one-line fix is the
+        // author's, where an inference would have guessed `Int?` from a
+        // single assignment.
+        let mut null_origins: HashMap<InferVar, InferVar> = HashMap::new();
+        let mut conflicted: Vec<InferVar> = Vec::new();
+        let numeric = std::mem::take(&mut self.numeric);
+        for (var, kind) in &numeric {
+            if *kind == Numeric::Null {
+                let root = self.infer.find(*var);
+                null_origins.entry(root).or_insert(*var);
+            }
+        }
+        for (var, kind) in numeric {
             let root = self.infer.find(var);
+            if null_origins.contains_key(&root)
+                && kind != Numeric::Null
+                && !conflicted.contains(&root)
+            {
+                conflicted.push(root);
+            }
             kinds
                 .entry(root)
                 .and_modify(|existing| *existing = widen_numeric(*existing, kind))
@@ -981,6 +1007,12 @@ impl<'a> BodyChecker<'a> {
 
         for root in self.infer.unresolved() {
             if tuple_vars.contains_key(&root) || named_vars.contains_key(&root) {
+                continue;
+            }
+            if conflicted.contains(&root) {
+                if let Some(null) = null_origins.get(&root) {
+                    self.diagnostics.push(null_met_a_number(self.infer.origin(*null)));
+                }
                 continue;
             }
             let default = match kinds.get(&root) {
@@ -6790,6 +6822,41 @@ impl<'a> BodyChecker<'a> {
         if self.types.references_error(revealed) {
             return;
         }
+        // **`Bool` is not ordered.** A prelude head's surface is open, so the
+        // check below stays silent for it, but `Bool` is a scalar whose
+        // `IMPLEMENTS` row is complete and has no `Ord` (`Eq`,
+        // `Copy`, `Clone`, `Display`). Refused here rather than reaching the
+        // backend as `SC0400`. The floats are not asked: `<` on them is the
+        // primitive IEEE comparison, and they are off `Ord` on purpose.
+        if interface == "Ord" && self.decls.prelude().is(self.types, revealed, "Bool") {
+            self.diagnostics.push(unordered_bool(span, symbol));
+            return;
+        }
+        // **A type parameter is answered by its bounds, not by silence.**
+        // `methods`' §5 gives a bare parameter no head, so the check below
+        // used to decline to speak for `a < b` on a `T` that promised
+        // nothing, and the backend then refused it with `SC0400`. The bounds
+        // in scope are exactly what `T` is known to implement, so the
+        // question is answerable here: no `T: Ord`, no `<`. Looked through
+        // borrows, because a loop's `item` is a `&T` (§4.3).
+        // Cost. A bound on a different interface that implies `Ord` is not
+        // looked through; no interface in the prelude declares a supertrait.
+        let mut stripped = revealed;
+        while let TyKind::Borrowed { inner, .. } = *self.types.kind(stripped) {
+            stripped = inner;
+        }
+        if let TyKind::Param { def: param } = *self.types.kind(stripped) {
+            let promised = self
+                .bounds
+                .iter()
+                .any(|bound| bound.param == param && bound.interface == interface_def);
+            if !promised {
+                let rendered = self.types.render(self.defs, stripped);
+                self.diagnostics
+                    .push(unbounded_operand(span, symbol, &rendered, interface));
+            }
+            return;
+        }
         let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) else {
             return;
         };
@@ -8814,6 +8881,38 @@ fn no_operator_implementation(
     ))
 }
 
+/// `SC0535` for an order comparison of two `Bool`s, which have no order.
+///
+/// Not `no_operator_implementation`: its note sends the author to write
+/// `Bool implements Ord:`, and a prelude primitive's interfaces are not the
+/// program's to extend.
+fn unordered_bool(span: Span, symbol: &str) -> Diagnostic {
+    Diagnostic::error(codes::NO_OPERATOR_IMPLEMENTATION, "`Bool` does not implement `Ord`")
+        .with_label(Label::primary(span, format!("`{symbol}` needs `Ord` and `Bool` is not ordered")))
+        .with_note(
+            "`Bool` implements `Eq` and nothing finer, so `a is b` is the comparison it has",
+        )
+}
+
+/// `SC0535` for a type parameter that was never promised the interface.
+///
+/// The same code as [`no_operator_implementation`] and a different remedy: a
+/// parameter has no `implements` block to write, so the note names the bound.
+fn unbounded_operand(span: Span, symbol: &str, ty: &str, interface: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::NO_OPERATOR_IMPLEMENTATION,
+        format!("`{ty}` does not implement `{interface}`"),
+    )
+    .with_label(Label::primary(
+        span,
+        format!("`{symbol}` needs `{interface}` and nothing says `{ty}` has it"),
+    ))
+    .with_note(format!(
+        "a type parameter implements only what its bounds promise: write `{ty}: {interface}` \
+         where `{ty}` is declared, as in `def largest[{ty}: {interface}](…)`"
+    ))
+}
+
 /// `SC0544` — a `for` whose subject has no usable `Iterate`.
 ///
 /// **The note spells the block out in full**, which the operators' note does
@@ -9016,6 +9115,16 @@ fn cannot_infer(span: Span) -> Diagnostic {
             "inference is local to one body (§5.2) and works from the root of a type outward, \
              so a value whose type is a hole inside a known constructor needs the annotation \
              written",
+        )
+}
+
+/// `SC0526` for a `null` whose type nothing but a later number gives.
+fn null_met_a_number(span: Span) -> Diagnostic {
+    Diagnostic::error(codes::TYPE_ANNOTATIONS_NEEDED, "the type of this `null` cannot be inferred")
+        .with_label(Label::primary(span, "`null` alone does not say what it is a lack of"))
+        .with_note(
+            "a binding that starts as `null` and is given a value later needs its nullable \
+             type written: `let mutable x: Int? be null`",
         )
 }
 

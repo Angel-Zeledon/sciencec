@@ -1,0 +1,7 @@
+error[SC0535]: `Bool` does not implement `Ord`
+ --> tests/ui/types/order_on_bool.science:6:11
+  |
+6 |     print(true < false)
+  |           ^^^^^^^^^^^^ `<` needs `Ord` and `Bool` is not ordered
+  |
+  = note: `Bool` implements `Eq` and nothing finer, so `a is b` is the comparison it has
