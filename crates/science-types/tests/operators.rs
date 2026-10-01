@@ -249,11 +249,12 @@ def total(numbers: &Array[I64]) -> I64:
     );
 }
 
-/// Without §7 this is the diagnostic the same loop would produce, so the
-/// mechanism is asserted rather than assumed: a non-`Copy` element does not
-/// add, and the message is about the borrow the `for` bound.
+/// `String implements Add` and `+` concatenates (`stdlib-core.md` §6.3), so the
+/// loop that used to be refused — a `borrowed String` against a `String` — is
+/// the idiomatic join: the operands are only read, either may be a borrow, and
+/// the sum is an owned `String`.
 #[test]
-fn a_loop_over_an_array_of_strings_does_not_add_up() {
+fn a_loop_over_an_array_of_strings_concatenates() {
     let checked = support::check(
         "\
 def joined(words: &Array[String], seed: String) -> String:
@@ -263,11 +264,7 @@ def joined(words: &Array[String], seed: String) -> String:
     out
 ",
     );
-    // `String implements Add` carries no method the prelude has transcribed,
-    // so `methods`' §8 keeps the operator silent; what is left is the
-    // structural answer, which refuses a `borrowed String` against a `String`.
-    assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `String`, found `&String`"]);
+    checked.assert_clean();
 }
 
 /// `Map` is deliberately not an `Iterate`, and `builtins.rs` says why: §1.3 of

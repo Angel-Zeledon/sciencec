@@ -292,3 +292,47 @@ def main():
 ";
     assert_eq!(prints("explicit_record_args", source), "2\nwords\n3\n6\n");
 }
+
+/// A closure factory: `def make(k: Int) -> (Int) -> Int: x giving x * k`.
+///
+/// Every capture was a borrow of the creating frame's slot, so returning the
+/// closure returned a borrow of `k` and rule 5 refused it (`SC0333`). A `Copy`
+/// capture that is only read is now the value, held in a heap environment
+/// (`science-mir`'s `lower.rs` §8.7), so two closures from one factory each
+/// keep their own.
+#[test]
+fn a_returned_closure_captures_copy_values_by_value() {
+    let source = "def scale(k: Int, offset: Int) -> (Int) -> Int:
+    x giving x * k + offset
+
+def above(limit: F64) -> (F64) -> Bool:
+    v giving v > limit
+
+def main():
+    let a be scale(3, 1)
+    let b be scale(10, 2)
+    print(a(5))
+    print(b(5))
+    print(a(1))
+    let hot be above(30.5)
+    print(hot(40.0))
+    print(hot(2.0))
+";
+    assert_eq!(prints("returned_closure", source), "16\n52\n4\ntrue\nfalse\n");
+}
+
+/// `let add be u giving u + 5`: nothing gave `u` a type, so it was `Ty::ERROR`
+/// with no diagnostic and the backend refused with `SC0400`. The body's own
+/// literal fixes it now (a closure parameter is an inference variable that the
+/// body may solve and a numeric literal may default), and a closure whose body
+/// fixes nothing is `SC0526` asking for the annotation instead.
+#[test]
+fn an_unannotated_let_closure_infers_its_parameter_from_its_body() {
+    let source = "def main():
+    let add be u giving u + 5
+    print(add(2))
+    let half be v giving v / 2.0
+    print(half(5.0))
+";
+    assert_eq!(prints("let_closure_infers", source), "7\n2.5\n");
+}

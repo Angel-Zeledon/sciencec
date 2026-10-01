@@ -567,6 +567,7 @@ pub fn check_fn(
         pending_named: Vec::new(),
         pending_borrows: Vec::new(),
         numeric: Vec::new(),
+        report_closure_param: false,
         bounds,
         self_subst,
         ret,
@@ -890,6 +891,11 @@ struct BodyChecker<'a> {
     /// straight to a slot that needs the wrapper.
     pending_borrows: Vec<(ExprId, bool, InferVar)>,
     numeric: Vec<(InferVar, Numeric)>,
+    /// Set by `let f be x giving ...` for the one closure that is the whole
+    /// initialiser: that closure's unsolved parameter is `SC0526`. A closure
+    /// anywhere else — an argument of a call that did not resolve, say — has
+    /// already had the real mistake reported and is left as it was.
+    report_closure_param: bool,
     /// What this body's own generic parameters must implement — the callee's
     /// half of §8's check, read here for a different question: `lookup_via_bound`
     /// is what a bound *buys* the body rather than what it costs a caller.
@@ -7712,6 +7718,7 @@ impl<'a> BodyChecker<'a> {
         span: Span,
         expected: Option<Ty>,
     ) -> Typed {
+        let report = std::mem::take(&mut self.report_closure_param);
         let expected = expected.map(|ty| self.revealed(ty, span));
         let (param_tys, ret) = match expected.map(|ty| self.types.kind(ty).clone()) {
             Some(TyKind::Closure { params, ret }) => (Some(params), Some(ret)),
@@ -7756,16 +7763,42 @@ impl<'a> BodyChecker<'a> {
         let ret = ret.filter(|ty| !matches!(self.types.kind(*ty), TyKind::Param { .. }));
         // `x giving x * 2` binds its parameter the way a pattern does, and
         // there is no place in that syntax for `mutable`.
-        self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);
-        for (more, ty) in rest.iter().zip(&param_tys[1..]) {
-            self.bind_local(*more, InferTy::Known(ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);
+        //
+        // **A parameter nothing gave a type is a variable the body may solve.**
+        // `let add be u giving u + 5` has no expectation to bind `u` from, and
+        // used to bind it at `Ty::ERROR` with nothing said, which the backend
+        // met as `SC0400`. The parameter is an inference variable now, so the
+        // body's own uses can fix it: `u + 5` unifies it with a literal. What
+        // the body leaves open is settled before the closure's type is built
+        // — a numeric literal's class takes its default, as at the end of any
+        // body, and anything else is `SC0526` asking for the annotation.
+        let mut vars: Vec<Option<InferVar>> = Vec::with_capacity(written);
+        for (at, local) in std::iter::once(&param).chain(rest.iter()).enumerate() {
+            let (bound, var) = match param_tys[at] {
+                Some(ty) => (InferTy::Known(ty), None),
+                None => {
+                    let var = self.infer.fresh(span);
+                    (InferTy::Var(var), Some(var))
+                }
+            };
+            self.bind_local(*local, bound, BoundAs::Parameter);
+            vars.push(var);
         }
         let body_id = match ret {
             Some(ret) => self.check(body, ret, Site::Return),
             None => self.synth(body).id,
         };
-        let body_ty = self.body.ty(body_id);
-        let all: Vec<Ty> = param_tys.iter().map(|ty| ty.unwrap_or(Ty::ERROR)).collect();
+        let mut all: Vec<Ty> = Vec::with_capacity(written);
+        for (ty, var) in param_tys.iter().zip(&vars) {
+            all.push(match var {
+                Some(var) => self.settle_closure_param(*var, span, report),
+                None => ty.unwrap_or(Ty::ERROR),
+            });
+        }
+        let body_ty = match self.infer.resolve(self.open_ty(body_id)) {
+            InferTy::Known(ty) => ty,
+            InferTy::Var(_) => self.body.ty(body_id),
+        };
         let ty = match (param_ty, ret) {
             (Some(_), Some(ret)) => self.types.closure(all, ret),
             _ => self.types.closure(all, body_ty),
@@ -7776,6 +7809,42 @@ impl<'a> BodyChecker<'a> {
             span,
         );
         Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// The type an unannotated closure's parameter ended with, once its body
+    /// has been checked: what the body fixed, else its numeric literal's
+    /// default, else `SC0526` and the error type.
+    fn settle_closure_param(&mut self, var: InferVar, span: Span, report: bool) -> Ty {
+        if let Some(ty) = self.infer.binding(var) {
+            return ty;
+        }
+        let root = self.infer.find(var);
+        let mut kind: Option<Numeric> = None;
+        let entries: Vec<(InferVar, Numeric)> = self.numeric.clone();
+        for (member, member_kind) in entries {
+            if self.infer.find(member) == root {
+                kind = Some(match kind {
+                    Some(existing) => widen_numeric(existing, member_kind),
+                    None => member_kind,
+                });
+            }
+        }
+        let default = match kind {
+            Some(Numeric::Integer) => self.decls.prelude().default_int(self.types),
+            Some(Numeric::Float) => self.decls.prelude().default_float(self.types),
+            Some(Numeric::Null) | None => None,
+        };
+        let ty = match default {
+            Some(ty) => ty,
+            None => {
+                if report {
+                    self.diagnostics.push(closure_parameter_needs_a_type(span));
+                }
+                Ty::ERROR
+            }
+        };
+        let _ = self.infer.bind(self.types, root, ty);
+        ty
     }
 
     // --- control flow, which is where narrowing happens -------------------
@@ -8436,7 +8505,10 @@ impl<'a> BodyChecker<'a> {
                     id
                 }
                 None => {
+                    self.report_closure_param =
+                        matches!(binding.value.kind, hir::ExprKind::Closure { .. });
                     let typed = self.synth(&binding.value);
+                    self.report_closure_param = false;
                     self.bind_local(binding.bindings[0].def, typed.ty, declared);
                     typed.id
                 }
@@ -9375,6 +9447,21 @@ fn cannot_infer(span: Span) -> Diagnostic {
              so a value whose type is a hole inside a known constructor needs the annotation \
              written",
         )
+}
+
+/// `SC0526` for a closure whose parameter has no type to take from context
+/// and none the body fixes.
+fn closure_parameter_needs_a_type(span: Span) -> Diagnostic {
+    Diagnostic::error(
+        codes::TYPE_ANNOTATIONS_NEEDED,
+        "the type of this closure's parameter cannot be inferred",
+    )
+    .with_label(Label::primary(span, "no expected type and nothing in the body fixes it"))
+    .with_note(
+        "a closure takes its parameter's type from where it is passed, or from what its body \
+         does with it (`u giving u + 5` is an `Int`); a closure bound by `let` with neither \
+         needs the binding annotated: `let add: (Int) -> Int be u giving u + 5`",
+    )
 }
 
 /// `SC0526` for a `null` whose type nothing but a later number gives.

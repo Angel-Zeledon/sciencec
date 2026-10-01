@@ -449,6 +449,34 @@ def nothing() -> Bool:
 }
 
 #[test]
+fn an_unannotated_closure_takes_its_parameter_from_its_body() {
+    // `let add be u giving u + 5`: no expectation binds `u`, so it used to be
+    // `Ty::ERROR` with nothing said and the backend refused with `SC0400`. The
+    // literal in the body fixes it, and the closure is `(Int) -> Int`.
+    let checked = program(
+        "
+def apply() -> Int:
+    let add be u giving u + 5
+    add(2)
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn an_unannotated_closure_whose_body_fixes_nothing_asks_for_the_annotation() {
+    // `SC0526`, once, and naming the closure rather than a value.
+    let checked = program(
+        "
+def apply() -> Int:
+    let same be u giving u
+    2
+",
+    );
+    assert_eq!(checked.codes(), vec![526]);
+}
+
+#[test]
 fn an_expectation_crosses_an_unsafe_block_the_way_it_crosses_a_plain_one() {
     // What the keyword changes is which operations the body may name, which is
     // not checking mode's question. Without this, the tail is synthesised and
