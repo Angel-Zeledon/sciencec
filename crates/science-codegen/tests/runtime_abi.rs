@@ -113,6 +113,24 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
                 // exactly as `push` and `pop` do — the keys beside them are
                 // `Int`s and need no describing.
                 | "science_array_sort_by_int_key"
+                // The rest of `Array`'s Level 1 surface: every one of these
+                // moves, drops or addresses an element by its width — `first`
+                // and `last` compute `get`'s slot address, the others shift,
+                // exchange or release a run of them.
+                | "science_array_first"
+                | "science_array_last"
+                | "science_array_insert"
+                | "science_array_remove"
+                | "science_array_swap"
+                | "science_array_replace"
+                | "science_array_clear"
+                | "science_array_truncate"
+                | "science_array_extend"
+                | "science_array_reverse"
+                // `Set.contains`'s comparison over an array: the descriptor is
+                // the `(T, ())` map's, for its `eq_fn` and the element's width.
+                | "science_array_contains"
+                | "science_array_index_of"
                 | "science_map_new"
                 | "science_map_free"
                 | "science_map_insert"
@@ -142,7 +160,12 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
     assert!(runtime_fn("science_array_len").unwrap().descriptor_index().is_none());
     assert!(runtime_fn("science_array_is_empty").unwrap().descriptor_index().is_none());
     assert!(runtime_fn("science_array_as_ptr").unwrap().descriptor_index().is_none());
+    assert!(runtime_fn("science_array_capacity").unwrap().descriptor_index().is_none());
     assert!(runtime_fn("science_map_len").unwrap().descriptor_index().is_none());
+    // `sort()`'s two take none either, for the opposite reason: the element
+    // type is fixed by the symbol, so there is nothing left to describe.
+    assert!(runtime_fn("science_array_sort_i64").unwrap().descriptor_index().is_none());
+    assert!(runtime_fn("science_array_sort_string").unwrap().descriptor_index().is_none());
     // `String`'s four searches take none either, and are named so that the
     // loop above is not the only thing saying so: a `ScienceString` is always
     // bytes, so there is no element type to describe. `find`'s third pointer
@@ -430,7 +453,22 @@ fn nothing_outside_the_table_is_callable() {
     // cast would get wrong — a `U64` past `i64::MAX` and an `F32`'s shortest
     // spelling. §2.2's table is a library, not an instruction sequence, which
     // is the door `science_formatter_number` came through.
-    assert_eq!(RUNTIME.len(), 113);
+    //
+    // **One hundred and twenty-eight.** Fifteen `science_array_*`, the rest of
+    // `Array`'s Level 1 surface. Eleven move or drop `size`-byte elements a
+    // descriptor describes — `insert`, `remove`, `swap`, `replace`, `clear`,
+    // `truncate`, `extend`, `reverse` shift, exchange or release a run of
+    // them, which is a loop over a stride only the descriptor knows —
+    // `science_array_sort_by_int_key`'s door. `contains` and `index_of` are a
+    // loop calling an `eq_fn`, `Set.contains`'s relation over an array.
+    // `sort_i64` and `sort_string` are a sort. `capacity`, `first` and `last`
+    // are the three that read a header and could have been inline; they are
+    // here for `science_array_len`'s and `science_array_get`'s reason beside
+    // them — the header's layout is known in one place, and `first`/`last`
+    // answer `get`'s niche the way `get` does. Nothing on the tempting list
+    // joined: the bounds checks are inside the operations they guard, not a
+    // `science_bounds_check` a call site makes.
+    assert_eq!(RUNTIME.len(), 128);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

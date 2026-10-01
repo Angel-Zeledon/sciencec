@@ -632,3 +632,399 @@ fn an_array_of_borrows_survives_a_function_boundary() {
         "2 3 5\n"
     );
 }
+
+// --- The rest of `Array`'s Level 1 surface --------------------------------------
+//
+// `builtins.rs` transcribes `docs/DREAM.md` §13.4's `Array[T] has:` block and
+// two primitives it lacks (`swap`, `replace`); each test below runs a program
+// through one or more of them and reads every element back, because a lowering
+// that moved the wrong `size` bytes, or handed the runtime the wrong
+// descriptor, still reports the right length.
+
+/// A program's stdout and stderr, and whether it exited 0, at `-O2`.
+fn outcome(name: &str, source: &str) -> (Option<i32>, String, String) {
+    let dir = scratch("arrays", name);
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, name), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    (ran.status, ran.stdout, ran.stderr)
+}
+
+/// The refusal a program's build ends in, its messages joined.
+fn refusal(name: &str, source: &str) -> String {
+    let dir = scratch("arrays", name);
+    let result = lower(source).try_build(&executable(&dir, name), OptLevel::O0);
+    let _ = std::fs::remove_dir_all(&dir);
+    match result {
+        Ok(_) => panic!("the program built and this test is about the refusal"),
+        Err(diagnostics) => {
+            diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("\n")
+        }
+    }
+}
+
+/// `show` prints an `Array of Int` on one line, so each step below is one
+/// line of output that names every element.
+const SHOW_INTS: &str = "\
+def show(xs: &Array[Int]):
+    let mutable line be \"\"
+    for x in xs:
+        line.push_str(f\"{x} \")
+    print(line)
+
+";
+
+/// Every `Int`-element method in one run: the positions each one acts on are
+/// printed after it, so a shift by the wrong stride, a swap of the wrong
+/// slots or a sort in the wrong direction is a wrong line and not a wrong
+/// length.
+#[test]
+fn every_level_one_method_acts_on_the_elements_it_names() {
+    let source = format!(
+        "{SHOW_INTS}def main():
+    let mutable xs be Array[Int].with_capacity(8)
+    print(f\"cap {{xs.capacity()}} len {{xs.length()}}\")
+    xs.push(5)
+    xs.push(1)
+    xs.push(4)
+    xs.insert(0, 9)
+    xs.insert(4, 7)
+    show(xs)
+    let f be xs.first()
+    let l be xs.last()
+    if f? and l?:
+        print(f\"first {{f}} last {{l}}\")
+    xs.swap(0, 1)
+    show(xs)
+    let old be xs.replace(2, 100)
+    print(f\"replaced {{old}}\")
+    let gone be xs.remove(1)
+    if gone?:
+        print(f\"removed {{gone}}\")
+    let none be xs.remove(99)
+    print(f\"{{none?}}\")
+    xs.reverse()
+    show(xs)
+    let at be xs.index_of(100)
+    if at?:
+        print(f\"at {{at}} {{xs.contains(100)}} {{xs.contains(3)}}\")
+    xs.extend([3, 2, 8])
+    show(xs)
+    xs.sort()
+    show(xs)
+    xs.sort(by: x giving 0 - x)
+    show(xs)
+    xs.truncate(3)
+    show(xs)
+    xs.reserve(100)
+    print(f\"{{xs.capacity() >= 103}}\")
+    xs.clear()
+    print(f\"{{xs.length()}} {{xs.is_empty()}}\")
+"
+    );
+    assert_eq!(
+        prints("level_one_ints", &source),
+        "cap 8 len 0\n\
+         9 5 1 4 7 \n\
+         first 9 last 7\n\
+         5 9 1 4 7 \n\
+         replaced 1\n\
+         removed 9\n\
+         false\n\
+         7 4 100 5 \n\
+         at 2 true false\n\
+         7 4 100 5 3 2 8 \n\
+         2 3 4 5 7 8 100 \n\
+         100 8 7 5 4 3 2 \n\
+         100 8 7 \n\
+         true\n\
+         0 true\n"
+    );
+}
+
+/// `sort()` and `sort(by:)` are two methods told apart by the label, and an
+/// unlabelled closure reaches the second one: `collections-and-chains.md`
+/// §3.3's AMENDMENT 2, for the one pair the prelude declares.
+#[test]
+fn the_two_sorts_are_told_apart_by_their_label() {
+    assert_eq!(
+        prints(
+            "two_sorts",
+            "def main():
+    let mutable words be [\"ccc\", \"a\", \"bb\"]
+    words.sort(by: w giving w.length())
+    print(f\"{words[0]} {words[1]} {words[2]}\")
+    words.sort()
+    print(f\"{words[0]} {words[1]} {words[2]}\")
+    let mutable ns be [1, 3, 2]
+    ns.sort(n giving 0 - n)
+    print(f\"{ns[0]} {ns[1]} {ns[2]}\")
+"
+        ),
+        "a bb ccc\na bb ccc\n3 2 1\n"
+    );
+}
+
+/// The generic case: `sort()` and `index_of` inside a function generic over
+/// the element, monomorphised at `Int` and at `String`, each picking its own
+/// entry point or descriptor at the call.
+#[test]
+fn sort_and_index_of_are_monomorphised_per_element() {
+    assert_eq!(
+        prints(
+            "generic_sort",
+            "def ordered[T](xs: &mut Array[T]):
+    xs.sort()
+
+def where_is[T](xs: &Array[T], x: &T) -> Int:
+    let at be xs.index_of(x)
+    if at?:
+        return at
+    0 - 1
+
+def main():
+    let mutable xs be [3, 1, 2]
+    ordered(&mut xs)
+    let mutable ws be [\"b\", \"a\"]
+    ordered(&mut ws)
+    let b be \"b\"
+    let seven be 7
+    let p be where_is(ws, b)
+    let q be where_is(xs, seven)
+    print(f\"{xs[0]}{xs[1]}{xs[2]} {ws[0]}{ws[1]} {p} {q}\")
+"
+        ),
+        "123 ab 1 -1\n"
+    );
+}
+
+/// Owned `String` elements through every method that moves, drops or
+/// reorders one, two thousand times, under `MallocScribble` and then
+/// `leaks --atExit`: an element dropped twice reads scribbled memory, and one
+/// dropped never is a leak. `replace` and `remove` hand an element out, and
+/// `truncate`, `clear` and the array's own drop release the rest.
+#[test]
+fn owned_strings_move_through_every_method_and_are_freed_once() {
+    let source = "\
+def show(xs: &Array[String]):
+    let mutable line be \"\"
+    for x in xs:
+        line.push_str(x)
+        line.push_str(\" \")
+    print(line)
+
+def main():
+    for round in 0..2000:
+        let mutable xs be [\"pear\", \"apple\", \"fig\"]
+        xs.insert(1, \"kiwi\")
+        xs.push(\"date\")
+        let old be xs.replace(0, \"plum\")
+        let gone be xs.remove(2)
+        xs.swap(0, 1)
+        xs.reverse()
+        xs.extend([\"banana\", \"cherry\"])
+        let found be xs.contains(\"fig\")
+        let at be xs.index_of(\"banana\")
+        xs.sort()
+        if round is 0:
+            show(xs)
+            print(f\"{old} {found}\")
+            if gone?:
+                print(gone)
+            if at?:
+                print(f\"{at}\")
+        xs.sort(by: w giving w.length())
+        let f be xs.first()
+        let l be xs.last()
+        if round is 0 and f? and l?:
+            show(xs)
+            print(f\"{f} {l}\")
+        xs.truncate(4)
+        if round is 0:
+            show(xs)
+        xs.clear()
+        xs.push(\"again\")
+";
+    let name = "owned_strings";
+    let dir = scratch("arrays", name);
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, name), OptLevel::O2);
+    let scribbled = std::process::Command::new(&built.executable)
+        .env("MallocScribble", "1")
+        .output()
+        .expect("the program runs");
+    assert_eq!(
+        scribbled.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&scribbled.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&scribbled.stdout),
+        "banana cherry date fig kiwi plum \n\
+         pear true\n\
+         apple\n\
+         4\n\
+         fig date kiwi plum banana cherry \n\
+         fig cherry\n\
+         fig date kiwi plum \n"
+    );
+    let leaks = std::path::Path::new("/usr/bin/leaks");
+    if cfg!(target_os = "macos") && leaks.is_file() {
+        let report = std::process::Command::new(leaks)
+            .arg("--atExit")
+            .arg("--")
+            .arg(&built.executable)
+            .output()
+            .expect("`leaks` runs");
+        let text = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            text.contains(" 0 leaks for 0 total leaked bytes"),
+            "`leaks` found something:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A ring buffer over `Array of T?`, which the `collections` module recorded it
+/// could not write: `replace` is the move-out primitive, so a slot is emptied
+/// by replacing it with `null` and the element comes back owned. Four pushes
+/// into three slots overwrite the oldest, whose `String` the replaced value
+/// releases; the pops drain the rest in order. Run under `leaks --atExit`,
+/// because every path here either hands a `String` out or drops one.
+#[test]
+fn a_ring_buffer_moves_elements_out_with_replace() {
+    let source = "\
+type Ring[T]:
+    slots: Array[T?]
+    head: Int
+    count: Int
+
+Ring[T] has:
+    def new(size: Int) -> Ring[T]:
+        let mutable slots: Array[T?] be []
+        slots.reserve(size)
+        for i in 0..size:
+            let empty: T? be null
+            slots.push(empty)
+        Ring(slots: slots, head: 0, count: 0)
+
+    def push(mutable self, value: T):
+        let size be self.slots.length()
+        let at be (self.head + self.count) % size
+        let dropped be self.slots.replace(at, value)
+        if self.count is size:
+            self.head be (self.head + 1) % size
+        else:
+            self.count be self.count + 1
+
+    def pop(mutable self) -> T?:
+        if self.count is 0:
+            return null
+        let empty: T? be null
+        let taken be self.slots.replace(self.head, empty)
+        self.head be (self.head + 1) % self.slots.length()
+        self.count be self.count - 1
+        taken
+
+def main():
+    for round in 0..500:
+        let mutable ring be Ring[String].new(3)
+        ring.push(\"a\")
+        ring.push(\"b\")
+        ring.push(\"c\")
+        ring.push(\"d\")
+        let mutable out be \"\"
+        loop:
+            let next be ring.pop()
+            if not next?:
+                break
+            out.push_str(next)
+        ring.push(\"left behind\")
+        if round is 0:
+            print(out)
+";
+    let name = "ring";
+    let dir = scratch("arrays", name);
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, name), OptLevel::O2);
+    let ran = run(&built);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "bcd\n");
+    let leaks = std::path::Path::new("/usr/bin/leaks");
+    if cfg!(target_os = "macos") && leaks.is_file() {
+        let report = std::process::Command::new(leaks)
+            .arg("--atExit")
+            .arg("--")
+            .arg(&built.executable)
+            .output()
+            .expect("`leaks` runs");
+        let text = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            text.contains(" 0 leaks for 0 total leaked bytes"),
+            "`leaks` found something:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The three methods that take a position the caller asserts panic outside
+/// it, naming the method, the index and the length — and nothing after the
+/// failing call runs. `insert` at `length()` is the end and is not a failure.
+#[test]
+fn an_asserted_position_out_of_range_panics_naming_it() {
+    for (call, message) in [
+        ("xs.swap(0, 5)", "Array.swap: index 5 out of bounds for length 3"),
+        ("xs.insert(4, 9)", "Array.insert: index 4 out of bounds for length 3"),
+        ("let v be xs.replace(-1, 0)", "Array.replace: index -1 out of bounds for length 3"),
+    ] {
+        let source = format!(
+            "def main():
+    let mutable xs be [1, 2, 3]
+    {call}
+    print(\"after\")
+"
+        );
+        let (status, stdout, stderr) = outcome("asserted_position", &source);
+        assert_ne!(status, Some(0), "`{call}` did not fail");
+        assert!(stderr.contains(message), "`{call}`: {stderr}");
+        assert_eq!(stdout, "", "`{call}` ran on past the panic");
+    }
+    let (status, stdout, _) = outcome(
+        "insert_at_end",
+        "def main():
+    let mutable xs be [1, 2, 3]
+    xs.insert(3, 4)
+    print(f\"{xs[3]}\")
+",
+    );
+    assert_eq!((status, stdout.as_str()), (Some(0), "4\n"));
+}
+
+/// `sort()` and `contains` on an element with no order or equality the
+/// backend can call are refused by name, in the array's words: `Ord` and `Eq`
+/// declare no method yet, and the refusal is where `where T: Ord` and
+/// `where T: Eq` are enforced until they do.
+#[test]
+fn sort_and_contains_on_an_element_without_an_entry_point_are_refused_by_name() {
+    let text = refusal(
+        "sort_floats",
+        "def main():
+    let mutable xs be [1.5, 0.5]
+    xs.sort()
+",
+    );
+    assert!(text.contains("`sort()` on an `Array of F64`"), "{text}");
+    assert!(text.contains("Ord"), "{text}");
+    let text = refusal(
+        "contains_floats",
+        "def main():
+    let xs be [1.5, 0.5]
+    let half be 0.5
+    print(f\"{xs.contains(half)}\")
+",
+    );
+    assert!(text.contains("`contains` on an `Array of F64`"), "{text}");
+    assert!(!text.contains("Map"), "the refusal talks about a map: {text}");
+}

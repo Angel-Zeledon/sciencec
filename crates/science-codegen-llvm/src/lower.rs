@@ -254,6 +254,12 @@ use science_types::ty::{GenericArg, Ty, TyKind};
 
 use crate::emit::{ConvOp, ExtBlock, ExtBody, ExtInst};
 
+/// `Array.contains` and `Array.index_of`: the two `Array` entry points whose
+/// descriptor is a `ScienceMapInfo` over `(T, ())` rather than a
+/// `ScienceTypeInfo`, named once because two lowerings key on the symbol.
+const ARRAY_CONTAINS: &str = "science_array_contains";
+const ARRAY_INDEX_OF: &str = "science_array_index_of";
+
 /// A generic aggregate's parameters, bound to the arguments of one use.
 ///
 /// **A map and not a `Substitution`.** `science_types::Substitution` is the
@@ -8852,6 +8858,10 @@ impl<'a> Lowerer<'a> {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(sig) = self.symbol_for_call(ctx, def).and_then(|symbol| self.science.get(&symbol).cloned()) {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
+        } else if self.array_method(def) == Some("sort") {
+            self.lower_array_sort(body, ctx, args, destination, insts)?;
+        } else if self.array_method(def) == Some("replace") {
+            self.lower_array_replace(body, ctx, args, destination, insts)?;
         } else if let Some(symbol) = self.owned_nullable_method(def) {
             self.lower_owned_nullable_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(symbol) =
@@ -9715,9 +9725,26 @@ impl<'a> Lowerer<'a> {
                 // second field to `RuntimeFn` keeps the table describing
                 // signatures; the day a third descriptor kind exists, that is
                 // the trade to revisit.
-                if symbol.starts_with("science_map_") || symbol.starts_with("science_set_") {
-                    let (key, value) =
-                        self.map_operand_kv(body, args, destination).ok_or_else(|| {
+                if symbol.starts_with("science_map_")
+                    || symbol.starts_with("science_set_")
+                    || symbol == ARRAY_CONTAINS
+                {
+                    // `Array.contains` compares through a `Set of T`'s own
+                    // descriptor — `(T, ())`, read off the array rather than
+                    // off a map — so that the two `contains` agree on what
+                    // equal means and on which element types have an `eq_fn`.
+                    let pair = if symbol == ARRAY_CONTAINS {
+                        match self.array_operand_element(body, args, destination) {
+                            Some(element) => {
+                                self.require_array_equality(element, "contains")?;
+                                Some((element, Ty::UNIT))
+                            }
+                            None => None,
+                        }
+                    } else {
+                        self.map_operand_kv(body, args, destination)
+                    };
+                    let (key, value) = pair.ok_or_else(|| {
                             Unlowered::new(format!(
                                 "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no \
                                  operand this crate can read a key and value type off"
@@ -10153,6 +10180,32 @@ impl<'a> Lowerer<'a> {
             // twin is `science_array_get_mut`, whose name is C's and is not
             // reached by a user.
             ("Array", "get_mutably", "science_array_get_mut"),
+            // **The rest of `Array`'s Level 1 surface, eleven rows on the
+            // shapes above and nothing new.** `with_capacity` is `new` with a
+            // `usize`; `capacity` is `length`'s header read; `first` and `last`
+            // are `get`'s niche with the index implied; `insert` is `push`'s
+            // slot one `Int` along; `reserve`, `swap`, `clear`, `truncate` and
+            // `reverse` take the array, its descriptor and scalars; `extend`'s
+            // `other` is an aggregate argument, so it goes by its address — the
+            // runtime moves its elements out and releases its buffer, and MIR
+            // has already counted it moved. `contains` is the one whose
+            // descriptor is a `ScienceMapInfo`, which `lower_runtime_call`
+            // says where it builds it. `remove` and `index_of` are §5.3's
+            // shape and are rows in `owned_nullable_method`'s table; `sort()`
+            // and `replace` need more than a row and are
+            // [`Lowerer::lower_array_sort`] and [`Lowerer::lower_array_replace`].
+            ("Array", "with_capacity", "science_array_with_capacity"),
+            ("Array", "capacity", "science_array_capacity"),
+            ("Array", "reserve", "science_array_reserve"),
+            ("Array", "first", "science_array_first"),
+            ("Array", "last", "science_array_last"),
+            ("Array", "insert", "science_array_insert"),
+            ("Array", "swap", "science_array_swap"),
+            ("Array", "clear", "science_array_clear"),
+            ("Array", "truncate", "science_array_truncate"),
+            ("Array", "extend", "science_array_extend"),
+            ("Array", "reverse", "science_array_reverse"),
+            ("Array", "contains", ARRAY_CONTAINS),
             // `Map of (K, V)`'s surface. **Four rows here and not seven**, and
             // the three that are missing are missing for two different
             // reasons. `insert` and `remove` return `V?` through §5.3's
@@ -10776,6 +10829,146 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// The method's name, when `def` is a method the prelude declares on
+    /// `Array` — read off the block, as [`Lowerer::owned_nullable_method`]
+    /// reads it, and `is_builtin` on both.
+    fn array_method(&self, def: DefId) -> Option<&str> {
+        if !self.defs.get(def).is_builtin() {
+            return None;
+        }
+        let owner = self.decls?.signature(def)?.owner?;
+        let self_ty = self.decls?.self_ty(owner)?;
+        let TyKind::Named { def: receiver, .. } = self.types.kind(self_ty) else {
+            return None;
+        };
+        let receiver = self.defs.get(*receiver);
+        (receiver.is_builtin() && receiver.name == "Array")
+            .then(|| self.defs.get(def).name.as_str())
+    }
+
+    /// Refuse `Array.contains`/`Array.index_of` on an element with no `eq_fn`,
+    /// in the array's words rather than the map descriptor's.
+    ///
+    /// The comparison is `Set of T`'s, so the element types are the ones
+    /// `runtime::map_key_support` names; without this the refusal would come
+    /// from [`Lowerer::intern_map_descriptor`] and talk about a `Map` the
+    /// program never wrote.
+    fn require_array_equality(&self, element: Ty, method: &str) -> Result<(), Unlowered> {
+        if science_codegen::runtime::map_key_support(&self.cg_ty(element)?).is_some() {
+            return Ok(());
+        }
+        Err(Unlowered::new(format!(
+            "`{method}` on an `Array of {}`: `Eq` declares no method yet, so equality is the one \
+             a `Set` uses, which exists for `String` and the eight-byte integers only",
+            self.types.render(self.defs, element)
+        )))
+    }
+
+    /// `xs.sort()`: one `science-rt` entry point per element type.
+    ///
+    /// **The symbol is chosen from the element, and that is the whole of
+    /// this function.** `sort()`'s bound is `T: Ord` and `Ord` declares no
+    /// method — `builtins.rs` gives it implementations and no `compare` — so
+    /// there is no comparison a descriptor could carry a pointer to, and a
+    /// generic sort would have nothing to call. What is left is the element
+    /// types whose order `science-rt` already knows: `Int` (signed) and
+    /// `String` (byte order, `stdlib-core.md` §6.8, `science_string_cmp`'s
+    /// relation). Every other element is refused here, by name, which is
+    /// where `where T: Ord` is enforced until `Ord` has a method. `sort(by:)`
+    /// never reaches this crate as a call: `science-mir` lowers it to the
+    /// chain's barrier.
+    fn lower_array_sort(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let element = self.array_operand_element(body, args, destination).ok_or_else(|| {
+            Unlowered::new("an `Array.sort()` with no operand this crate can read an element off")
+        })?;
+        let symbol = match self.cg_ty(element)? {
+            CgTy::Int(IntTy::I64) => "science_array_sort_i64",
+            _ if self.is_string(element) => "science_array_sort_string",
+            _ => {
+                return Err(Unlowered::new(format!(
+                    "`sort()` on an `Array of {}`: `Ord` declares no method yet, so there is no \
+                     comparison to call for an arbitrary element, and `science-rt` sorts \
+                     `Int` and `String` only; `sort(by: key)` sorts any element by an `Int` key",
+                    self.types.render(self.defs, element)
+                )));
+            }
+        };
+        self.lower_runtime_call(body, ctx, symbol, args, destination, insts)
+    }
+
+    /// `xs.replace(index, value) -> T`: the element moved out, written
+    /// straight into the call's destination.
+    ///
+    /// **Not a `PRELUDE_METHODS` row, because the result is a `T` of a size
+    /// only the descriptor knows.** A row's result comes back in registers or
+    /// through `sret`, both of which need the return type at the C boundary,
+    /// and `science_array_replace` cannot have one: it is one symbol for every
+    /// `T`. So it takes an out-parameter, and the destination's own slot is
+    /// that parameter — `Array.pop`'s arrangement with no `bool`, because an
+    /// index out of range panics inside the runtime rather than answering
+    /// `null`. The receiver, descriptor and index are built the way
+    /// `lower_runtime_call` builds them, and `value` is passed by address the
+    /// way `push`'s is: the operand's own place when it is the element, the
+    /// pointer it holds when it is a borrow of one, a spill when it has no
+    /// place.
+    fn lower_array_replace(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        const SYMBOL: &str = "science_array_replace";
+        let sig = self.declare(SYMBOL)?;
+        let [receiver, index, value] = args else {
+            return Err(Unlowered::new(format!(
+                "an `Array.replace` lowered with {} argument(s) where it takes a receiver, an \
+                 index and a value",
+                args.len()
+            )));
+        };
+        let element = self.array_operand_element(body, args, destination).ok_or_else(|| {
+            Unlowered::new("an `Array.replace` with no operand this crate can read an element off")
+        })?;
+        let Some(receiver) = receiver.place() else {
+            return Err(Unlowered::new(
+                "an `Array.replace` whose receiver is not a place this crate can take the \
+                 address of",
+            ));
+        };
+        let receiver = self.pointer_to_place(ctx, receiver, insts)?;
+        let descriptor = Operand::GlobalAddr(self.intern_element_descriptor(element)?);
+        let index = self.typed_operand(ctx, index, &sig.params[2].layout, insts)?;
+        let value = match value.place() {
+            Some(place) if self.operand_ty(body, value) == Some(element) => {
+                let (address, _) = self.place_address(ctx, place, insts)?;
+                Operand::Value(address)
+            }
+            Some(place) => self.pointer_to_place(ctx, place, insts)?,
+            None => {
+                let layout = self.layout_of_ty(element)?;
+                self.spill_to_pointer(ctx, value, &layout, insts)?
+            }
+        };
+        let (out, _) = self.place_address(ctx, destination, insts)?;
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Runtime(SYMBOL),
+            args: vec![receiver, descriptor, index, value, Operand::Value(out)],
+            ret: sig.ret.clone(),
+            sret_slot: None,
+        }));
+        Ok(())
+    }
+
     /// Whether this call is `Array[T].span()` or `Array[T].span_mutably()`.
     ///
     /// **Not a row in `PRELUDE_METHODS`, for that table's own stated reason.**
@@ -10918,6 +11111,15 @@ impl<'a> Lowerer<'a> {
             // `StoreBoolIntoTag`'s existing empty-case handling and needed
             // nothing new here.
             ("Array", "pop", "science_array_pop"),
+            // **`Array.remove` and `Array.index_of`.** `remove` is `pop` at an
+            // index: the element moved into `out`, the tail shifted, and
+            // `false` with nothing written for an index that names no element.
+            // Its index is the first scalar this convention passes, by value,
+            // which the argument loop in `lower_owned_nullable_call` reads off
+            // `RUNTIME`'s `RtParam::Int`. `index_of` is `String.find`'s `Int?`
+            // over an array, with `Array.contains`' `(T, ())` map descriptor.
+            ("Array", "remove", "science_array_remove"),
+            ("Array", "index_of", ARRAY_INDEX_OF),
             // **`String.find`, the fourth, and the first whose payload is a
             // scalar a caller asked for rather than an element it stored.**
             // `science_string_find(value, needle, out) -> Bool` writes the
@@ -11057,7 +11259,19 @@ impl<'a> Lowerer<'a> {
             // call needs** — the same split `lower_runtime_call` makes between
             // `science_map_*` and everything else, restated here because this
             // function does not share that one's loop.
-            if symbol.starts_with("science_map_") {
+            if symbol == ARRAY_INDEX_OF {
+                // `Array.contains`' descriptor: `(T, ())`, read off the array.
+                let element =
+                    self.array_operand_element(body, args, destination).ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "a call to `{symbol}` with no operand this crate can read an \
+                             element type off"
+                        ))
+                    })?;
+                self.require_array_equality(element, "index_of")?;
+                lowered.push(Operand::GlobalAddr(self.intern_map_descriptor(element, Ty::UNIT)?));
+                declared.push(element);
+            } else if symbol.starts_with("science_map_") {
                 let (key_ty, value_ty) =
                     self.map_operand_kv(body, args, destination).ok_or_else(|| {
                         Unlowered::new(format!(
@@ -11087,6 +11301,16 @@ impl<'a> Lowerer<'a> {
         // and value, `remove`'s key, and — for `Chars.next`, which takes only
         // `self` — none at all.
         for (position, arg) in args.iter().skip(1).enumerate() {
+            // **A scalar goes by value.** `Array.remove`'s index is the first
+            // argument this convention has passed that is not a key, a value
+            // or a needle, and `RUNTIME` says so: its parameter is an
+            // `RtParam::Int`, not a pointer, so it is built exactly as
+            // `lower_runtime_call` builds one.
+            if matches!(entry.params.get(lowered.len()), Some(RtParam::Int)) {
+                let layout = sig.params[lowered.len()].layout.clone();
+                lowered.push(self.typed_operand(ctx, arg, &layout, insts)?);
+                continue;
+            }
             let ty = match declared.get(position) {
                 Some(ty) => *ty,
                 None => self.operand_ty(body, arg).ok_or_else(|| {

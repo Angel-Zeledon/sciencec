@@ -5386,6 +5386,9 @@ impl<'a> BodyChecker<'a> {
         };
         let callee = match self.decls.methods().lookup(key, &name.name, form) {
             Found::One(candidate) => Callee::Found(candidate, None),
+            Found::Ambiguous(candidates) if self.labelled(&candidates, args).is_some() => {
+                Callee::Found(self.labelled(&candidates, args).expect("just checked"), None)
+            }
             Found::Ambiguous(candidates) => {
                 let diagnostic = self.ambiguous(receiver, name, &candidates);
                 self.diagnostics.push(diagnostic);
@@ -5894,6 +5897,43 @@ impl<'a> BodyChecker<'a> {
 
     /// `SC0531`, built where the receiver's type and the candidates are both in
     /// hand. `methods`'s §3 is the argument for every line of it.
+    /// `collections-and-chains.md` §3.3's AMENDMENT 2 — *"a method's argument
+    /// labels are part of its name"* — for the one place it is needed today:
+    /// two **prelude** methods of one name, told apart by their labels.
+    ///
+    /// The prelude declares `Array.sort()` and `Array.sort(by:)`, which is the
+    /// pair §3.3 adopts the amendment to keep. The candidate whose parameters
+    /// the call's arguments fill exactly — the same count, and every label the
+    /// call writes naming one of them — is the method; anything else, including
+    /// two that both fit, stays [`Found::Ambiguous`] and is reported as before.
+    ///
+    /// **Prelude only, deliberately.** A user's `has:` block cannot declare one
+    /// name twice — `science-resolve` reports the duplicate — so the only
+    /// same-named user methods are in two different blocks, which is exactly
+    /// the ambiguity [`Self::ambiguous`]'s note refuses to settle by any
+    /// priority. Choosing between those by label would be the amendment in
+    /// full, across the resolver's duplicate rule, and is not taken here.
+    ///
+    /// [`Found::Ambiguous`]: crate::methods::Found::Ambiguous
+    fn labelled(&self, candidates: &[Candidate], args: &[hir::Arg]) -> Option<Candidate> {
+        if !candidates.iter().all(|candidate| self.defs.get(candidate.method).is_builtin()) {
+            return None;
+        }
+        let fits = |candidate: &&Candidate| {
+            let Some(sig) = self.decls.signature(candidate.method) else { return false };
+            sig.params.len() == args.len()
+                && args.iter().all(|arg| match &arg.name {
+                    Some(label) => {
+                        sig.params.iter().any(|param| self.defs.get(param.def).name == label.name)
+                    }
+                    None => true,
+                })
+        };
+        let mut fitting = candidates.iter().filter(fits);
+        let first = *fitting.next()?;
+        fitting.next().is_none().then_some(first)
+    }
+
     fn ambiguous(&self, receiver: Ty, name: &hir::Ident, candidates: &[Candidate]) -> Diagnostic {
         let rendered = self.types.render(self.defs, receiver);
         let mut diagnostic = Diagnostic::error(
@@ -5904,7 +5944,38 @@ impl<'a> BodyChecker<'a> {
             name.span,
             format!("{} implementations declare `{}`", candidates.len(), name.name),
         ));
+        // **Two prelude methods of one name are told apart by their labels**
+        // ([`Self::labelled`]), so reaching here with them means the call's
+        // arguments fit neither. They have no source to point a label at — a
+        // builtin's span is in no file — so the forms are named in a note.
+        let builtin: Vec<String> = candidates
+            .iter()
+            .filter(|candidate| self.defs.get(candidate.method).is_builtin())
+            .map(|candidate| {
+                let labels: String = self
+                    .decls
+                    .signature(candidate.method)
+                    .map(|sig| {
+                        sig.params
+                            .iter()
+                            .map(|param| format!("{}:", self.defs.get(param.def).name))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                format!("`{}({labels})`", name.name)
+            })
+            .collect();
+        if !builtin.is_empty() {
+            diagnostic = diagnostic.with_note(format!(
+                "the prelude declares {}, and a method's argument labels are part of its name \
+                 (`collections-and-chains.md` §3.3): these arguments fit none of them",
+                builtin.join(" and ")
+            ));
+        }
         for candidate in candidates {
+            if self.defs.get(candidate.method).is_builtin() {
+                continue;
+            }
             let source =
                 crate::methods::describe_source(self.defs, self.types, receiver, candidate);
             diagnostic = diagnostic.with_label(Label::secondary(

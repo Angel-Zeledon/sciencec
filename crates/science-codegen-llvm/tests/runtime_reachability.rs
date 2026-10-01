@@ -302,6 +302,34 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   if a? and b?:\n\
          \x20       print(f\"{xs.length()} {xs.is_empty()} {a} {b}\")\n",
     ),
+    // The rest of `Array`'s Level 1 surface, `tests/arrays.rs`'s
+    // `every_level_one_method_acts_on_the_elements_it_names` reduced: one call
+    // to each of the fifteen entry points it added, and to
+    // `science_array_reserve`, which was declared at last with them. `sort()`
+    // is reached twice, once per element type it has a symbol for.
+    (
+        "array_level_one",
+        "def main():\n\
+         \x20   let mutable xs be Array[Int].with_capacity(4)\n\
+         \x20   xs.push(3)\n\
+         \x20   xs.reserve(2)\n\
+         \x20   xs.insert(0, 1)\n\
+         \x20   xs.swap(0, 1)\n\
+         \x20   let old be xs.replace(0, 5)\n\
+         \x20   let gone be xs.remove(1)\n\
+         \x20   xs.extend([7, 8])\n\
+         \x20   xs.reverse()\n\
+         \x20   xs.sort()\n\
+         \x20   let at be xs.index_of(8)\n\
+         \x20   let f be xs.first()\n\
+         \x20   let l be xs.last()\n\
+         \x20   if f? and l? and at?:\n\
+         \x20       print(f\"{old} {xs.capacity()} {xs.contains(7)} {f} {l} {at}\")\n\
+         \x20   xs.truncate(1)\n\
+         \x20   xs.clear()\n\
+         \x20   let mutable ws be [\"b\", \"a\"]\n\
+         \x20   ws.sort()\n",
+    ),
     // The chain's one barrier. `collections-and-chains.md` §1.4 makes
     // `sorted(by:)` the link that buffers, and `science-mir`'s
     // `Builder::lower_chain_terminal` fuses everything around it into one loop
@@ -635,11 +663,6 @@ fn reachable() -> std::collections::BTreeSet<&'static str> {
 /// The symbols nothing in [`CORPUS`] reaches, each with the reason it is not
 /// a defect. See the module doc's three classes of evidence.
 const ALLOWLIST: &[(&str, &str)] = &[
-    (
-        "science_array_reserve",
-        "`Array.reserve` is not declared: `builtins.rs`'s `UNWRITTEN` table lists it against \
-         `collections-and-chains.md` §5.3, whose signature nothing has transcribed yet",
-    ),
     (
         "science_array_as_ptr",
         "no method of this name is declared on `Array` anywhere; confirmed empirically \

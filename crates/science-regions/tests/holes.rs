@@ -55,13 +55,50 @@ def hold(h: &Holder) -> Int:
 /// used to call `list.push(doc)`, and `Array.push` now has a declaration — so
 /// that program is a resolved call, the argument is a real move, and `SC0334`
 /// fires on it correctly. The claim is unchanged and its *reach* has shrunk to
-/// exactly the calls that are still holes, which is what the fixture now uses:
-/// `Array.insert` is in `stdlib-core.md` §3.6 and not in the prelude. Each
-/// declaration that lands takes another program out of this hole, and the day
-/// there is no undeclared container method left to write, the hole is closed
-/// and this test should be deleted rather than re-pointed.
+/// exactly the calls that are still holes, which is what the fixture now uses.
+/// It moved a second time: it called `list.insert(0, doc)` until `Array.insert`
+/// was declared with the rest of `docs/DREAM.md` §13.4's surface, and that
+/// program is now [`a_move_into_a_declared_insert_is_seen`]'s, below. It calls
+/// `list.concat(doc)` now: §13.4 gives `concat` and the prelude leaves it in
+/// `UNWRITTEN` (it needs `T: Clone`), so the call is still a method that does
+/// not resolve, and its argument is still read as a copy. (An *associated*
+/// call that does not resolve, `Array[Doc].filled(doc, 3)`, is not this hole:
+/// measured, its argument is a move and `SC0334` fires.) Each declaration
+/// that lands takes another program out of this hole, and the day there is
+/// no undeclared container method left to write, the hole is closed and this
+/// test should be deleted rather than re-pointed.
 #[test]
 fn a_move_through_an_unresolved_call_is_invisible() {
+    let source = "\
+type Doc:
+    title: Int
+
+def look(d: &Doc) -> Int:
+    d.title
+
+def go():
+    let mutable list be Array[Doc].new()
+    let doc be Doc(title: 0)
+    let s be &doc
+    let more be list.concat(doc)
+    print(look(s))
+";
+    let checked = check(source);
+    assert_eq!(
+        checked.reported(),
+        Vec::<u16>::new(),
+        "`SC0334` can now see through an unresolved call, which means either the method \
+         lookup landed or `lower`'s §5 changed: {:?}",
+        codes(&checked.regions)
+    );
+}
+
+/// The program [`a_move_through_an_unresolved_call_is_invisible`] used to be,
+/// now that `Array.insert` is declared: the call resolves, `value: T` is a real
+/// move, and moving `doc` while `s` still borrows it is `SC0334` — the hole
+/// closing for one more method, measured from the side that matters.
+#[test]
+fn a_move_into_a_declared_insert_is_seen() {
     let source = "\
 type Doc:
     title: Int
@@ -77,13 +114,7 @@ def go():
     print(look(s))
 ";
     let checked = check(source);
-    assert_eq!(
-        checked.reported(),
-        Vec::<u16>::new(),
-        "`SC0334` can now see through an unresolved call, which means either the method \
-         lookup landed or `lower`'s §5 changed: {:?}",
-        codes(&checked.regions)
-    );
+    assert_eq!(checked.reported(), vec![334], "{:?}", codes(&checked.regions));
 }
 
 /// [`science_regions::codes::NO_COMMON_REGION`] has never fired, and

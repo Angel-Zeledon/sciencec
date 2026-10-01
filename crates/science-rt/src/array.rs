@@ -1,8 +1,10 @@
 //! `Array[T]`: growable and contiguous. §8's method set in full, over the
 //! element-descriptor convention of the crate documentation, §6.
 
-use crate::abi::ScienceTypeInfo;
+use crate::abi::{ScienceMapInfo, ScienceTypeInfo};
 use crate::mem::{capacity_overflow, dangling, science_dealloc, science_realloc};
+use crate::panic::science_panic_bytes;
+use crate::string::ScienceString;
 
 /// Science's `Array[T]`.
 ///
@@ -427,4 +429,447 @@ pub unsafe extern "C" fn science_array_sort_by_int_key(
         );
         std::ptr::copy_nonoverlapping(sorted_keys.as_ptr(), keys.ptr as *mut i64, array.len);
     }
+}
+
+// --- The rest of Level 1's surface -------------------------------------------
+//
+// `stdlib-core.md` §3 gives `Array` five signatures and `docs/DREAM.md` §13.4
+// the rest of the catalogue; `science-resolve`'s `builtins.rs` is where each
+// name is argued. Everything below is element-agnostic in the way the entry
+// points above are: an element is `size` opaque bytes, a move is a `copy` or
+// `copy_nonoverlapping` of them, and the only thing that ever runs *on* an
+// element is `drop_fn`, exactly when the array stops owning one it did not
+// hand out.
+//
+// The three that need to know something about an element — equality for
+// `contains` and `index_of`, order for `sort` — take it from somewhere other
+// than `ScienceTypeInfo`, which carries neither: equality from a
+// `ScienceMapInfo` over `(T, ())`, the descriptor `Set of T` is already
+// represented by, and order from the entry point's own name.
+
+/// Panic for an index that names no element a checked mutator could act on.
+///
+/// **The message names the method, the index and the length**, which the
+/// bracket form's *"index out of bounds"* does not, and the difference is
+/// where each is built: `xs[i]` panics from a block `science-mir` emits with
+/// a constant, because formatting on the failing path would be MIR it has to
+/// build, while this is Rust on a path that is about to abort anyway.
+#[cold]
+#[inline(never)]
+fn index_out_of_bounds(method: &str, index: i64, len: usize) -> ! {
+    let message = format!("Array.{method}: index {index} out of bounds for length {len}");
+    // SAFETY: `message` is `len` initialised bytes for the duration of the
+    // call, and the call does not return.
+    unsafe { science_panic_bytes(message.as_ptr(), message.len()) }
+}
+
+/// `index` as a position strictly below `len`, or a panic naming `method`.
+#[inline]
+fn checked(method: &str, len: usize, index: i64) -> usize {
+    match in_bounds(len, index) {
+        Some(index) => index,
+        None => index_out_of_bounds(method, index, len),
+    }
+}
+
+/// `Array::capacity(&self) -> Int`, in elements.
+///
+/// A zero-sized element type's capacity is unbounded (`usize::MAX`), which no
+/// `Int` holds; it is reported as `Int.MAX`, the largest answer that is still
+/// true of every array a program can build.
+///
+/// # Safety
+///
+/// `array` must be a non-null, aligned pointer to a live [`ScienceArray`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_capacity(array: *const ScienceArray) -> i64 {
+    // SAFETY: the caller guarantees a live array.
+    let cap = unsafe { (*array).cap };
+    i64::try_from(cap).unwrap_or(i64::MAX)
+}
+
+/// `Array::first(&self) -> (borrowed T)?`: [`science_array_get`] at `0`.
+///
+/// # Safety
+///
+/// As [`science_array_get`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_first(
+    array: *const ScienceArray,
+    info: *const ScienceTypeInfo,
+) -> *const u8 {
+    // SAFETY: forwarded unchanged.
+    unsafe { science_array_get(array, info, 0) }
+}
+
+/// `Array::last(&self) -> (borrowed T)?`: the element at `len - 1`, or the
+/// null pointer on an empty array.
+///
+/// # Safety
+///
+/// As [`science_array_get`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_last(
+    array: *const ScienceArray,
+    info: *const ScienceTypeInfo,
+) -> *const u8 {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&*array, &*info) };
+    if array.len == 0 {
+        return std::ptr::null();
+    }
+    // SAFETY: `len - 1 < len`, so the slot holds an initialised element.
+    unsafe { array.slot(info, array.len - 1) }
+}
+
+/// `Array::insert(&mut self, index: Int, value: T)`.
+///
+/// Moves `value` in at `index` and every element from `index` on one place
+/// up. `index` may be `len` — an insert at the end is a `push` — and anything
+/// outside `0..=len` panics, naming the index and the length.
+///
+/// # Safety
+///
+/// As [`science_array_push`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_insert(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    index: i64,
+    value: *const u8,
+) {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    // `0..=len`, which is `in_bounds` against `len + 1`. Saturating, because a
+    // `len` of `usize::MAX` is a zero-sized array, whose `reserve` below
+    // refuses one more anyway.
+    let Some(index) = in_bounds(array.len.saturating_add(1), index) else {
+        index_out_of_bounds("insert", index, array.len)
+    };
+    // SAFETY: `array` is live and described by `info`.
+    unsafe { array.reserve(info, 1) };
+    // SAFETY: after `reserve`, slots `0..=len` are allocated. The tail
+    // `index..len` moves up one slot — an overlapping copy, hence `copy` — and
+    // slot `index` is then written from `value`, which does not alias the
+    // buffer by contract.
+    unsafe {
+        let at = array.slot(info, index);
+        std::ptr::copy(at, array.slot(info, index + 1), info.offset_of(array.len - index));
+        std::ptr::copy_nonoverlapping(value, at, info.size);
+    }
+    array.len += 1;
+}
+
+/// `Array::remove(&mut self, index: Int) -> T?`.
+///
+/// The owned-`T?` convention of [`science_array_pop`]: on an index in range,
+/// moves that element into `out`, closes the gap by moving every later element
+/// one place down, and returns `true`; on any other index returns `false` and
+/// writes nothing. Nothing is dropped either way.
+///
+/// # Safety
+///
+/// As [`science_array_pop`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_remove(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    index: i64,
+    out: *mut u8,
+) -> bool {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    let Some(index) = in_bounds(array.len, index) else {
+        return false;
+    };
+    // SAFETY: `index < len`, so the slot holds an initialised element; `out`
+    // is a distinct allocation. The tail `index + 1..len` then moves down one
+    // slot over the element just moved out — overlapping, hence `copy`.
+    unsafe {
+        let at = array.slot(info, index);
+        std::ptr::copy_nonoverlapping(at, out, info.size);
+        std::ptr::copy(array.slot(info, index + 1), at, info.offset_of(array.len - index - 1));
+    }
+    array.len -= 1;
+    true
+}
+
+/// `Array::swap(&mut self, first: Int, second: Int)`.
+///
+/// Exchanges two elements. Either index out of range panics, naming it.
+///
+/// # Safety
+///
+/// `array` must be a non-null, aligned pointer to a live [`ScienceArray`], and
+/// `info` must be the descriptor it was created with.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_swap(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    first: i64,
+    second: i64,
+) {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    let first = checked("swap", array.len, first);
+    let second = checked("swap", array.len, second);
+    if first != second {
+        // SAFETY: both are initialised slots below `len`, distinct, and each
+        // `size` bytes wide at a stride of `size`, so they do not overlap.
+        unsafe {
+            std::ptr::swap_nonoverlapping(
+                array.slot(info, first),
+                array.slot(info, second),
+                info.size,
+            )
+        }
+    }
+}
+
+/// `Array::replace(&mut self, index: Int, value: T) -> T`.
+///
+/// **The move-out primitive.** `xs[i]` is a borrow and `pop` reaches only the
+/// last element, so without this nothing could take ownership of an element
+/// in the middle of an array without shifting the rest — which is what a ring
+/// buffer over `Array of T?` needs. The old element is moved into `out` and
+/// `value` into its slot; nothing is dropped, and the caller owns what `out`
+/// now holds. An index out of range panics, naming it, and writes neither.
+///
+/// # Safety
+///
+/// As [`science_array_push`] for `value`, and as [`science_array_pop`] for
+/// `out`; `value` and `out` must not overlap each other.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_replace(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    index: i64,
+    value: *const u8,
+    out: *mut u8,
+) {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    let index = checked("replace", array.len, index);
+    // SAFETY: `index < len`, so the slot is initialised; `value` and `out` are
+    // distinct from the buffer and from each other by contract.
+    unsafe {
+        let at = array.slot(info, index);
+        std::ptr::copy_nonoverlapping(at, out, info.size);
+        std::ptr::copy_nonoverlapping(value, at, info.size);
+    }
+}
+
+/// `Array::clear(&mut self)`: drop every element, in index order, and keep
+/// the buffer.
+///
+/// # Safety
+///
+/// As [`science_array_free`], except that the array stays usable.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_clear(array: *mut ScienceArray, info: *const ScienceTypeInfo) {
+    // SAFETY: forwarded unchanged.
+    unsafe { science_array_truncate(array, info, 0) }
+}
+
+/// `Array::truncate(&mut self, length: Int)`: drop every element from
+/// `length` on, in index order, and keep the buffer.
+///
+/// **Total, as `String.truncate` is** (`stdlib-core.md` §6.5): a `length` at
+/// or past the end changes nothing, and a negative one empties the array.
+///
+/// # Safety
+///
+/// As [`science_array_free`], except that the array stays usable.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_truncate(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    length: i64,
+) {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    let keep = usize::try_from(length.max(0)).unwrap_or(usize::MAX);
+    if keep >= array.len {
+        return;
+    }
+    let old = array.len;
+    // **`len` first, then the drops**, so that the array never claims an
+    // element whose destructor has already run.
+    array.len = keep;
+    if let Some(drop_fn) = info.drop_fn {
+        for index in keep..old {
+            // SAFETY: slots `keep..old` were initialised and are no longer the
+            // array's; each is dropped exactly once.
+            unsafe { drop_fn(array.slot(info, index)) }
+        }
+    }
+}
+
+/// `Array::extend(&mut self, other: Array[T])`.
+///
+/// Moves every element of `other` onto the end of `array`, in order, and then
+/// releases `other`'s buffer **without** running `drop_fn` — its elements are
+/// `array`'s now. `other` is consumed: it is left a valid empty array, and
+/// the caller does not free it again, because Science moved it into the call.
+///
+/// # Safety
+///
+/// `array` and `other` must be non-null, aligned pointers to two distinct live
+/// [`ScienceArray`]s, both created with `info`.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_extend(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    other: *mut ScienceArray,
+) {
+    // SAFETY: the caller guarantees two distinct live arrays and the descriptor.
+    let (array, info, other) = unsafe { (&mut *array, &*info, &mut *other) };
+    // SAFETY: `array` is live and described by `info`.
+    unsafe { array.reserve(info, other.len) };
+    // SAFETY: after `reserve`, slots `len..len + other.len` are allocated and
+    // uninitialised; `other`'s first `len` slots are initialised and live in a
+    // different allocation.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            other.ptr,
+            array.slot(info, array.len),
+            info.offset_of(other.len),
+        );
+    }
+    array.len += other.len;
+    // SAFETY: `ptr` and `cap * size` describe the block `other` allocated; its
+    // elements were moved out above, so nothing is dropped.
+    unsafe { science_dealloc(other.ptr, info.offset_of(other.cap), info.align) };
+    *other = ScienceArray::empty(info);
+}
+
+/// `Array::reverse(&mut self)`: reverse the elements in place.
+///
+/// # Safety
+///
+/// `array` must be a non-null, aligned pointer to a live [`ScienceArray`], and
+/// `info` must be the descriptor it was created with.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_reverse(array: *mut ScienceArray, info: *const ScienceTypeInfo) {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (array, info) = unsafe { (&mut *array, &*info) };
+    let len = array.len;
+    for low in 0..len / 2 {
+        // SAFETY: `low < len - 1 - low`, both below `len`: two distinct
+        // initialised slots that cannot overlap.
+        unsafe {
+            std::ptr::swap_nonoverlapping(
+                array.slot(info, low),
+                array.slot(info, len - 1 - low),
+                info.size,
+            )
+        }
+    }
+}
+
+/// The position of the first element equal to `value`, by `info.eq_fn`.
+///
+/// # Safety
+///
+/// As [`science_array_contains`].
+unsafe fn position(array: &ScienceArray, info: &ScienceMapInfo, value: *const u8) -> Option<usize> {
+    (0..array.len).find(|&index| {
+        // SAFETY: `index < len`, so the slot holds an initialised element of
+        // the key type `info.key` describes, which is `eq_fn`'s operand type.
+        unsafe { (info.eq_fn)(array.slot(&info.key, index), value) }
+    })
+}
+
+/// `Array::contains(&self, value: &T) -> Bool`.
+///
+/// **The descriptor is a `ScienceMapInfo` over `(T, ())`, not a
+/// `ScienceTypeInfo`.** Equality is not in an element descriptor and has no
+/// business being there for every array that never compares; it is in a map
+/// descriptor, whose `key` is `T`'s own descriptor and whose `eq_fn` is the
+/// one `Set of T` — represented as exactly this `(T, ())` map — already uses
+/// for its own `contains`. So `xs.contains(x)` and `set.contains(x)` agree on
+/// what equal means by construction.
+///
+/// # Safety
+///
+/// `array` must be a live [`ScienceArray`] whose elements `info.key`
+/// describes; `value` must point to a live `T`.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_contains(
+    array: *const ScienceArray,
+    info: *const ScienceMapInfo,
+    value: *const u8,
+) -> bool {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    unsafe { position(&*array, &*info, value).is_some() }
+}
+
+/// `Array::index_of(&self, value: &T) -> Int?`.
+///
+/// The owned-`T?` convention of [`science_array_pop`] over an `Int` payload:
+/// the index of the first element equal to `value`, written to `out`, and
+/// `true`; or `false` with `out` untouched. Equality as
+/// [`science_array_contains`].
+///
+/// # Safety
+///
+/// As [`science_array_contains`]; `out` must be writable and aligned for an
+/// `i64`.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_index_of(
+    array: *const ScienceArray,
+    info: *const ScienceMapInfo,
+    value: *const u8,
+    out: *mut i64,
+) -> bool {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    match unsafe { position(&*array, &*info, value) } {
+        Some(index) => {
+            // SAFETY: `out` is writable by contract. An index below `len` is
+            // below `isize::MAX`, so it fits an `i64` on every F0 target.
+            unsafe { out.write(index as i64) };
+            true
+        }
+        None => false,
+    }
+}
+
+/// `Array[Int]::sort(&mut self)`: ascending, stable.
+///
+/// **One entry point per element type, named for it**, because `sort()`'s
+/// bound is `T: Ord` and `Ord` declares no method yet: there is no compare
+/// function for a descriptor to carry. Codegen picks this symbol off the
+/// element type at the call, and refuses by name an element type that has
+/// none.
+///
+/// # Safety
+///
+/// `array` must be a non-null, aligned pointer to a live [`ScienceArray`] of
+/// `i64`.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_sort_i64(array: *mut ScienceArray) {
+    // SAFETY: the caller guarantees a live array of `len` initialised `i64`s.
+    let elements =
+        unsafe { std::slice::from_raw_parts_mut((*array).ptr.cast::<i64>(), (*array).len) };
+    elements.sort();
+}
+
+/// `Array[String]::sort(&mut self)`: ascending in byte order — `String: Ord`
+/// as `stdlib-core.md` §6.8 defines it, and `science_string_cmp`'s relation —
+/// and stable, so equal strings keep their order.
+///
+/// # Safety
+///
+/// `array` must be a non-null, aligned pointer to a live [`ScienceArray`] of
+/// [`ScienceString`].
+#[no_mangle]
+pub unsafe extern "C" fn science_array_sort_string(array: *mut ScienceArray) {
+    // SAFETY: the caller guarantees a live array of `len` initialised strings.
+    // `ScienceString` has no `Drop`, so the sort's bitwise moves neither run a
+    // destructor nor duplicate an owner.
+    let elements = unsafe {
+        std::slice::from_raw_parts_mut((*array).ptr.cast::<ScienceString>(), (*array).len)
+    };
+    // SAFETY: each element is a live string.
+    elements.sort_by(|a, b| unsafe { a.bytes().cmp(b.bytes()) });
 }

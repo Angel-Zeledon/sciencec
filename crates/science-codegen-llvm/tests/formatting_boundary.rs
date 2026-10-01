@@ -199,6 +199,13 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// in front, forty bytes, a hidden pointer on every convention. `io`'s
 /// `File.open`, `File.read` and `Stdin.read` are reached through an `extern`
 /// block and are not rows at all.
+///
+/// **Still twenty — twenty-two — with one hundred and twenty-eight rows.**
+/// The rest of `Array`'s Level 1 surface added fifteen `science_array_*`
+/// entry points and none returns an aggregate: `replace`, the one that hands
+/// an element back, writes it through a slot because its size is the
+/// descriptor's and not the signature's, and the rest return `()`, a `Bool`,
+/// an `Int` or `get`'s niche pointer.
 #[test]
 fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_times() {
     let triple = Triple::host().expect("a supported host");
@@ -213,7 +220,7 @@ fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_ti
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 113, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 128, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

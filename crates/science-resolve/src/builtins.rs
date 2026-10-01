@@ -1359,6 +1359,184 @@ const BLOCKS: &[Block] = &[
                 params: &[],
                 ret: Some(Ty::App("ArrayIterate", &[Ty::Var("T")])),
             },
+            // **The rest of the Level 1 surface.** `stdlib-core.md` §3.6 gives
+            // five signatures and `push`/`get` are the two of them that are
+            // `Array`'s; the catalogue is `docs/DREAM.md` §13.4, which writes
+            // an `Array[T] has:` block out in full, and every entry below is
+            // transcribed from it unless its comment says otherwise. Each one
+            // has a `science-rt` entry point and a row in
+            // `science-codegen-llvm`'s tables, and `tests/arrays.rs` there runs
+            // a program through it — the rule [`FUNCTIONS`]' comment states,
+            // that a declared name with no lowering behind it is a name that
+            // type-checks and then refuses.
+            //
+            // **§13.4's `where` clauses are dropped, as `Map.insert`'s is.**
+            // [`Method`] has no `where_clause`, so `contains` and `index_of`'s
+            // `where T: Eq` and `sort()`'s `where T: Ord` are not written; an
+            // element type with no equality or order the backend can call is
+            // refused there, by name, with the element type in the message.
+            // The bound is the honest signature and the refusal is where it is
+            // enforced until [`Method`] can carry one.
+            //
+            // §13.4 verbatim: an associated function like `new`, whose `T` is
+            // fixed the same way — the instantiation written, or `SC0536`.
+            Method {
+                name: "with_capacity",
+                generics: &[],
+                recv: None,
+                params: &[("capacity", INT)],
+                ret: Some(Ty::App("Array", &[Ty::Var("T")])),
+            },
+            // §13.4 verbatim. `collections-and-chains.md` §5.3 names
+            // `Array.reserve(n)` as what `collect()` feeds from
+            // `estimated_length()`, and gives no signature; §13.4 does not
+            // list it. `additional` is Rust's sense — room for that many
+            // *more* — because that is what `science_array_reserve` already
+            // does for the array literal, and the name says so.
+            Method { name: "capacity", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method {
+                name: "reserve",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("additional", INT)],
+                ret: None,
+            },
+            // §13.4 verbatim: `get(0)` and `get(length() - 1)`, with `get`'s
+            // shape and its reason.
+            Method {
+                name: "first",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("T")))),
+            },
+            Method {
+                name: "last",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("T")))),
+            },
+            // **Deviation: `insert` returns nothing and panics out of range,
+            // where §13.4 writes `-> Error?`.** Two reasons. `stdlib-core.md`
+            // §7.3 makes every Level 1 function return its *concrete* error
+            // type, and §7.2 gives three — none of which is about an index,
+            // so `Error?` here would be the interface §7.3 forbids and any
+            // concrete type would be invented. And an index past the end is
+            // the bracket form's case, not `get`'s: the caller asserts the
+            // position, as `xs[i] be v` does, so it fails the way `xs[i]`
+            // does — a panic naming the index and the length. `index` may be
+            // `length()`, which appends.
+            Method {
+                name: "insert",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("index", INT), ("value", Ty::Var("T"))],
+                ret: None,
+            },
+            // §13.4 verbatim: `T?`, `pop`'s answer one position along, and
+            // `null` for an index that names no element rather than a panic —
+            // the same choice `get` makes. The tail shifts down one.
+            Method {
+                name: "remove",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("index", INT)],
+                ret: Some(Ty::Opt(&Ty::Var("T"))),
+            },
+            // **Decided here: `swap` and `replace` are not in §13.4.** They
+            // are the two primitives that move an element *without* shifting
+            // the others, and without them an element in the middle of an
+            // array cannot be taken out at all: `xs[i]` is a borrow, `pop`
+            // reaches only the end, and `remove` shifts. The `collections`
+            // module's own header records that it could not write a ring
+            // buffer for exactly that reason. `replace(index, value) -> T` is
+            // the move-out primitive — the element comes back owned and
+            // `value` takes its slot — and over an `Array of T?` it is
+            // `take`: `slots.replace(i, null)`. Both panic out of range, for
+            // `insert`'s reason: the caller names the position.
+            Method {
+                name: "swap",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("first", INT), ("second", INT)],
+                ret: None,
+            },
+            Method {
+                name: "replace",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("index", INT), ("value", Ty::Var("T"))],
+                ret: Some(Ty::Var("T")),
+            },
+            // §13.4 verbatim. Both keep the buffer and drop what they cut, in
+            // index order; `truncate` is total as `String.truncate` is
+            // (`stdlib-core.md` §6.5) — past the end changes nothing and a
+            // negative length empties. The parameter is `length`, the
+            // array's own word for what is being set, where §13.4 writes `n`.
+            Method { name: "clear", generics: &[], recv: Some(SelfKind::Mutable), params: &[], ret: None },
+            Method {
+                name: "truncate",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("length", INT)],
+                ret: None,
+            },
+            // §13.4 verbatim: `other` is moved in and its elements with it,
+            // so nothing is cloned and no bound is needed.
+            Method {
+                name: "extend",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("other", Ty::App("Array", &[Ty::Var("T")]))],
+                ret: None,
+            },
+            // §13.4 verbatim.
+            Method { name: "reverse", generics: &[], recv: Some(SelfKind::Mutable), params: &[], ret: None },
+            // §13.4 verbatim, less `where T: Eq` (see above). Equality is
+            // `Set.contains`'s: the backend passes the `(T, ())` map descriptor
+            // a `Set of T` already uses, so the element types are the ones a
+            // `Set` admits — `String` and the eight-byte integers.
+            Method {
+                name: "contains",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("value", Ty::Ref(&Ty::Var("T")))],
+                ret: Some(BOOL),
+            },
+            Method {
+                name: "index_of",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("value", Ty::Ref(&Ty::Var("T")))],
+                ret: Some(Ty::Opt(&INT)),
+            },
+            // **Two `sort`s, told apart by the label**:
+            // `collections-and-chains.md` §3.3's AMENDMENT 2, *"a method's
+            // argument labels are part of its name"*, which §3.3 adopts
+            // precisely to keep the core spec §4.6's `docs.sort(by: doc giving
+            // …)` beside a bare `sort()`. §13.4 spells the second `sort_by(less:
+            // (&T, &T) -> Bool)`; §3.3 refuses *"a litter of `_by` suffixes"*
+            // and the core spec writes `sort(by:)`, so the label wins.
+            // `science-types`' `check` picks between the two by label, for
+            // prelude methods only (its `labelled` says why).
+            //
+            // `sort()` is §13.4's, less `where T: Ord`: `Ord` declares no
+            // method yet, so there is no comparison a generic body could call
+            // and the backend picks an entry point per element type — `Int`
+            // and `String` (byte order, `stdlib-core.md` §6.8) — refusing the
+            // rest by name. `sort(by:)` is the chain's `sorted(by:)` on an
+            // array in place: the key is an `Int`, computed once per element,
+            // and the sort is stable, both for `science_array_sort_by_int_key`'s
+            // stated reasons.
+            Method { name: "sort", generics: &[], recv: Some(SelfKind::Mutable), params: &[], ret: None },
+            Method {
+                name: "sort",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &INT))],
+                ret: None,
+            },
         ],
     },
     // --- Map, §3.6 --------------------------------------------------------
@@ -2589,13 +2767,23 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
         "owned",
     ]),
     // `Array` — every name either note gives it that the block above does not
-    // have. None of these has a full signature in a note, which is the reason
-    // they are not transcribed: `pop` is `stdlib-core.md` §3.2 (*"`Array` has
-    // `push` and `pop` and no `pop_front`"*) as a name only, `sort` is
-    // `collections-and-chains.md` §3.2 and §3.3, `reserve` is §5.3. The three
+    // have. `sort` and `reserve` left this row when `docs/DREAM.md` §13.4's
+    // catalogue was transcribed into [`BLOCKS`]; what stays is what that
+    // catalogue and §5.4 give and nothing here can lower yet. The two
     // `iterate*` are §5.4 and they *do* have signatures — they return
-    // `ArrayIterate[T]` and its two siblings, which are types the prelude
-    // does not have, so they are `slice`'s case one type along.
+    // `ArrayIterate[T]`'s two siblings, which are types the prelude does not
+    // have, so they are `slice`'s case one type along.
+    //
+    // **§13.4's four that need more than a move.** `filled(value, n)` and
+    // `concat(other)` are `where T: Clone`, and copying an element the
+    // runtime knows only as `size` bytes needs a clone function no
+    // `ScienceTypeInfo` carries — `clone`'s case below. `join(sep)` is
+    // declared on `Array[String] has:`, a block on one instantiation, which
+    // [`Block`] cannot express without declaring it on every `Array[T]`.
+    // `slice(from, to) -> (&Array[T])?` is a borrowed sub-array, which needs
+    // a header that points into another array's buffer — the representation
+    // `collections-and-chains.md` §5.3 refuses and
+    // `indexing-and-array-literals.md` §2 gives to a separate `Slice of T`.
     //
     // **`len` is deliberately absent, and it is now a measured corpus
     // disagreement rather than a hypothetical one.**
@@ -2634,7 +2822,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
         // was here was that `ArrayIterate[T]` is *"a type the prelude does not
         // have"*, and the prelude has it now. Its two siblings stay, for the
         // reason `iterate`'s own declaration gives.
-        "sort", "reserve", "iterate_mutably", "iterate_consuming", "clone",
+        "iterate_mutably", "iterate_consuming", "clone", "filled", "concat", "join", "slice",
     ]),
     // `Map` — `keys`, `values` and `values_mutably` are
     // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the

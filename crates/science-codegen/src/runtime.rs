@@ -712,7 +712,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 110 entry points. §2.6: *"They are the whole list."*
+/// The 128 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -751,6 +751,29 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // computed. Both arrays are reordered together. `collections-and-chains.md`
     // §1.4 classes the link as a barrier and this is that barrier.
     RuntimeFn { symbol: "science_array_sort_by_int_key", params: &[P, D, P], ret: RtRet::Void },
+    // The rest of `Array`'s Level 1 surface, `science-resolve`'s `builtins.rs`
+    // argues each name. `first`/`last` are `get`'s niche shape; `remove` is
+    // `pop`'s §5.3 shape with an index; `replace` writes the element it moves
+    // out through a trailing slot, which is the call's destination.
+    RuntimeFn { symbol: "science_array_capacity", params: &[P], ret: RtRet::Int },
+    RuntimeFn { symbol: "science_array_first", params: &[P, D], ret: RtRet::Ptr },
+    RuntimeFn { symbol: "science_array_last", params: &[P, D], ret: RtRet::Ptr },
+    RuntimeFn { symbol: "science_array_insert", params: &[P, D, N, S], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_remove", params: &[P, D, N, S], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_array_swap", params: &[P, D, N, N], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_replace", params: &[P, D, N, S, S], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_clear", params: &[P, D], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_truncate", params: &[P, D, N], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_extend", params: &[P, D, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_reverse", params: &[P, D], ret: RtRet::Void },
+    // These two take a `ScienceMapInfo` over `(T, ())` where the others take a
+    // `ScienceTypeInfo` — `Set of T`'s descriptor, and its `eq_fn`.
+    RuntimeFn { symbol: "science_array_contains", params: &[P, D, S], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_array_index_of", params: &[P, D, S, P], ret: RtRet::Bool },
+    // `sort()` by the element's own order, one entry point per element type
+    // because `Ord` declares no method a descriptor could carry.
+    RuntimeFn { symbol: "science_array_sort_i64", params: &[P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_sort_string", params: &[P], ret: RtRet::Void },
     // --- boxed.rs ---
     // Descriptor **first**. This is the pair finding 4 is about.
     RuntimeFn { symbol: "science_box_new", params: &[D, S], ret: RtRet::Ptr },
@@ -1396,9 +1419,21 @@ mod tests {
     /// alternate forms — is a library, not an instruction sequence, so
     /// Decision 14 is met where `science_formatter_number` already met it.
     /// None returns an aggregate, so the `sret` list below did not move.
+    ///
+    /// **One hundred and twenty-eight**: fifteen `science_array_*` symbols, the
+    /// rest of `Array`'s Level 1 surface — `capacity`, `first`, `last`,
+    /// `insert`, `remove`, `swap`, `replace`, `clear`, `truncate`,
+    /// `extend`, `reverse`, `contains`, `index_of`, and `sort` twice, once
+    /// per element type with an order (`i64`, `String`) because `Ord` has no
+    /// method a descriptor could carry a pointer to. Each one moves, drops or
+    /// compares `size`-byte elements of a type only the descriptor knows, so
+    /// none is an instruction sequence this crate could emit, and Decision 14
+    /// is met as it was for `science_array_sort_by_int_key`. None returns an
+    /// aggregate — `replace` writes the element it moves out through a slot —
+    /// so the `sret` lists did not move.
     #[test]
-    fn there_are_one_hundred_and_thirteen_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 113, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_twenty_eight_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 128, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

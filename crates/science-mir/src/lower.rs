@@ -2945,6 +2945,11 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 return next;
             }
         }
+        if let (Some(def), [key]) = (method, args) {
+            if self.is_array_sort_by(def) {
+                return self.lower_array_sort_by(dest, receiver, *key, block, span);
+            }
+        }
         let callee = match method {
             Some(def) => Callee::Def { def, self_ty: None },
             // Decision 11's lookup. `Unresolved::Method` is the price, and §5's
@@ -6886,28 +6891,8 @@ impl Builder<'_, '_> {
                 // **The key before the push**, because the push moves the
                 // item and the key closure only borrows it: reversing the two
                 // would compute a key from a place the array now owns.
-                if let (Some((keys, _)), Some((closure, closure_ty))) = (&keys, key_closure) {
-                    let (argument, next) =
-                        self.chain_argument(&value, closure_ty, false, current, span);
-                    current = next;
-                    let key_value = self.temp(int_ty, span, current);
-                    current = self.emit_call(
-                        Place::local(key_value),
-                        Callee::Indirect(Operand::Copy(Place::local(closure))),
-                        vec![argument],
-                        current,
-                        span,
-                    );
-                    let (key_accumulator, next) = self.accumulator_ref(keys, current, span);
-                    current = next;
-                    let discard = Place::local(self.temp(Ty::UNIT, span, current));
-                    current = self.emit_call(
-                        discard,
-                        Callee::Runtime(ARRAY_PUSH),
-                        vec![key_accumulator, Operand::Move(Place::local(key_value))],
-                        current,
-                        span,
-                    );
+                if let (Some((keys, _)), Some(closure)) = (&keys, key_closure) {
+                    current = self.chain_push_key(keys, closure, &value, int_ty, current, span);
                 }
                 let (accumulator, next) = self.accumulator_ref(&dest, current, span);
                 current = next;
@@ -6922,6 +6907,12 @@ impl Builder<'_, '_> {
                 self.chain_leave(current, depth, step_block, span);
             }
             Terminal::Count => {
+                // `Array.sort(by:)`'s pass: no buffer, only the keys, one per
+                // element and in step with the array it will reorder. See
+                // [`Builder::lower_array_sort_by`].
+                if let (Some((keys, _)), Some(closure)) = (&keys, key_closure) {
+                    current = self.chain_push_key(keys, closure, &value, int_ty, current, span);
+                }
                 self.chain_add(&dest, Self::bits(1), current, span);
                 self.chain_leave(current, depth, step_block, span);
             }
@@ -7015,6 +7006,99 @@ impl Builder<'_, '_> {
         }
         self.terminate(exhausted, TerminatorKind::Goto { target: done }, span);
         done
+    }
+
+    /// Call the barrier's key closure on the item in hand and push the `Int`
+    /// it returns onto `keys` — the parallel array
+    /// `science_array_sort_by_int_key` reorders beside the values.
+    fn chain_push_key(
+        &mut self,
+        keys: &Place,
+        (closure, closure_ty): (Local, Ty),
+        value: &Place,
+        int_ty: Ty,
+        mut current: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let (argument, next) = self.chain_argument(value, closure_ty, false, current, span);
+        current = next;
+        let key_value = self.temp(int_ty, span, current);
+        current = self.emit_call(
+            Place::local(key_value),
+            Callee::Indirect(Operand::Copy(Place::local(closure))),
+            vec![argument],
+            current,
+            span,
+        );
+        let (key_accumulator, next) = self.accumulator_ref(keys, current, span);
+        current = next;
+        let discard = Place::local(self.temp(Ty::UNIT, span, current));
+        self.emit_call(
+            discard,
+            Callee::Runtime(ARRAY_PUSH),
+            vec![key_accumulator, Operand::Move(Place::local(key_value))],
+            current,
+            span,
+        )
+    }
+
+    /// `xs.sort(by: key)`: the chain's `sorted(by:)` barrier, applied to an
+    /// array in place.
+    ///
+    /// **Built out of the chain's own pieces**, because it is the same work
+    /// with nothing after it. One [`Builder::chain_pass`] over the array with
+    /// no links and a counting terminal computes the keys — once per element,
+    /// in a pass that borrows the array exactly as a chain's source is
+    /// borrowed — into a parallel `Array[Int]`; then the array and the keys
+    /// are borrowed exclusively and handed to
+    /// `science_array_sort_by_int_key`, which reorders both. The key closure is
+    /// `(borrowed T) -> Int`, the type `sorted(by:)` gives it on an
+    /// `ArrayIterate`, so `chain_argument` hands it the element borrow the
+    /// pass already took. The count is thrown away and the keys are a
+    /// temporary, dropped with the statement.
+    fn lower_array_sort_by(
+        &mut self,
+        dest: Place,
+        receiver: ExprId,
+        key: ExprId,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+        let keys_ty = self.array_of(int_ty);
+        let keys = Place::local(self.temp(keys_ty, span, block));
+        let counted = Place::local(self.temp(int_ty, span, block));
+        let (source, block) = self.chain_source(receiver, block, span);
+        let block = self.chain_pass(
+            counted,
+            Terminal::Count,
+            Some((keys.clone(), key)),
+            &source,
+            &[],
+            block,
+            span,
+        );
+        let (values_ref, block) = self.exclusive_ref(&source, block, span);
+        let (keys_ref, block) = self.exclusive_ref(&keys, block, span);
+        self.emit_call(
+            dest,
+            Callee::Runtime(ARRAY_SORT_BY_INT_KEY),
+            vec![values_ref, keys_ref],
+            block,
+            span,
+        )
+    }
+
+    /// Whether this definition is the prelude's `Array.sort(by:)` — the
+    /// labelled one of the two `sort`s, which is the one with a parameter.
+    fn is_array_sort_by(&self, def: DefId) -> bool {
+        let entry = self.context.defs.get(def);
+        entry.is_builtin()
+            && entry.name == "sort"
+            && entry.parent.is_some_and(|owner| self.context.defs.get(owner).name == "Array")
+            && self.context.decls.signature(def).is_some_and(|sig| sig.params.len() == 1)
     }
 
     /// Leave the item's scope from `from` and go to `target`: the drops and
