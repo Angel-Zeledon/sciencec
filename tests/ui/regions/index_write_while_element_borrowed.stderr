@@ -1,0 +1,12 @@
+error[SC0330]: `v[..]` is borrowed here and modified before the borrow ends
+  --> tests/ui/regions/index_write_while_element_borrowed.science:9:5
+   |
+ 8 |     let first be &v[0]
+   |                  ----- `v[..]` is borrowed here, shared
+ 9 |     v[1] be 9
+   |     ^^^^^^^^^ ...and modified here, which needs it exclusively
+10 |     print(first)
+   |     ------------ the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix

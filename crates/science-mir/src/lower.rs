@@ -1360,6 +1360,21 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 block = self.expr_into(Place::local(temp), *expr, block);
             }
             StmtKind::Assign { target, value } => {
+                // **The value is evaluated before an indexed target is taken.**
+                // `v[0] be v[2]` reads `v` on the right of a write into `v`;
+                // with the target's place built first, the read happens while
+                // the element's exclusive access is open, and the region
+                // check refuses it (`SC0330`). Evaluating the right-hand side
+                // into a temporary first, as Rust's assignment does, ends the
+                // read before the write begins. Only an indexed target needs
+                // it, so every other assignment keeps its order.
+                let mut early = None;
+                if self.target_is_indexed(*target) {
+                    let vty = self.thir.ty(*value);
+                    let temp = self.temp(vty, span, block);
+                    block = self.expr_into(Place::local(temp), *value, block);
+                    early = Some((temp, vty));
+                }
                 let (place, next) = match self.as_place(*target, block) {
                     Some(found) => found,
                     // The resolver and the checker both report an assignment to
@@ -1433,7 +1448,26 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // where it may have been, and leaves it standing where it is
                 // certainly there.
                 let ty = self.place_ty(&place);
-                if crate::moves::needs_drop(
+                if let Some((temp, vty)) = early {
+                    let replace = self.new_block();
+                    if crate::moves::needs_drop(
+                        self.context.decls,
+                        self.context.types,
+                        self.context.aliases,
+                        ty,
+                    ) {
+                        self.terminate(
+                            next,
+                            TerminatorKind::Drop { place: place.clone(), flag: None, target: replace },
+                            span,
+                        );
+                    } else {
+                        self.terminate(next, TerminatorKind::Goto { target: replace }, span);
+                    }
+                    let read = self.read(Place::local(temp), vty);
+                    self.assign(replace, place, Rvalue::Use(read), span);
+                    block = replace;
+                } else if crate::moves::needs_drop(
                     self.context.decls,
                     self.context.types,
                     self.context.aliases,
@@ -5637,6 +5671,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     }
 
     // --- places and operands ----------------------------------------------
+
+    /// Whether an assignment target reaches its storage through an index,
+    /// looking through the projections `as_place` looks through.
+    fn target_is_indexed(&self, expr: ExprId) -> bool {
+        match &self.thir.expr(expr).kind {
+            ExprKind::Index { .. } => true,
+            ExprKind::Narrow(inner) => self.target_is_indexed(*inner),
+            ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
+                self.target_is_indexed(*base)
+            }
+            _ => false,
+        }
+    }
 
     /// The place an expression denotes, when it denotes one.
     ///

@@ -103,6 +103,30 @@ print(t.members[1].value)
 }
 
 #[test]
+fn an_indexed_assignment_may_read_the_same_array() {
+    let source = r#"def swap_to_front(perm: &mut Array[Int], k: Int, best: Int):
+    perm[k] be perm[best]
+
+let mutable v be [1, 2, 3]
+v[0] be v[2]
+print(v[0])
+v[1] be v[0] + v[1]
+print(v[1])
+let mutable perm be [10, 20, 30]
+let k be 0
+let best be 2
+perm[k] be perm[best]
+print(perm[0])
+swap_to_front(perm, 1, 2)
+print(perm[1])
+let mutable names be ["a", "b"]
+names[0] be f"{names[1]}!"
+print(names[0])
+"#;
+    assert_eq!(prints("index_assign_same_array", source), "3\n5\n30\n30\nb!\n");
+}
+
+#[test]
 fn a_nested_tuple_index_is_two_indices_not_a_float() {
     let source = r#"let t be ((1, 2), (3, (4, 5)))
 print(t.0.1)

@@ -1,0 +1,10 @@
+# UI test: writing an element while a borrow of another element is live (SC0330).
+#
+# `v[0] be v[2]` is accepted (the right side is read before the write); this
+# one keeps a borrow of `v[..]` alive across the write, which stays an error.
+
+def main():
+    let mutable v be [1, 2, 3]
+    let first be &v[0]
+    v[1] be 9
+    print(first)
