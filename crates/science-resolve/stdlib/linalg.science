@@ -1,0 +1,464 @@
+# linalg — `DREAM.md` §16.1: `use linalg (solve, inverse, determinant)`.
+#
+# Dense linear algebra over `ndarray`'s `NdArray`, `F64` only, written in
+# Science with no BLAS and no LAPACK. `DREAM.md` §16.1 says not to reimplement
+# what a mature backend does, and §17.2 says `linalg` must be able to choose
+# one; this is the `native` leg of that diagram and nothing in its signatures
+# mentions how it is computed, so a backend replaces a body and not a caller.
+#
+# Nine decisions are this file's:
+#
+# - **Free functions, not methods.** §16.1 writes `linalg.matmul(a, b)`, so
+#   each operation is a function of the module over `&NdArray`. `use linalg
+#   (solve)` imports one; `matmul` and `dot` are here too, as thin wrappers of
+#   `NdArray`'s own, so one `use` serves a program that does linear algebra.
+# - **Every operation that can be refused returns `(value, LinalgError?)`**
+#   (§16.1: "toda descomposición devuelve un par falible"; `AGENTS.md` §2
+#   rule 4). The error is the concrete `LinalgError`, which carries a `kind`
+#   (`NOT_SQUARE`, `SINGULAR`, ...) a caller can branch on and a `reason`
+#   sentence. The value beside an error is a zero-length placeholder.
+# - **`lu` does not refuse a singular matrix; `solve`, `inverse` do.** An LU
+#   factorization of a singular matrix exists (SciPy's `lu` returns it), and
+#   `determinant` of one is `0.0`, not an error. So `Lu` carries a `singular`
+#   flag, `lu` refuses only a matrix that is not square, and `solve` and
+#   `inverse` turn the flag into a `SINGULAR` error.
+# - **What singular means.** Partial pivoting picks, in each column, the
+#   entry of greatest magnitude at or below the diagonal. The matrix is
+#   singular when that entry's magnitude is at most `n * 2.2e-16 * scale`,
+#   where `scale` is the largest magnitude in the matrix (and a pivot is
+#   zero if the whole matrix is). That is the rank tolerance of the textbook
+#   `n * eps * ||A||` test, with the max norm as `||A||`: it catches
+#   `[[1,2,3],[4,5,6],[7,8,9]]`, whose exact elimination leaves ~1e-16, and
+#   does not call a merely badly scaled matrix singular. When a pivot is
+#   below tolerance its column is left as it is (no division), so the factor
+#   still has the right shape.
+# - **`Lu` stores the combined matrix**, LAPACK's `getrf` layout: `U` on and
+#   above the diagonal and `L`'s multipliers below it (its unit diagonal is
+#   implied), plus `perm` and `sign`. Row `i` of `P * A` is row `perm[i]` of
+#   `A`, so `P * A = L * U`; `sign` is the permutation's parity, `+1.0` or
+#   `-1.0`. `lower()`, `upper()` and `permutation()` build the three matrices.
+# - **`determinant` is the product of `U`'s diagonal times `sign`.** It is
+#   `(F64, LinalgError?)` because a non-square matrix has none. It overflows
+#   where a large determinant does; `slogdet` is not written.
+# - **`cholesky` reads and checks both triangles.** It returns the lower `L`
+#   with `A = L * L^T`. A matrix that is not symmetric (within `1e-12` times
+#   the largest magnitude) is `NOT_SYMMETRIC`; one that is symmetric and whose
+#   pivot `a_jj - sum(l_jk^2)` is not above zero is `NOT_POSITIVE_DEFINITE`.
+# - **`qr` is Householder, full (complete) form.** For `A` of `(m, n)`, `Q`
+#   is `(m, m)` orthogonal and `R` is `(m, n)` upper triangular with
+#   `A = Q * R`. Each reflection maps the column to `-sign(x0) * ||x||`, as
+#   LAPACK's does, so the diagonal of `R` is not made non-negative. A column
+#   that is already zero below the diagonal gets no reflection.
+# - **Norms are named, not an `ord` argument.** §16.1 has `norm(a, ord:
+#   Norm)` with `Norm` a choice, which has no use until the tensor type does;
+#   here `norm_frobenius` (any rank), `norm_1` (matrix, largest absolute
+#   column sum), `norm_inf` (matrix, largest absolute row sum) and `norm_2`
+#   (vector, the Euclidean length) are the four asked for. The matrix 2-norm,
+#   the nuclear norm and `svd`, `eig`, `eigh`, `lstsq`, `pinv`, `rank`, `cond`
+#   and `slogdet` of §16.1 are not written.
+#
+# Every sum runs in index order, so a result is deterministic.
+
+use ndarray (NdArray)
+
+# --- LinalgError --------------------------------------------------------------
+
+# The `kind` values of a `LinalgError`.
+public const NOT_SQUARE: Int be 0
+public const SINGULAR: Int be 1
+public const NOT_SYMMETRIC: Int be 2
+public const NOT_POSITIVE_DEFINITE: Int be 3
+public const SHAPE_MISMATCH: Int be 4
+public const BAD_RANK: Int be 5
+
+# Why an operation was refused: `kind` is one of the constants above and
+# `reason` is the whole sentence.
+public type LinalgError:
+    kind: Int
+    reason: String
+
+LinalgError implements Error:
+    def message(self) -> String:
+        self.reason.clone()
+
+def fail(kind: Int, reason: String) -> LinalgError?:
+    LinalgError(kind: kind, reason: reason)
+
+# --- Records ------------------------------------------------------------------
+
+# A pivoted LU factorization (see the header): `P * A = L * U`.
+public type Lu:
+    lu: NdArray
+    perm: Array[Int]
+    sign: F64
+    singular: Bool
+
+# A full QR factorization (see the header): `A = Q * R`.
+public type Qr:
+    q: NdArray
+    r: NdArray
+
+# --- Helpers ------------------------------------------------------------------
+
+def none() -> NdArray:
+    NdArray.zeros(& [0])
+
+def dims_of(a: &NdArray) -> String:
+    let mutable text be "("
+    for axis in 0..a.dims.length():
+        if axis > 0:
+            text be f"{text}, "
+        text be f"{text}{a.dims[axis]}"
+    f"{text})"
+
+def is_matrix(a: &NdArray) -> Bool:
+    a.dims.length() is 2
+
+def is_square(a: &NdArray) -> Bool:
+    a.dims.length() is 2 and a.dims[0] is a.dims[1]
+
+# The largest magnitude among the elements; `0.0` for none.
+def scale_of(a: &NdArray) -> F64:
+    let mutable best be 0.0
+    for index in 0..a.data.length():
+        let magnitude be a.data[index].abs()
+        if magnitude > best:
+            best be magnitude
+    best
+
+def square_check(a: &NdArray, what: String) -> LinalgError?:
+    if not is_square(a):
+        return fail(NOT_SQUARE, f"{what} needs a square matrix, not dims {dims_of(a)}")
+    null
+
+# --- Construction -------------------------------------------------------------
+
+# The `n` by `n` identity. A negative `n` panics, as `NdArray.zeros` does.
+public def identity(n: Int) -> NdArray:
+    let mutable result be NdArray.zeros(& [n, n])
+    for index in 0..n:
+        result.data[index * n + index] be 1.0
+    result
+
+# --- Products -----------------------------------------------------------------
+
+# `NdArray.matmul`, with its refusal as a `LinalgError` (`SHAPE_MISMATCH`).
+public def matmul(a: &NdArray, b: &NdArray) -> (NdArray, LinalgError?):
+    let product, err be a.matmul(b)
+    if err?:
+        return (none(), fail(SHAPE_MISMATCH, err.message()))
+    (product, null)
+
+# `NdArray.dot`, with its refusal as a `LinalgError` (`SHAPE_MISMATCH`).
+public def dot(a: &NdArray, b: &NdArray) -> (F64, LinalgError?):
+    let value, err be a.dot(b)
+    if err?:
+        return (0.0, fail(SHAPE_MISMATCH, err.message()))
+    (value, null)
+
+# `NdArray.transpose`, with its refusal as a `LinalgError` (`BAD_RANK`).
+public def transpose(a: &NdArray) -> (NdArray, LinalgError?):
+    let flipped, err be a.transpose()
+    if err?:
+        return (none(), fail(BAD_RANK, err.message()))
+    (flipped, null)
+
+# --- Measures -----------------------------------------------------------------
+
+# The sum of the diagonal. A rectangular matrix is allowed, as numpy's is: the
+# diagonal is the `min(rows, columns)` entries `(i, i)`.
+public def trace(a: &NdArray) -> (F64, LinalgError?):
+    if not is_matrix(a):
+        return (0.0, fail(BAD_RANK, f"trace needs a matrix, not dims {dims_of(a)}"))
+    let rows: Int be a.dims[0]
+    let columns: Int be a.dims[1]
+    let mutable total be 0.0
+    for index in 0..rows.min(columns):
+        total be total + a.data[index * columns + index]
+    (total, null)
+
+# The determinant: 0.0 for a singular matrix (the header tolerance); refused if not square.
+public def determinant(a: &NdArray) -> (F64, LinalgError?):
+    let factored, err be lu(a)
+    if err?:
+        return (0.0, err)
+    if factored.singular:
+        return (0.0, null)
+    let n: Int be a.dims[0]
+    let mutable product be factored.sign
+    for index in 0..n:
+        product be product * factored.lu.data[index * n + index]
+    (product, null)
+
+# --- LU -----------------------------------------------------------------------
+
+# Doolittle elimination with partial pivoting, in place on a copy of `a`.
+public def lu(a: &NdArray) -> (Lu, LinalgError?):
+    let bad be square_check(a, "lu")
+    if bad?:
+        return (empty_lu(), bad)
+    let n: Int be a.dims[0]
+    let mutable work be a.clone()
+    let mutable perm be Array[Int].new()
+    for index in 0..n:
+        perm.push(index)
+    let mutable sign be 1.0
+    let tolerance be (n as F64) * 2.2e-16 * scale_of(a)
+    let mutable singular be false
+    for k in 0..n:
+        # The pivot: the entry of greatest magnitude at or below the diagonal.
+        let mutable best be k
+        let mutable best_magnitude be work.data[k * n + k].abs()
+        for row in (k + 1)..n:
+            let magnitude be work.data[row * n + k].abs()
+            if magnitude > best_magnitude:
+                best be row
+                best_magnitude be magnitude
+        if best_magnitude <= tolerance:
+            singular be true
+        else:
+            if best is not k:
+                for column in 0..n:
+                    let held be work.data[k * n + column]
+                    let other be work.data[best * n + column]
+                    work.data[k * n + column] be other
+                    work.data[best * n + column] be held
+                let held_row be perm[k]
+                let swapped be perm[best]
+                perm[k] be swapped
+                perm[best] be held_row
+                sign be -sign
+            let pivot be work.data[k * n + k]
+            for row in (k + 1)..n:
+                let factor be work.data[row * n + k] / pivot
+                work.data[row * n + k] be factor
+                for column in (k + 1)..n:
+                    work.data[row * n + column] be work.data[row * n + column] - factor * work.data[k * n + column]
+    (Lu(lu: work, perm: perm, sign: sign, singular: singular), null)
+
+def empty_lu() -> Lu:
+    Lu(lu: none(), perm: Array[Int].new(), sign: 1.0, singular: false)
+
+Lu has:
+    public def size(self) -> Int:
+        self.perm.length()
+
+    # `L`: unit lower triangular.
+    public def lower(self) -> NdArray:
+        let n be self.perm.length()
+        let mutable result be NdArray.zeros(& [n, n])
+        for row in 0..n:
+            for column in 0..row:
+                result.data[row * n + column] be self.lu.data[row * n + column]
+            result.data[row * n + row] be 1.0
+        result
+
+    # `U`: upper triangular.
+    public def upper(self) -> NdArray:
+        let n be self.perm.length()
+        let mutable result be NdArray.zeros(& [n, n])
+        for row in 0..n:
+            for column in row..n:
+                result.data[row * n + column] be self.lu.data[row * n + column]
+        result
+
+    # `P`, with `P * A = L * U`: row `i` has its 1 in column `perm[i]`.
+    public def permutation(self) -> NdArray:
+        let n be self.perm.length()
+        let mutable result be NdArray.zeros(& [n, n])
+        for row in 0..n:
+            result.data[row * n + self.perm[row]] be 1.0
+        result
+
+# --- Solving ------------------------------------------------------------------
+
+# Solves `A * x = b` by LU. `b` is a vector of `n` or a matrix `(n, k)` of `k`
+# right-hand sides, and the answer has `b`'s dims. A singular `A` is
+# `SINGULAR`; a `b` with the wrong leading length is `SHAPE_MISMATCH`.
+# Prefer this to `inverse(a) * b`: it is faster and more accurate.
+public def solve(a: &NdArray, b: &NdArray) -> (NdArray, LinalgError?):
+    let factored, err be lu(a)
+    if err?:
+        return (none(), err)
+    let n: Int be a.dims[0]
+    if b.dims.length() < 1 or b.dims.length() > 2 or b.dims[0] is not n:
+        return (
+            none(),
+            fail(SHAPE_MISMATCH, f"solve needs b to have {n} rows, not dims {dims_of(b)}")
+        )
+    if factored.singular:
+        return (none(), fail(SINGULAR, "solve: the matrix is singular"))
+    let mutable columns be 1
+    if b.dims.length() is 2:
+        columns be b.dims[1]
+    let mutable result be b.clone()
+    for column in 0..columns:
+        # Forward: L * y = P * b, with L's unit diagonal.
+        let mutable y be Array[F64].new()
+        for row in 0..n:
+            let mutable total be b.data[factored.perm[row] * columns + column]
+            for step in 0..row:
+                total be total - factored.lu.data[row * n + step] * y[step]
+            y.push(total)
+        # Back: U * x = y, from the last row up.
+        let mutable x be Array[F64].new()
+        for _ in 0..n:
+            x.push(0.0)
+        let mutable row be n
+        loop:
+            if row is 0:
+                break
+            row be row - 1
+            let mutable total be y[row]
+            for step in (row + 1)..n:
+                total be total - factored.lu.data[row * n + step] * x[step]
+            x[row] be total / factored.lu.data[row * n + row]
+        for index in 0..n:
+            result.data[index * columns + column] be x[index]
+    (result, null)
+
+# The inverse, by solving against the identity. `solve` is the better tool for
+# `A * x = b`; this is for the inverse itself.
+public def inverse(a: &NdArray) -> (NdArray, LinalgError?):
+    let err be square_check(a, "inverse")
+    if err?:
+        return (none(), err)
+    let n: Int be a.dims[0]
+    let identity_matrix be identity(n)
+    let result, solved be solve(a, identity_matrix)
+    if solved?:
+        return (none(), solved)
+    (result, null)
+
+# --- Cholesky -----------------------------------------------------------------
+
+# The lower triangular `L` with `A = L * L^T`, for `A` symmetric positive
+# definite (see the header).
+public def cholesky(a: &NdArray) -> (NdArray, LinalgError?):
+    let bad be square_check(a, "cholesky")
+    if bad?:
+        return (none(), bad)
+    let n: Int be a.dims[0]
+    let tolerance be 1e-12 * scale_of(a)
+    for row in 0..n:
+        for column in 0..row:
+            if (a.data[row * n + column] - a.data[column * n + row]).abs() > tolerance:
+                return (none(), fail(NOT_SYMMETRIC, "cholesky needs a symmetric matrix"))
+    let mutable result be NdArray.zeros(& [n, n])
+    for j in 0..n:
+        let mutable diagonal be a.data[j * n + j]
+        for k in 0..j:
+            diagonal be diagonal - result.data[j * n + k] * result.data[j * n + k]
+        if not (diagonal > 0.0):
+            return (
+                none(),
+                fail(NOT_POSITIVE_DEFINITE, f"cholesky: the matrix is not positive definite (pivot {j})")
+            )
+        let root be diagonal.sqrt()
+        result.data[j * n + j] be root
+        for i in (j + 1)..n:
+            let mutable total be a.data[i * n + j]
+            for k in 0..j:
+                total be total - result.data[i * n + k] * result.data[j * n + k]
+            result.data[i * n + j] be total / root
+    (result, null)
+
+# --- QR -----------------------------------------------------------------------
+
+# Householder QR, full form (see the header).
+public def qr(a: &NdArray) -> (Qr, LinalgError?):
+    if not is_matrix(a):
+        return (
+            Qr(q: none(), r: none()),
+            fail(BAD_RANK, f"qr needs a matrix, not dims {dims_of(a)}")
+        )
+    let m: Int be a.dims[0]
+    let n: Int be a.dims[1]
+    let mutable r be a.clone()
+    let mutable q be identity(m)
+    for k in 0..(m - 1).min(n):
+        let mutable norm_squared be 0.0
+        for row in k..m:
+            norm_squared be norm_squared + r.data[row * n + k] * r.data[row * n + k]
+        let mutable below be 0.0
+        for row in (k + 1)..m:
+            below be below + r.data[row * n + k] * r.data[row * n + k]
+        if below > 0.0:
+            let norm be norm_squared.sqrt()
+            let head be r.data[k * n + k]
+            let mutable alpha be norm
+            if head > 0.0:
+                alpha be -norm
+            # v = x - alpha * e1, then H = I - 2 v v^T / (v^T v).
+            let mutable v be Array[F64].new()
+            for row in k..m:
+                v.push(r.data[row * n + k])
+            v[0] be head - alpha
+            let mutable v_squared be 0.0
+            for index in 0..v.length():
+                v_squared be v_squared + v[index] * v[index]
+            # R := H * R, on rows k.. .
+            for column in 0..n:
+                let mutable projection be 0.0
+                for index in 0..v.length():
+                    projection be projection + v[index] * r.data[(k + index) * n + column]
+                let coefficient be 2.0 * projection / v_squared
+                for index in 0..v.length():
+                    r.data[(k + index) * n + column] be r.data[(k + index) * n + column] - coefficient * v[index]
+            # Q := Q * H, on columns k.. .
+            for row in 0..m:
+                let mutable projection be 0.0
+                for index in 0..v.length():
+                    projection be projection + q.data[row * m + k + index] * v[index]
+                let coefficient be 2.0 * projection / v_squared
+                for index in 0..v.length():
+                    q.data[row * m + k + index] be q.data[row * m + k + index] - coefficient * v[index]
+            # The column is now alpha and zeros: say so exactly.
+            for row in (k + 1)..m:
+                r.data[row * n + k] be 0.0
+    (Qr(q: q, r: r), null)
+
+# --- Norms --------------------------------------------------------------------
+
+# The square root of the sum of squares of every element, of any rank.
+public def norm_frobenius(a: &NdArray) -> F64:
+    let mutable total be 0.0
+    for index in 0..a.data.length():
+        total be total + a.data[index] * a.data[index]
+    total.sqrt()
+
+# The largest absolute column sum of a matrix.
+public def norm_1(a: &NdArray) -> (F64, LinalgError?):
+    if not is_matrix(a):
+        return (0.0, fail(BAD_RANK, f"norm_1 needs a matrix, not dims {dims_of(a)}"))
+    let rows: Int be a.dims[0]
+    let columns: Int be a.dims[1]
+    let mutable best be 0.0
+    for column in 0..columns:
+        let mutable total be 0.0
+        for row in 0..rows:
+            total be total + a.data[row * columns + column].abs()
+        if total > best:
+            best be total
+    (best, null)
+
+# The largest absolute row sum of a matrix.
+public def norm_inf(a: &NdArray) -> (F64, LinalgError?):
+    if not is_matrix(a):
+        return (0.0, fail(BAD_RANK, f"norm_inf needs a matrix, not dims {dims_of(a)}"))
+    let rows: Int be a.dims[0]
+    let columns: Int be a.dims[1]
+    let mutable best be 0.0
+    for row in 0..rows:
+        let mutable total be 0.0
+        for column in 0..columns:
+            total be total + a.data[row * columns + column].abs()
+        if total > best:
+            best be total
+    (best, null)
+
+# The Euclidean length of a vector.
+public def norm_2(a: &NdArray) -> (F64, LinalgError?):
+    if a.dims.length() is not 1:
+        return (0.0, fail(BAD_RANK, f"norm_2 needs a vector, not dims {dims_of(a)}"))
+    (norm_frobenius(a), null)

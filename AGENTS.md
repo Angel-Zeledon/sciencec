@@ -380,8 +380,10 @@ There are two layers, and the difference is one `use` line.
   as a sibling file would be: `io` (`File`, buffered writers), `fs`
   (directories, removal), `path` (`Path`), `os` (`args`, `env`), `time`
   (`Duration`, `Monotonic`, `Instant`, `now`, `sleep`), `complex`
-  (`Complex`), `random` (`Key`, `Stream`, `uniform`, `normal`) and
-  `collections` (`Deque`). Read the module's header before using it: each one
+  (`Complex`), `random` (`Key`, `Stream`, `uniform`, `normal`),
+  `collections` (`Deque`), `ndarray` (`NdArray`) and `linalg` (`solve`, `inverse`,
+  `determinant`, `lu`, `cholesky`, `qr`, norms; each fallible one returns
+  `(value, LinalgError?)`). Read the module's header before using it: each one
   states the decisions it made.
 
 ```science
@@ -393,7 +395,7 @@ def main():
     print(Path.from("results").join("run.csv").text())    # results/run.csv
 ```
 
-A file of your own named `io.science` (or any of the eight) beside your entry
+A file of your own named `io.science` (or any bundled module) beside your entry
 file shadows the bundled module, silently.
 
 ---
