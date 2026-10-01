@@ -59,12 +59,13 @@
 #   the error naming both dims. They are the dotted operators' semantics under
 #   names, and `.+` is a spelling change when it lands. The warning of §3.4 for
 #   the accidental outer product is not written.
-# - **A scalar is a method.** `a.scaled(by: 2.0)` and `a.shifted(by: 1.0)`,
-#   not `a * 2.0` and `a + 1.0`, for `complex`'s reason: an operator interface
-#   is looked up by method name and one implementation answers it, so a
-#   second `NdArray implements Mul` taking an `F64` is refused (`SC0535`).
-#   `Mul[Rhs]` is the change that would allow it, and `broadcasting.md` §2.1's
-#   scalar carve-out is written for it.
+# - **A scalar on the right is an operator and a method.** `a * 2.0`,
+#   `a / 2.0`, `a + 1.0` and `a - 1.0` (`NdArray implements Mul[F64]` and its
+#   three siblings, chosen by the right operand's type), and also
+#   `a.scaled(by: 2.0)` and `a.shifted(by: 1.0)`. The scalar on the *left*,
+#   `2.0 * a`, is not written: it would be `F64 implements Mul[NdArray]`, an
+#   orphan (`SC0207`) under §5.4. `broadcasting.md` §2.1's carve-out is met
+#   from the right only.
 # - A reduction is a method with the axis as an argument: `sum_axis(axis)`
 #   where `broadcasting.md` §7.2 writes `sum(axis: 0)`. The axis there is a
 #   const so that a bad one is a compile error; it is a runtime `Int` here, and
@@ -597,6 +598,25 @@ NdArray implements Mul:
 NdArray implements Div:
     def div(self, other: &NdArray) -> NdArray:
         same_shape(self, other, DIV)
+
+NdArray implements Add[F64]:
+    def add(self, other: F64) -> NdArray:
+        self.shifted(other)
+
+NdArray implements Sub[F64]:
+    def sub(self, other: F64) -> NdArray:
+        self.shifted(-other)
+
+NdArray implements Mul[F64]:
+    def mul(self, other: F64) -> NdArray:
+        self.scaled(other)
+
+NdArray implements Div[F64]:
+    def div(self, other: F64) -> NdArray:
+        let mutable data be Array[F64].new()
+        for index in 0..self.data.length():
+            data.push(self.data[index] / other)
+        make(data, &self.dims)
 
 NdArray implements Neg:
     def neg(self) -> NdArray:

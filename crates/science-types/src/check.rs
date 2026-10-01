@@ -6535,6 +6535,26 @@ impl<'a> BodyChecker<'a> {
         };
         let candidate = match self.decls.methods().lookup(head, method, Form::Value) {
             Found::One(candidate) if candidate.interface() == Some(interface_def) => candidate,
+            // **One operator at several right-hand sides**: `Complex
+            // implements Mul:` beside `Complex implements Mul of F64:`. The
+            // right operand's type chooses, which is `methods`' §6 and the
+            // same selection a written call makes, run over the one operand
+            // an operator has. A unary operator has no operand to choose by,
+            // so it falls to the report below like any other several.
+            Found::Instances(candidates)
+                if operand.is_some()
+                    && candidates
+                        .iter()
+                        .all(|candidate| candidate.interface() == Some(interface_def)) =>
+            {
+                let (value, operand_span) = operand.expect("just checked");
+                match self.select_operator(
+                    symbol, interface, &candidates, value, self_ty, operand_span, span,
+                ) {
+                    Some(candidate) => candidate,
+                    None => return Some(self.error_expr(span)),
+                }
+            }
             // Everything else is *this type does not implement this
             // interface*: no such method, a method of that name from somewhere
             // that is not the operator's interface, or several. Reported where
@@ -6556,6 +6576,75 @@ impl<'a> BodyChecker<'a> {
             }
         };
         self.operator_call(receiver, operand, candidate, self_ty, span)
+    }
+
+    /// The implementation of an operator interface a right operand picks, or
+    /// `None` once the mistake is reported.
+    ///
+    /// The candidates are `Mul of F64` and `Mul of Complex` on one receiver,
+    /// and the operand's synthesised type is what tells them apart. A literal
+    /// is a variable and refutes only what [`BodyChecker::literal_admits`]
+    /// says it cannot be — `z * 2` reaches `Mul of F64` because an integer
+    /// literal is exact in a float, and `z * 2.0` cannot reach an
+    /// implementation taking an `Int`. A shared borrow of a `Copy` operand is
+    /// read as the value, as it is everywhere an operator reads one. Zero
+    /// survivors is `SC0533` and several is `SC0531`, the codes a written call
+    /// gets.
+    #[allow(clippy::too_many_arguments)]
+    fn select_operator(
+        &mut self,
+        symbol: &str,
+        interface: &'static str,
+        candidates: &[Candidate],
+        operand: Typed,
+        self_ty: Ty,
+        operand_span: Span,
+        span: Span,
+    ) -> Option<Candidate> {
+        let instances = self.instances(candidates, self_ty, span)?;
+        let found = self.infer.resolve(operand.ty);
+        if let InferTy::Known(ty) = found {
+            if self.types.references_error(ty) {
+                return None;
+            }
+        }
+        let mut viable: Vec<usize> = Vec::new();
+        for (at, instance) in instances.iter().enumerate() {
+            let Some((_, param)) = instance.params.first().copied() else { continue };
+            let admitted = match found {
+                InferTy::Known(ty) => {
+                    let revealed = self.unreported_reveal(ty);
+                    let peeled = match *self.types.kind(revealed) {
+                        TyKind::Borrowed { mutable: false, inner } => Some(inner),
+                        _ => None,
+                    };
+                    self.fits(ty, param) || peeled.is_some_and(|inner| self.fits(inner, param))
+                }
+                InferTy::Var(var) => self.literal_admits(var, param, operand_span),
+            };
+            if admitted {
+                viable.push(at);
+            }
+        }
+        if viable.len() == 1 {
+            return Some(instances[viable[0]].candidate);
+        }
+        let rendered = self.types.render(self.defs, self_ty);
+        let supplied = vec![operand];
+        let supplied_text = self.described_all(&supplied);
+        let name = hir::Ident { name: symbol.to_string(), span };
+        let diagnostic = if viable.is_empty() {
+            let interface = self.interface_name(&instances);
+            let accepts = self.accepted_by(&instances);
+            no_matching_instance(span, &name.name, &rendered, &interface, &supplied_text, &accepts)
+        } else {
+            let survivors: Vec<Instance> =
+                viable.iter().map(|at| instances[*at].clone()).collect();
+            let _ = interface;
+            self.undetermined(self_ty, &name, &survivors, &supplied)
+        };
+        self.diagnostics.push(diagnostic);
+        None
     }
 
     /// The method `interface` declares under `method`'s name, reached through

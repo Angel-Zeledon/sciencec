@@ -23,11 +23,11 @@
 #   a read, `x.re()` would be a call), so adding them later breaks nothing.
 # - The method names are the notes': `conjugate` and `modulus_squared`, not
 #   `conj` and `norm_sqr`.
-# - A real factor is `scaled(by)`, not `z * 2.0`. An operator interface is
-#   looked up by its method name and one implementation answers it, so a
-#   second `Complex implements Mul:` taking an `F64` makes *both* `z * w` and
-#   `z * 2.0` a refusal, and `2.0 * z` dispatches on `F64`, which is the
-#   prelude's. `Mul[Rhs]` is the change that would allow it.
+# - A real operand is `z * 2.0`, `z / 2.0`, `z + 1.0` and `z - 1.0`:
+#   `Complex implements Mul[F64]` beside `Complex implements Mul`, the
+#   operand's type picking the implementation. `scaled(by)` stays. The scalar
+#   on the left, `2.0 * z`, is refused: it would be `F64 implements
+#   Mul[Complex]`, an orphan (`SC0207`) under §5.4. Write `z * 2.0`.
 # - Division is Smith's algorithm (1962), not the textbook
 #   `(a·c + b·d) / (c² + d²)`: the textbook squares the divisor's parts, so it
 #   overflows to `inf` or underflows to `0` for any divisor with a part beyond
@@ -271,6 +271,27 @@ Complex implements Div:
         let re be (self.re * ratio + self.im) / denominator
         let im be (self.im * ratio - self.re) / denominator
         Complex(re: re, im: im)
+
+# A real right-hand side: `Mul[Rhs]` is `Mul` at a second right operand, and the
+# operand's type picks the implementation (`z * w` and `z * 2.0` both work).
+# The scalar on the *left*, `2.0 * z`, would be `F64 implements Mul[Complex]`,
+# which §5.4's orphan rule refuses: neither `F64` nor `Mul` is this module's.
+# Spell it `z * 2.0`.
+Complex implements Add[F64]:
+    def add(self, other: F64) -> Complex:
+        Complex(re: self.re + other, im: self.im)
+
+Complex implements Sub[F64]:
+    def sub(self, other: F64) -> Complex:
+        Complex(re: self.re - other, im: self.im)
+
+Complex implements Mul[F64]:
+    def mul(self, other: F64) -> Complex:
+        Complex(re: self.re * other, im: self.im * other)
+
+Complex implements Div[F64]:
+    def div(self, other: F64) -> Complex:
+        Complex(re: self.re / other, im: self.im / other)
 
 Complex implements Neg:
     def neg(self) -> Complex:

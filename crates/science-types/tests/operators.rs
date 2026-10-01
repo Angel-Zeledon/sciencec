@@ -1410,3 +1410,106 @@ def main():
     )
     .assert_clean();
 }
+
+// --- `Mul[Rhs]`: one operator, several right-hand sides -------------------
+
+const SCALED: &str = "\
+type V:
+    x: F64
+
+V implements Copy
+
+V implements Mul:
+    def mul(self, other: V) -> V:
+        V(x: self.x * other.x)
+
+V implements Mul[F64]:
+    def mul(self, other: F64) -> V:
+        V(x: self.x * other)
+";
+
+/// The right operand's type picks the implementation; both calls resolve to a
+/// method, and they are two different ones.
+#[test]
+fn the_right_operand_picks_between_two_implementations_of_one_operator() {
+    let source = format!(
+        "{SCALED}
+def both(a: V, k: F64) -> V:
+    let by_value be a * a
+    a * k
+"
+    );
+    let checked = support::check(&source);
+    checked.assert_clean();
+    let methods: Vec<_> = checked
+        .body("both")
+        .exprs()
+        .filter_map(|(_, expr)| match expr.kind {
+            ExprKind::MethodCall { method: Some(method), .. } => Some(method),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(methods.len(), 2);
+    assert_ne!(methods[0], methods[1]);
+}
+
+/// A literal refutes only what it cannot be: `2.0` and `2` both reach the `F64`
+/// implementation and never the one taking a `V`.
+#[test]
+fn a_literal_operand_reaches_the_scalar_implementation() {
+    let source = format!(
+        "{SCALED}
+def literals(a: V) -> V:
+    let f be a * 2.0
+    a * 2
+"
+    );
+    support::check(&source).assert_clean();
+}
+
+/// A shared borrow of a `Copy` scalar reads as the value, as at any operator.
+#[test]
+fn a_borrowed_scalar_operand_is_read_as_the_value() {
+    let source = format!(
+        "{SCALED}
+def through(a: V, ks: &Array[F64]) -> F64:
+    let mutable total be 0.0
+    for k in ks:
+        total be total + (a * k).x
+    total
+"
+    );
+    support::check(&source).assert_clean();
+}
+
+/// An operand no implementation takes is `SC0533`, the code a written call gets.
+#[test]
+fn an_operand_no_implementation_takes_is_refused() {
+    let source = format!(
+        "{SCALED}
+def bad(a: V) -> V:
+    a * \"two\"
+"
+    );
+    assert_eq!(support::check(&source).codes(), vec![533]);
+}
+
+/// With a single implementation the old behaviour is untouched: a mismatched
+/// operand is the ordinary type error.
+#[test]
+fn a_single_implementation_still_checks_its_operand_against_the_signature() {
+    let checked = support::check(
+        "\
+type V:
+    x: F64
+
+V implements Mul[F64]:
+    def mul(self, other: F64) -> V:
+        V(x: self.x * other)
+
+def bad(a: V) -> V:
+    a * \"two\"
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}
