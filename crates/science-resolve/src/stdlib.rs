@@ -30,7 +30,10 @@
 //! harness, and `science-codegen-llvm`'s execution-test harness all do.
 
 /// The bundled modules, by the candidate path `collect_crate` asks for.
-const MODULES: &[(&str, &str)] = &[("io.science", include_str!("../stdlib/io.science"))];
+const MODULES: &[(&str, &str)] = &[
+    ("io.science", include_str!("../stdlib/io.science")),
+    ("collections.science", include_str!("../stdlib/collections.science")),
+];
 
 /// The source of the bundled module at `candidate`, if there is one.
 pub fn source(candidate: &str) -> Option<&'static str> {

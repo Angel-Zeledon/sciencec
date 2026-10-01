@@ -1,0 +1,122 @@
+# collections — `stdlib-core.md` §3.2, Level 2: `use collections (Deque)`.
+#
+# The second module of the standard library written in Science, and the first
+# generic one with no runtime of its own: `Deque` is a record over the
+# prelude's `Array`, bundled and reached exactly as `io` is.
+#
+# Four decisions are this file's, and each is written where it applies:
+#
+# - A `Deque` is two arrays back to back — `front` reversed, `back` in order —
+#   and not a ring buffer. A ring buffer moves a value out of a slot in the
+#   middle of an `Array[T?]`, and nothing the prelude declares does that:
+#   `xs[i]` is a borrow, and `pop` takes only the last element.
+# - An end that runs dry takes half of the other end, not all of it. Every
+#   operation is amortised O(1) from either end in any order, which is what
+#   §3.2 asks the type for.
+# - `get(index)` is public, where §3.2's list stops at `first` and `last`. It
+#   is O(1) in this representation, it is what `first`, `last` and iteration
+#   are made of, and it has `Array.get`'s shape exactly.
+# - `iterate` is here and `iterate_mutably` and `iterate_consuming` are not:
+#   `Array` has neither yet (`builtins.rs`' `UNWRITTEN`), and a `Deque`'s
+#   would be built from `Array`'s.
+
+# --- Deque --------------------------------------------------------------------
+
+# A double-ended queue: pushed and popped at both ends in amortised O(1).
+#
+# The deque, front to back, is `front` read from its last element down to its
+# first, then `back` from its first up to its last. So `push_front` and
+# `pop_front` are `front`'s `push` and `pop`, and the back is the same one
+# array over.
+public type Deque[T]:
+    front: Array[T]
+    back: Array[T]
+
+Deque[T] has:
+    public def new() -> Deque[T]:
+        Deque(front: Array[T].new(), back: Array[T].new())
+
+    public def push_back(mutable self, value: T):
+        self.back.push(value)
+
+    public def push_front(mutable self, value: T):
+        self.front.push(value)
+
+    # The first element, moved out, or `null` when the deque is empty.
+    public def pop_front(mutable self) -> T?:
+        if self.front.is_empty():
+            rebalance(&mut self.back, &mut self.front)
+        self.front.pop()
+
+    # The last element, moved out, or `null` when the deque is empty.
+    public def pop_back(mutable self) -> T?:
+        if self.back.is_empty():
+            rebalance(&mut self.front, &mut self.back)
+        self.back.pop()
+
+    public def first(self) -> (&T)?:
+        self.get(0)
+
+    public def last(self) -> (&T)?:
+        self.get(self.length() - 1)
+
+    # The element `index` places from the front, or `null` past either end.
+    public def get(self, index: Int) -> (&T)?:
+        let split be self.front.length()
+        if index < split:
+            return self.front.get(split - 1 - index)
+        self.back.get(index - split)
+
+    public def length(self) -> Int:
+        self.front.length() + self.back.length()
+
+    public def is_empty(self) -> Bool:
+        self.front.is_empty() and self.back.is_empty()
+
+    # Front to back, each element borrowed — `Array.iterate`'s `Item`.
+    public def iterate(self) -> DequeIterate[T]:
+        DequeIterate(deque: self, cursor: 0)
+
+# Moves the nearer half of `source` — the half next to the end `target` is
+# empty at — onto `target`, so that it pops in the same order it would have
+# from `source`. `source` keeps the far half, in its order.
+#
+# Halving is what makes the bound hold. Moving everything makes a deque popped
+# from alternate ends move every element on every pop; moving half means an
+# element is moved again only after the half it landed in has been used up.
+#
+# Only `pop` and `push`: every element is moved, none is copied, and no slot
+# is ever left empty for a drop to find.
+def rebalance[T](source: &mut Array[T], target: &mut Array[T]):
+    let kept be source.length() / 2
+    let mutable held be Array[T].new()
+    for _ in 0..kept:
+        let item be source.pop()
+        if item?:
+            held.push(item)
+    loop:
+        let item be source.pop()
+        if not item?:
+            break
+        target.push(item)
+    loop:
+        let item be held.pop()
+        if not item?:
+            break
+        source.push(item)
+
+# --- DequeIterate -------------------------------------------------------------
+
+# A deque's elements, front to back, borrowed. The cursor is an index, so the
+# walk is `get` from 0 up — which a `for` over it borrows the deque for.
+public type DequeIterate[T]:
+    deque: &Deque[T]
+    cursor: Int
+
+DequeIterate[T] implements Iterate:
+    type Item is &T
+
+    def next(mutable self) -> Self.Item?:
+        let found be self.deque.get(self.cursor)
+        self.cursor be self.cursor + 1
+        found

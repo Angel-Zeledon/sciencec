@@ -153,6 +153,48 @@ fn a_tagged_option_narrows_to_its_payload() {
     assert_eq!(prints("narrow", "let x: Int? be 5\nif x?:\n    print(f\"{x}\")\n"), "5\n");
 }
 
+/// A `for` over what `Map.get` found, inside `if found?:` — the row of an
+/// adjacency map, which is how `stdlib-core.md` §3.7's traversal reads a
+/// graph. Both were `SC0400` from the backend: the subject's place is still
+/// the `(&T)?` the narrow sees through, and `science-mir`'s `for` took it as
+/// the container without the `Deref` a method receiver in the same position
+/// gets (`Builder::loop_source`). An `Array` row fell through to *"no
+/// `Iterate` implementation"*; a `Map` row reached `science_map_entry_at` with
+/// the nullable as its map. The absent key is the third case: no loop at all.
+#[test]
+fn a_for_walks_a_container_narrowed_out_of_map_get() {
+    assert_eq!(
+        prints(
+            "for_over_narrowed_get",
+            "def main():
+    let mutable rows be Map[String, Array[String]].new()
+    let mutable row be Array[String].new()
+    row.push(\"x\")
+    row.push(\"yz\")
+    rows.insert(\"first\", row)
+    let found be rows.get(&\"first\")
+    if found?:
+        for item in found:
+            print(item)
+    let missing be rows.get(&\"second\")
+    if missing?:
+        for item in missing:
+            print(item)
+    let mutable nested be Map[Int, Map[Int, Int]].new()
+    let mutable inner be Map[Int, Int].new()
+    inner.insert(3, 30)
+    inner.insert(4, 40)
+    nested.insert(1, inner)
+    let table be nested.get(&1)
+    if table?:
+        for entry in table:
+            print(entry.key + entry.value)
+",
+        ),
+        "x\nyz\n33\n44\n"
+    );
+}
+
 /// A key with no pair is refused, and the refusal says why rather than
 /// defaulting.
 ///

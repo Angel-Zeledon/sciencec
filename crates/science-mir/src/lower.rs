@@ -2008,8 +2008,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // of the subject's *type* before anything is evaluated, so a subject
         // that is neither is evaluated once, by whichever path does take it.
         if self.iterates_in_insertion_order(self.thir.ty(iter)) {
-            let (place, next) = self.borrow_source(iter, block, span);
-            let place = self.auto_deref(place);
+            let (place, next) = self.loop_source(iter, block, span);
             return self.lower_for_over_map(dest, pattern, place, body, next, span);
         }
         if let Some((place, next)) = self.array_subject(iter, block, span) {
@@ -2022,9 +2021,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // temporary with a storage-dead point rather than in a special case,
         // and `auto_deref` is §9's rule: the loan names the referent and never
         // the reference, so rule 5 compares it against the right storage.
-        let (source, next) = self.borrow_source(iter, block, span);
+        let (source, next) = self.loop_source(iter, block, span);
         block = next;
-        let source = self.auto_deref(source);
         let source_ty = self.place_ty(&source);
         // **Shared, on §4.4's authority, and that is now in open conflict with
         // the callee this loop calls.** The prelude declares `Iterate.next` as
@@ -4249,9 +4247,32 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         block: BlockId,
         span: Span,
     ) -> Option<(Place, BlockId)> {
+        let (place, next) = self.loop_source(iter, block, span);
+        self.is_array(&place).then_some((place, next))
+    }
+
+    /// The place a `for` walks: the subject evaluated, then dereferenced as
+    /// far as the *subject's* type says — the hole's, not only the place's.
+    ///
+    /// **Decision. [`Builder::deref_to_hole`] runs after
+    /// [`Builder::auto_deref`] here, as it does for a method receiver.** A
+    /// subject narrowed out of a `(&T)?` — `for x in found:` inside `if
+    /// found?:`, where `found` is a `Map.get` — is the same storage as the
+    /// nullable, so its place is still written `(&T)?` while the subject is a
+    /// `&T`. `auto_deref` stops at the nullable, and both containers were
+    /// refused as `SC0400`: an `Array` was not recognised as one and fell
+    /// through to the general path — *"no `Iterate` implementation this
+    /// compiler can name"*, for a type that has one — and a `Map` took its own
+    /// path with the nullable as the map, which the backend's
+    /// `science_map_entry_at` could read no key and value type off.
+    ///
+    /// **Reason.** A narrowed borrow is a pointer behind a niche (Decision
+    /// 19): the payload *is* the slot, so one `Deref` reaches the referent,
+    /// exactly as it does for `a.length()` in the same position.
+    fn loop_source(&mut self, iter: ExprId, block: BlockId, span: Span) -> (Place, BlockId) {
         let (place, next) = self.borrow_source(iter, block, span);
         let place = self.auto_deref(place);
-        self.is_array(&place).then_some((place, next))
+        (self.deref_to_hole(place, iter), next)
     }
 
     /// `for x in xs:` as the indexed loop AMENDMENT 11's `xs.iterate()` would
