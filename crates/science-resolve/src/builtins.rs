@@ -216,15 +216,35 @@ const INTERFACES: &[&str] = &[
     // bytes go"*: Level 1 by §4.5's table, so that `io`'s `BufferedWriter of
     // W` can bound `W` by it without the interface living beside the type.
     "Write",
+    // `Read`, §4.2's other half: *"a place bytes come from"*. Level 1 by the
+    // same table, so that `io`'s `BufferedReader of R` bounds `R` by it as
+    // `BufferedWriter` bounds `W` by `Write`.
+    "Read",
 ];
 
 /// The free functions (§8).
 ///
-/// Eight, not `stdlib-core.md` §9's thirteen. The five this list does not have
-/// — `read_line`, `read_bytes`, `write_bytes`, `read_lines`, `write_lines` —
-/// are names in every program's scope forever (§1.3), and §12 of that note
-/// names *"thirteen free functions, and the trend is upward"* as its own second
+/// Nine, not `stdlib-core.md` §9's thirteen. The four this list does not have
+/// — `read_bytes`, `write_bytes`, `read_lines`, `write_lines` — are names in
+/// every program's scope forever (§1.3), and §12 of that note names
+/// *"thirteen free functions, and the trend is upward"* as its own second
 /// risk.
+///
+/// # `read_line`, the ninth, and why it and not the other four
+///
+/// §4.4 adds it *"with the same reluctance"* as `flush`, and for one program:
+/// without it Science cannot write a filter — `cat data | summarise` — and
+/// §4.5 puts it at Level 1 by name. It has an entry point,
+/// `science_read_line`, and the backend's free-builtin arm beside
+/// `read_file`'s, so it is not a name that resolves with nothing behind it.
+///
+/// **The other four are §5.1's Level 1 too, and still not here**, for the
+/// reason the rest of this comment gives for every name that was: no
+/// `science-rt` entry point stands behind any of them yet, and §5.3 gives all
+/// four a `borrowed Path`, which does not exist. They are §5's surface and
+/// this one is §4's. A program that wants a file's lines today has
+/// `read_file(path)` then `.lines()`, or `io`'s
+/// `File.open(path)` then `.lines()`, which does not hold the file in memory.
 ///
 /// # Three of the thirteen stopped being a spec change, and now they are in
 ///
@@ -292,6 +312,7 @@ const INTERFACES: &[&str] = &[
 /// missing.
 const FUNCTIONS: &[&str] = &[
     "print", "write", "print_error", "write_error", "flush", "panic", "read_file", "write_file",
+    "read_line",
 ];
 
 /// `ffi`, the closed vocabulary of `ffi-c-boundary.md` §1.3.
@@ -622,6 +643,23 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             recv: Some(SelfKind::Mutable),
             params: &[("bytes", Ty::Ref(&Ty::App("Array", &[Ty::Name("U8")])))],
             ret: Some(Ty::Opt(&Ty::Name("Error"))),
+        }],
+    },
+    // §4.2's other half, verbatim: *"Fills as much of `into` as is available.
+    // Returns the count. A count of zero with no error means end of input,
+    // and is the only end-of-input signal."* `into`'s length is how much is
+    // asked for — an `Array` holds its elements, so the caller sizes it —
+    // and the count is how many of its first bytes were written.
+    InterfaceDecl {
+        name: "Read",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "read",
+            generics: &[],
+            recv: Some(SelfKind::Mutable),
+            params: &[("into", Ty::MutRef(&Ty::App("Array", &[Ty::Name("U8")])))],
+            ret: Some(Ty::Pair(&Ty::Name("U64"), &Ty::Opt(&Ty::Name("Error")))),
         }],
     },
     InterfaceDecl {
@@ -2975,6 +3013,18 @@ const FUNCTION_SIGNATURES: &[Method] = &[
     // `print_error` and `write_error` are not, because it has no `any
     // Display` parameter to be unable to lower — see [`FUNCTIONS`].
     Method { name: "flush", generics: &[], recv: None, params: &[], ret: None },
+    // `stdlib-core.md` §4.4's `read_line()`: `null` at end of input, `""` for
+    // a blank line. **`IoError?`, where §4.4 writes `Error?`** — §7.3 of the
+    // same note, *"no Level 1 function has `Error?` in its signature"*, which
+    // §4.7's own `count_lines` already follows by returning `read_line`'s
+    // error as its `IoError?`. `science_read_line` says what a line is.
+    Method {
+        name: "read_line",
+        generics: &[],
+        recv: None,
+        params: &[],
+        ret: Some(Ty::Pair(&Ty::Opt(&STRING), &Ty::Opt(&IO_ERROR))),
+    },
 ];
 
 /// Builds the HIR for the declared surface, given the names already allocated.

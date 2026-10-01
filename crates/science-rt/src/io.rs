@@ -1,5 +1,6 @@
 //! The free functions of §8: `print`, `write`, `print_error`, `write_error`,
-//! `flush`, `read_file`, `write_file`.
+//! `flush`, `read_file`, `write_file` — and `stdlib-core.md` §4.4's
+//! `read_line`, the ninth.
 //!
 //! The two file functions are the one place in this crate where the runtime
 //! assembles a Science aggregate itself rather than leaving it to codegen: every
@@ -222,6 +223,102 @@ pub struct ScienceStringAndIoError {
     pub value: ScienceString,
     /// The second element of the pair: what went wrong, or null.
     pub error: ScienceNullableIoError,
+}
+
+/// Science's `String?`, the first half of [`ScienceNullableStringAndIoError`].
+///
+/// **Tagged, not niched**: a `ScienceString`'s pointer is a raw one, and the
+/// closed niche table of §5.2 is the three never-null pointer kinds and
+/// nothing else — so `String?` is a
+/// discriminant byte then the string at the next eight-byte offset — the
+/// layout `science-codegen`'s `CgTy::nullable` gives any `T?` whose `T` has
+/// no niche, which is what makes this the same bytes as Science's own.
+#[repr(C)]
+pub struct ScienceNullableString {
+    /// [`SCIENCE_NULLABLE_NULL`] or [`SCIENCE_NULLABLE_PRESENT`].
+    pub present: u8,
+    /// The string, meaningful — and owned by the caller — only when
+    /// `present` is [`SCIENCE_NULLABLE_PRESENT`]. The empty string otherwise,
+    /// which allocates nothing.
+    pub value: ScienceString,
+}
+
+/// Science's `(String?, IoError?)`, the return type of [`science_read_line`].
+///
+/// [`ScienceStringAndIoError`] with a `String?` where that has a `String`:
+/// forty bytes on a 64-bit target — the tag, seven of padding, three words of
+/// string, the two error bytes and six of tail padding — so it comes back
+/// through `sret` on every supported convention.
+#[repr(C)]
+pub struct ScienceNullableStringAndIoError {
+    /// The line, or null at end of input.
+    pub value: ScienceNullableString,
+    /// What reading failed with, or null.
+    pub error: ScienceNullableIoError,
+}
+
+/// Science's `read_line() -> (String?, IoError?)` — `stdlib-core.md` §4.4's
+/// ninth free function, and the first input a program in a pipe can use.
+///
+/// # The decision
+///
+/// - **`null` at end of input, `""` for a blank line**, which is §4.4's whole
+///   point: the two are distinguishable. A last line with no `\n` after it is
+///   a line, and the read after it is `null`.
+/// - **The `\n` is removed, and so is one `\r` at the end of what is left** —
+///   exactly what `String.lines()` does (`science_lines_next`), including on
+///   a last line with no `\n`, so a file read line by line and the same file
+///   read whole and split agree on every line. A `\r` anywhere else is text.
+/// - **Not UTF-8 is [`ScienceIoError::INVALID_DATA`]**, `read_file`'s answer
+///   to the same bytes; the line is consumed, so the next call reads the line
+///   after it rather than failing forever.
+/// - **`IoError?`, not §4.4's `Error?`**: §7.3 of the same note, *"no Level 1
+///   function has `Error?` in its signature"*, which §4.7's own `count_lines`
+///   follows by returning `read_line`'s error as an `IoError?`.
+/// - **Standard output is flushed first when it is a terminal** — C's line
+///   discipline, and `stdout.rs`'s `flush_if_terminal` says why only then.
+///
+/// # The reason it reads through `std::io::stdin()`
+///
+/// That is the process's one buffer in front of descriptor 0, and `io`'s
+/// `Stdin` ([`science_stdin_read`](crate::science_stdin_read)) reads through
+/// it too, so a program may read a header with this and the rest through a
+/// `BufferedReader` over `Stdin` without a byte falling between them.
+///
+/// # The cost
+///
+/// A `String` per line, which §4.4 states; a program reading ten million lines
+/// reads them through `io`.
+#[no_mangle]
+pub extern "C" fn science_read_line() -> ScienceNullableStringAndIoError {
+    use std::io::BufRead;
+    crate::stdout::flush_if_terminal();
+    let mut line = Vec::new();
+    let read = std::io::stdin().lock().read_until(b'\n', &mut line);
+    let absent = |error: ScienceNullableIoError| ScienceNullableStringAndIoError {
+        value: ScienceNullableString { present: SCIENCE_NULLABLE_NULL, value: ScienceString::empty() },
+        error,
+    };
+    match read {
+        Err(error) => absent(ScienceNullableIoError::present(ScienceIoError::from_io(&error))),
+        Ok(0) => absent(ScienceNullableIoError::null()),
+        Ok(_) => {
+            let text = line.strip_suffix(b"\n").unwrap_or(&line);
+            let text = text.strip_suffix(b"\r").unwrap_or(text);
+            if std::str::from_utf8(text).is_err() {
+                return absent(ScienceNullableIoError::present(ScienceIoError::INVALID_DATA));
+            }
+            ScienceNullableStringAndIoError {
+                value: ScienceNullableString {
+                    present: SCIENCE_NULLABLE_PRESENT,
+                    // SAFETY: just validated as UTF-8, and `text` is `len`
+                    // readable bytes of `line`.
+                    value: unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) },
+                },
+                error: ScienceNullableIoError::null(),
+            }
+        }
+    }
 }
 
 /// Science's `write(text: borrowed String)` — the form that adds nothing.

@@ -166,6 +166,20 @@ fn string_and_io_error_is_a_pair_with_both_fields_live() {
 }
 
 #[test]
+fn nullable_string_and_io_error_is_a_tagged_string_then_the_error() {
+    // `read_line`'s `(String?, IoError?)`: the `String?` is tagged — its tag
+    // at 0, the string at the next word — and the error follows it, for five
+    // words in all.
+    assert_eq!(align_of::<ScienceNullableString>(), align_of::<usize>());
+    assert_eq!(size_of::<ScienceNullableString>(), 4 * WORD);
+    assert_eq!(offset_of!(ScienceNullableString, present), 0);
+    assert_eq!(offset_of!(ScienceNullableString, value), WORD);
+    assert_eq!(size_of::<ScienceNullableStringAndIoError>(), 5 * WORD);
+    assert_eq!(offset_of!(ScienceNullableStringAndIoError, value), 0);
+    assert_eq!(offset_of!(ScienceNullableStringAndIoError, error), 4 * WORD);
+}
+
+#[test]
 fn string_and_text_error_is_string_and_io_error_s_shape() {
     // `String.from_bytes`'s pair: the same offsets, the other error byte.
     assert_eq!(align_of::<ScienceStringAndTextError>(), align_of::<usize>());
@@ -282,6 +296,7 @@ fn every_aggregate_return_is_three_words_or_more() {
         ("science_array_new / with_capacity", std::mem::size_of::<ScienceArray>()),
         ("science_map_new", std::mem::size_of::<ScienceMap>()),
         ("science_read_file", std::mem::size_of::<ScienceStringAndIoError>()),
+        ("science_read_line", std::mem::size_of::<ScienceNullableStringAndIoError>()),
         ("science_string_from_utf8 / slice", std::mem::size_of::<ScienceStringAndTextError>()),
         ("science_string_trim", std::mem::size_of::<ScienceString>()),
         ("science_string_split", std::mem::size_of::<ScienceSplit>()),

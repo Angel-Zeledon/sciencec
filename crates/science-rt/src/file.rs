@@ -1,10 +1,11 @@
-//! The three entry points `io`'s `File` is written over.
+//! The five entry points `io`'s `File` is written over, and the one its
+//! `Stdin` is.
 //!
 //! # Not codegen support, and not in `RUNTIME`
 //!
 //! Every other `#[no_mangle]` function in this crate is called by code the
 //! compiler emits, and `science-codegen`'s `RUNTIME` table is the whole list of
-//! those (Decision 14). These three are called by **Science source** — the
+//! those (Decision 14). These six are called by **Science source** — the
 //! bundled `io` module declares them in an `unsafe extern "C":` block and wraps
 //! them, which is `stdlib-core.md` §9's *"Science + `science-rt`"* taken
 //! literally: the library is Science, and the runtime is what it stands on.
@@ -13,15 +14,27 @@
 //!
 //! # The handle and the status, in one `i64`
 //!
-//! A non-negative result is a handle (from [`science_file_create`]) or success
-//! (from the other two); a negative one is `-(code + 1)`, where `code` is
+//! A non-negative result is a handle (from [`science_file_create`] and
+//! [`science_file_open`]), a count of bytes (from [`science_file_read`] and
+//! [`science_stdin_read`]) or success (from [`science_file_write`] and
+//! [`science_file_close`]); a negative one is `-(code + 1)`, where `code` is
 //! [`ScienceIoError`]'s byte. One integer rather than an out-parameter because
 //! `io` would otherwise need a place for the runtime to write through, and an
 //! `i64` already has room for both answers.
 //!
 //! The handle is the operating system's own — a file descriptor on Unix and a
-//! `HANDLE` on Windows — owned by the Science `File` from `create` until
-//! `close`.
+//! `HANDLE` on Windows — owned by the Science `File` from `create` or `open`
+//! until `close`.
+//!
+//! # Standard input is not a handle
+//!
+//! [`science_stdin_read`] takes no handle, and `io`'s `Stdin` holds none. The
+//! bytes come through Rust's `std::io::stdin()`, whose one process-wide buffer
+//! is also what `read_line` ([`science_read_line`](crate::science_read_line))
+//! reads from — so a program that reads a line with the free function and the
+//! rest through `Stdin` loses nothing between them. A descriptor `0` wrapped in
+//! a `File` would read past that buffer, and its `drop` would close standard
+//! input.
 
 use crate::io::ScienceIoError;
 
@@ -45,6 +58,79 @@ pub unsafe extern "C" fn science_file_create(path: *const u8, len: i64) -> i64 {
     match std::fs::File::create(path) {
         Ok(file) => into_handle(file),
         Err(error) => status_of(&error),
+    }
+}
+
+/// Open the file at the UTF-8 path `path[..len]` for reading. Returns the
+/// handle, or a negative status — `data-io.md` §7's `File.open`.
+///
+/// # Safety
+///
+/// `path` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn science_file_open(path: *const u8, len: i64) -> i64 {
+    // SAFETY: the caller guarantees `len` readable bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(path, len.max(0) as usize) };
+    let Ok(path) = std::str::from_utf8(bytes) else {
+        return -(i64::from(ScienceIoError::INVALID_DATA.0) + 1);
+    };
+    match std::fs::File::open(path) {
+        Ok(file) => into_handle(file),
+        Err(error) => status_of(&error),
+    }
+}
+
+/// Read at most `len` bytes from `handle` into `into[..len]`. Returns the
+/// count — `0` at end of input and only there, `stdlib-core.md` §4.2's one
+/// end-of-input signal — or a negative status.
+///
+/// **One system call, not a loop to fill**: §4.3 makes `File` unbuffered, and
+/// a short read is how a pipe or a terminal says *"that is all I have now"*.
+/// The one thing retried is an interrupted call, which delivered nothing and
+/// would otherwise reach the program as an error it did not cause.
+///
+/// # Safety
+///
+/// `handle` must be a handle [`science_file_open`] or [`science_file_create`]
+/// returned and nothing has closed; `into` must point to `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn science_file_read(handle: i64, into: *mut u8, len: i64) -> i64 {
+    // SAFETY: the caller guarantees `len` writable bytes.
+    let into = unsafe { std::slice::from_raw_parts_mut(into, len.max(0) as usize) };
+    // SAFETY: the caller guarantees a live handle; `ManuallyDrop` keeps this
+    // borrow of it from closing it.
+    let mut file = std::mem::ManuallyDrop::new(unsafe { from_handle(handle) });
+    read_counted(&mut *file, into)
+}
+
+/// Read at most `len` bytes of standard input into `into[..len]`, through the
+/// buffer `read_line` shares. Returns the count — `0` at end of input — or a
+/// negative status.
+///
+/// Standard output is flushed first when it is a terminal, which is
+/// [`science_read_line`](crate::science_read_line)'s decision and its reason:
+/// a prompt written with `write` is on the screen before the program waits.
+///
+/// # Safety
+///
+/// `into` must point to `len` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn science_stdin_read(into: *mut u8, len: i64) -> i64 {
+    // SAFETY: the caller guarantees `len` writable bytes.
+    let into = unsafe { std::slice::from_raw_parts_mut(into, len.max(0) as usize) };
+    crate::stdout::flush_if_terminal();
+    read_counted(&mut std::io::stdin().lock(), into)
+}
+
+/// One read into `into`, retried only while it is interrupted, as a count or a
+/// negative status.
+fn read_counted(source: &mut impl std::io::Read, into: &mut [u8]) -> i64 {
+    loop {
+        match source.read(into) {
+            Ok(count) => return count as i64,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return status_of(&error),
+        }
     }
 }
 

@@ -8792,11 +8792,18 @@ impl<'a> Lowerer<'a> {
             let function = self.defs.get(def).name.clone();
             self.lower_print(body, ctx, args, insts, &function)?;
         } else if self.defs.get(def).is_builtin()
-            && matches!(self.defs.get(def).name.as_str(), "read_file" | "write_file")
+            && matches!(self.defs.get(def).name.as_str(), "read_file" | "write_file" | "read_line")
             && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
         {
+            // `read_line` is `stdlib-core.md` §4.4's ninth free function and
+            // `read_file`'s shape with no argument: its `(String?, IoError?)`
+            // comes back through `sret` into the destination's own slot, whose
+            // layout `RtAggregate::NullableStringAndIoError` is built from the
+            // same `CgTy::nullable` the slot is. The `owner` test keeps it off
+            // `io`'s `BufferedReader.read_line`, which is a method with a body.
             let symbol = match self.defs.get(def).name.as_str() {
                 "read_file" => "science_read_file",
+                "read_line" => "science_read_line",
                 _ => "science_write_file",
             };
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;

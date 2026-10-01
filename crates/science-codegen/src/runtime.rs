@@ -138,6 +138,17 @@ pub enum RtAggregate {
     /// `{ value: ScienceString, error: ScienceNullableIoError }` — the pair of
     /// §5.4.
     StringAndIoError,
+    /// `{ value: ScienceNullableString, error: ScienceNullableIoError }` —
+    /// `read_line`'s `(String?, IoError?)`, [`RtAggregate::StringAndIoError`]
+    /// with a `String?` in front: forty bytes, `sret` on every convention.
+    ///
+    /// **The `String?` is modelled as the nullable it is**, through
+    /// `CgTy::nullable`, and not as a hand-written `{ u8, String }` that
+    /// happens to agree: the layout a Science `(String?, IoError?)` local gets
+    /// is that same call's, so the runtime's pair and the slot `sret` writes
+    /// it into have one source for their offsets, and `tests/layout.rs` checks
+    /// that source against `rustc`'s.
+    NullableStringAndIoError,
     /// `u8` — `stdlib-core.md` §7.4's four `TextError` variants as a
     /// payload-free byte, numbered in §7.4's order; `science-rt`'s `text.rs`
     /// says why the payloads are left out.
@@ -198,8 +209,8 @@ pub enum RtAggregate {
 }
 
 impl RtAggregate {
-    /// All nineteen, in a fixed order.
-    pub const ALL: [RtAggregate; 19] = [
+    /// All twenty, in a fixed order.
+    pub const ALL: [RtAggregate; 20] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Lines,
@@ -210,6 +221,7 @@ impl RtAggregate {
         RtAggregate::IoError,
         RtAggregate::NullableIoError,
         RtAggregate::StringAndIoError,
+        RtAggregate::NullableStringAndIoError,
         RtAggregate::TextError,
         RtAggregate::NullableTextError,
         RtAggregate::I64AndTextError,
@@ -234,6 +246,7 @@ impl RtAggregate {
             RtAggregate::IoError => "ScienceIoError",
             RtAggregate::NullableIoError => "ScienceNullableIoError",
             RtAggregate::StringAndIoError => "ScienceStringAndIoError",
+            RtAggregate::NullableStringAndIoError => "ScienceNullableStringAndIoError",
             RtAggregate::TextError => "ScienceTextError",
             RtAggregate::NullableTextError => "ScienceNullableTextError",
             RtAggregate::I64AndTextError => "ScienceI64AndTextError",
@@ -347,6 +360,13 @@ impl RtAggregate {
                 "ScienceStringAndIoError",
                 vec![
                     Field::new("value", RtAggregate::String.cg_ty()),
+                    Field::new("error", RtAggregate::NullableIoError.cg_ty()),
+                ],
+            ),
+            RtAggregate::NullableStringAndIoError => CgTy::strukt(
+                "ScienceNullableStringAndIoError",
+                vec![
+                    Field::new("value", CgTy::nullable(RtAggregate::String.cg_ty())),
                     Field::new("error", RtAggregate::NullableIoError.cg_ty()),
                 ],
             ),
@@ -692,7 +712,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 109 entry points. §2.6: *"They are the whole list."*
+/// The 110 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -755,6 +775,11 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_flush", params: &[], ret: RtRet::Void },
     RuntimeFn { symbol: "science_read_file", params: &[P], ret: RtRet::Aggregate(RtAggregate::StringAndIoError) },
     RuntimeFn { symbol: "science_write_file", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::NullableIoError) },
+    // `stdlib-core.md` §4.4's `read_line()`, the ninth free function: no
+    // argument, and `(String?, IoError?)` back through `sret` — forty bytes,
+    // so it joins the `sret` set on every convention, as `science_read_file`
+    // does one row up.
+    RuntimeFn { symbol: "science_read_line", params: &[], ret: RtRet::Aggregate(RtAggregate::NullableStringAndIoError) },
     RuntimeFn { symbol: "science_io_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
     // **`IoError implements Display`, as an eighth `science_string_push_*`.**
     // The accumulator and a pointer to the error, the shape
@@ -1336,9 +1361,20 @@ mod tests {
     /// fresh buffer, so Decision 14 is met as it was for
     /// `science_string_replace`. The fifth is the first `free` an iterator has
     /// needed, because `Split` is the first iterator that owns its operands.
+    ///
+    /// **One hundred and ten**: `science_read_line`, `stdlib-core.md` §4.4's
+    /// ninth free function and the first input a program in a pipe has.
+    /// Reading standard input up to a newline through the process's one
+    /// buffer, and validating it as UTF-8, is library work and a system call,
+    /// not an instruction sequence — `science_read_file`'s case, and it
+    /// returns that symbol's pair with a `String?` in front, so it joins the
+    /// `sret` list below as that one did. `io`'s `File.open`, `File.read` and
+    /// `Stdin.read` are *not* here: they are called by Science source through
+    /// an `extern` block, and `science-codegen-llvm`'s `tests/symbols.rs`
+    /// exempts them by name.
     #[test]
-    fn there_are_one_hundred_and_nine_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 109, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_ten_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 110, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1486,6 +1522,10 @@ mod tests {
             "science_string_trim",
             "science_string_slice",
             "science_string_split",
+            // `read_line`'s `(String?, IoError?)`: `science_read_file`'s pair
+            // with a tagged `String?` in front, forty bytes, MEMORY on every
+            // convention.
+            "science_read_line",
         ];
         // **And for the first time the set differs by convention.**
         // `science_string_parse_int` and `science_string_parse_float` return

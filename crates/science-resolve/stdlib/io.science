@@ -1,4 +1,4 @@
-# io — `stdlib-core.md` §4, Level 2: `use io (File, BufferedWriter)`.
+# io — `stdlib-core.md` §4, Level 2: `use io (File, BufferedReader, Stdin)`.
 #
 # The first module of the standard library written in Science. It is bundled
 # into the compiler (`science_resolve::stdlib`) and resolved like a file beside
@@ -6,7 +6,7 @@
 # sibling — and a sibling `io.science` of the user's own is found first, which
 # is `stdlib-shape-and-packages.md` §6.3's search order: the toolchain last.
 #
-# Four decisions are this file's, and each is written where it applies:
+# Seven decisions are this file's, and each is written where it applies:
 #
 # - `File` lives here, at Level 2, where §4.5's table puts it at Level 1. The
 #   prelude is declared as data and cannot hold a body, and `File implements
@@ -24,16 +24,36 @@
 #   reported — a destructor has nowhere to report it. Call `flush()` to see it.
 #   Dropping without flushing losing the output silently is the alternative,
 #   and it is the worse one.
+# - The line iterator is `BufferedLines[R]`, where §4.5 names `Lines`: the
+#   prelude's `Lines` is `String.lines()`'s three-word view into a string the
+#   runtime walks, and a source that owns a reader and a buffer cannot be that
+#   type. One name for two types would shadow the prelude's in every file that
+#   imports this one. `File.lines()` and `Stdin.lines()` return it.
+# - A line is what `read_line` and `String.lines()` say it is: the bytes up to
+#   a `\n`, without it and without one `\r` at the end of what is left, and a
+#   last line with no `\n` is a line. Bytes that are not UTF-8 are `FileError` code 3, *"invalid
+#   data"*, as they are for `read_file`; the line is consumed.
+# - `BufferedLines` ends at the first error and keeps it: `Iterate.next`
+#   returns `String?` and has no room for one, so `failure()` afterwards says
+#   whether the loop ended at the end of input or short of it.
 
-# `science-rt`'s three file entry points. They are called from here and from
+# `science-rt`'s six file entry points. They are called from here and from
 # nowhere else, and they cross as C scalars and a pointer: a negative result is
-# `-(code + 1)`, where `code` is `IoError`'s byte; anything else is a handle or
-# success. `library "science-rt"` adds nothing to the link line, because the
+# `-(code + 1)`, where `code` is `IoError`'s byte; anything else is a handle, a
+# count or success. `library "science-rt"` adds nothing to the link line, because the
 # runtime is already on it.
+#
+# A read's count is `0` at end of input and only there.
+# `science_stdin_read` takes no handle: standard input is the process's one
+# buffer, shared with the prelude's `read_line`, and not a descriptor a `File`
+# could own and close.
 unsafe extern "C" library "science-rt":
     def science_file_create(path: ffi.Span[U8], length: I64) -> I64
+    def science_file_open(path: ffi.Span[U8], length: I64) -> I64
+    def science_file_read(handle: I64, into: ffi.MutableSpan[U8], length: I64) -> I64
     def science_file_write(handle: I64, bytes: ffi.Span[U8], length: I64) -> I64
     def science_file_close(handle: I64) -> I64
+    def science_stdin_read(into: ffi.MutableSpan[U8], length: I64) -> I64
 
 # --- FileError ----------------------------------------------------------------
 
@@ -69,7 +89,8 @@ def failure(status: Int) -> Error?:
 
 # --- File ---------------------------------------------------------------------
 
-# An open file, unbuffered: one system call per `write` (`stdlib-core.md` §4.3).
+# An open file, unbuffered: one system call per `read` or `write`
+# (`stdlib-core.md` §4.3).
 # `handle` is `-1` once the file is closed, which is what its `drop` reads.
 public type File:
     handle: Int
@@ -81,6 +102,20 @@ File has:
         if status < 0:
             return (File(handle: -1), failure(status))
         (File(handle: status), null)
+
+    # Opens `path` for reading (`data-io.md` §7).
+    public def open(path: &String) -> (File, Error?):
+        let status be unsafe: science_file_open(path.bytes(), path.length())
+        if status < 0:
+            return (File(handle: -1), failure(status))
+        (File(handle: status), null)
+
+    # The file's lines, read through a buffer of `LINE_BUFFER` bytes — §4.3:
+    # *"`File.lines()` returns a `Lines` source that is buffered by
+    # construction"*. It consumes the file, which the iterator closes when it
+    # is dropped.
+    public def lines(self: Self) -> BufferedLines[File]:
+        BufferedLines(reader: BufferedReader.new(self, LINE_BUFFER), error: null)
 
     # Closes the file and reports what closing it failed with, which a drop
     # cannot (`data-io.md` §7). It consumes the file.
@@ -95,6 +130,20 @@ File has:
 File implements Write:
     def write(mutable self, bytes: &Array[U8]) -> Error?:
         failure(unsafe: science_file_write(self.handle, bytes, bytes.length()))
+
+# Up to `into.length()` bytes, in one system call: a count short of that is
+# not the end, and only `0` is (§4.2).
+File implements Read:
+    def read(mutable self, into: &mut Array[U8]) -> (U64, Error?):
+        counted(
+            unsafe: science_file_read(self.handle, into.span_mutably(), into.length())
+        )
+
+# A runtime count as `Read.read`'s pair: the count, or `0` and the failure.
+def counted(status: Int) -> (U64, Error?):
+    if status < 0:
+        return (0, failure(status))
+    (status as U64, null)
 
 # A file nobody closed is closed here, and what closing it failed with is lost.
 File implements Drop:
@@ -137,3 +186,143 @@ BufferedWriter[W: Write] implements Write:
 BufferedWriter[W: Write] implements Drop:
     def drop(mutable self):
         let _unreported be self.flush()
+
+# The buffer `File.lines()` and `Stdin.lines()` read through: 8 KiB, the size
+# Rust's `BufReader` and C's `BUFSIZ` on most systems pick. Not larger, because
+# a reader's buffer is made of zeros a byte at a time — there is no
+# `Array.filled` yet — and that costs about 0.2 ms per 8 KiB, paid on every
+# `lines()` call; 64 KiB was measured at eight times that, which a loop over
+# many small files notices.
+const LINE_BUFFER be 8192
+
+# --- Stdin --------------------------------------------------------------------
+
+# Standard input as a value implementing `Read` (§4.5). It holds nothing: the
+# buffer in front of descriptor 0 is the runtime's, and the prelude's
+# `read_line` reads from the same one, so the two can be mixed. `unused` is
+# there because a `type` declares at least one field; `Stdin.new()` is the way
+# to make one.
+public type Stdin:
+    unused: Bool
+
+Stdin has:
+    public def new() -> Stdin:
+        Stdin(unused: false)
+
+    # Standard input's lines, through a buffer of `LINE_BUFFER` bytes: §4.4's
+    # `Stdin.lines()`, which it names as the way to read input in bulk.
+    public def lines(self: Self) -> BufferedLines[Stdin]:
+        BufferedLines(reader: BufferedReader.new(self, LINE_BUFFER), error: null)
+
+# Standard output is flushed first when it is a terminal, so a prompt is on the
+# screen before the program waits.
+Stdin implements Read:
+    def read(mutable self, into: &mut Array[U8]) -> (U64, Error?):
+        counted(unsafe: science_stdin_read(into.span_mutably(), into.length()))
+
+# --- BufferedReader -----------------------------------------------------------
+
+# Reads `source` in pieces of `capacity` bytes and hands them out as asked.
+# §4.3's other wrapper: `File` is unbuffered on purpose, and a program reading
+# a line at a time from one makes a system call per piece of this, not per line.
+public type BufferedReader[R: Read]:
+    source: R
+    buffer: Array[U8]
+    start: Int
+    end: Int
+
+BufferedReader[R: Read] has:
+    # `capacity` is at least one byte: a buffer of none could never hold the
+    # next byte, and every read would look like the end of input.
+    public def new(source: R, capacity: Int) -> BufferedReader[R]:
+        let mutable buffer be Array[U8].new()
+        for _ in 0..capacity.max(1):
+            buffer.push(0)
+        BufferedReader(source: source, buffer: buffer, start: 0, end: 0)
+
+    # Refills the buffer from the source when everything in it has been handed
+    # out. Afterwards `start < end` unless the source is at its end or failed.
+    def fill(mutable self) -> Error?:
+        if self.start < self.end:
+            return null
+        self.start be 0
+        self.end be 0
+        let count, err be self.source.read(&mut self.buffer)
+        if err?:
+            return err
+        self.end be count as Int
+        null
+
+    # The next line, without its `\n` and one `\r` at its end; `null` at the end
+    # of input, and `""` for a blank line — the prelude `read_line`'s answers,
+    # from any `Read`.
+    public def read_line(mutable self) -> (String?, Error?):
+        let mutable line be Array[U8].new()
+        let mutable found be false
+        let mutable ended be false
+        loop:
+            let err be self.fill()
+            if err?:
+                return (null, err)
+            if self.start >= self.end:
+                ended be true
+                break
+            found be true
+            let byte be self.buffer[self.start]
+            self.start be self.start + 1
+            if byte is 10:
+                break
+            line.push(byte)
+        if ended and not found:
+            return (null, null)
+        if line.length() > 0 and line[line.length() - 1] is 13:
+            line.pop()
+        let text, bad be String.from_bytes(&line)
+        if bad?:
+            return (null, FileError(code: 3))
+        (text, null)
+
+    # The lines that follow, as an iterator. It consumes the reader.
+    public def lines(self: Self) -> BufferedLines[R]:
+        BufferedLines(reader: self, error: null)
+
+# What is buffered first, then the source — a read as large as the buffer, with
+# nothing buffered, goes straight to the source rather than through a copy.
+BufferedReader[R: Read] implements Read:
+    def read(mutable self, into: &mut Array[U8]) -> (U64, Error?):
+        if self.start >= self.end and into.length() >= self.buffer.length():
+            return self.source.read(into)
+        let err be self.fill()
+        if err?:
+            return (0, err)
+        let count be (self.end - self.start).min(into.length())
+        for i in 0..count:
+            into[i] be self.buffer[self.start + i]
+        self.start be self.start + count
+        (count as U64, null)
+
+# --- BufferedLines ------------------------------------------------------------
+
+# The lines of a `BufferedReader`, one `String` each. It ends at the end of
+# input or at the first error, and `failure()` says which.
+public type BufferedLines[R: Read]:
+    reader: BufferedReader[R]
+    error: Error?
+
+BufferedLines[R: Read] has:
+    # Whether the iteration ended short of the end of input: a read that
+    # failed, or a line that was not UTF-8.
+    public def failure(self) -> Bool:
+        self.error?
+
+BufferedLines[R: Read] implements Iterate:
+    type Item is String
+
+    def next(mutable self) -> Self.Item?:
+        if self.error?:
+            return null
+        let line, err be self.reader.read_line()
+        if err?:
+            self.error be err
+            return null
+        line

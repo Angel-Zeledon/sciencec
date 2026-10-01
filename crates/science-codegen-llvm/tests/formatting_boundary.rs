@@ -186,21 +186,28 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// MEMORY everywhere, so the host does not matter for them;
 /// `science_split_next` returns a `Bool` and `science_split_free` nothing, and
 /// the count did not move for those two.
+///
+/// **And twenty — twenty-two on Windows — with one hundred and ten rows.**
+/// `science_read_line`, `stdlib-core.md` §4.4's `read_line()`, returns
+/// `(String?, IoError?)`: `science_read_file`'s pair with a tagged `String?`
+/// in front, forty bytes, a hidden pointer on every convention. `io`'s
+/// `File.open`, `File.read` and `Stdin.read` are reached through an `extern`
+/// block and are not rows at all.
 #[test]
-fn the_derived_sret_set_is_nineteen_and_twenty_one_on_windows_and_has_moved_nine_times() {
+fn the_derived_sret_set_is_twenty_and_twenty_two_on_windows_and_has_moved_ten_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
         .map(|entry| runtime_signature(triple, entry))
         .filter(|sig| sig.ret.is_sret())
         .count();
-    let expected = if triple == Triple::X86_64WindowsMsvc { 21 } else { 19 };
+    let expected = if triple == Triple::X86_64WindowsMsvc { 22 } else { 20 };
     assert_eq!(
         indirect, expected,
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 109, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 110, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

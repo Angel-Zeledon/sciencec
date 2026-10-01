@@ -179,6 +179,25 @@ pub(crate) fn flush() {
     let _ = std::io::stdout().lock().flush();
 }
 
+/// [`flush`] when stdout is a terminal, and nothing otherwise: what a read
+/// of standard input does before it waits.
+///
+/// **C's line discipline, and only its terminal half.** A program that
+/// writes `write("name? ")` and then reads a line means the prompt to be on
+/// the screen while it waits, and on a terminal the prompt is held in Rust's
+/// `LineWriter` for want of a `\n`. In a pipe nobody is waiting on a prompt,
+/// and flushing the 64 KiB block before every line read would make a filter —
+/// `read_line` then `print`, a million times — pay one `write` per line,
+/// which is the cost this module exists to remove. Before the first `print`
+/// or `write` there is nothing to flush and the policy is not decided for it.
+pub(crate) fn flush_if_terminal() {
+    let guard = lock();
+    if let Some(Policy::Line) = guard.as_ref() {
+        drop(guard);
+        let _ = std::io::stdout().lock().flush();
+    }
+}
+
 /// [`flush`] on a path that is about to end the process: a panic, an abort, an
 /// `atexit` handler.
 ///

@@ -28,7 +28,8 @@ use science_codegen::runtime::RtAggregate;
 use science_rt::{
     SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec, ScienceLines,
     ScienceF64AndTextError, ScienceFormatter, ScienceI64AndTextError, ScienceMap, ScienceMapInfo,
-    ScienceNullableIoError, ScienceNullableTextError, ScienceString, ScienceStringAndIoError,
+    ScienceNullableIoError, ScienceNullableStringAndIoError, ScienceNullableTextError, ScienceString,
+    ScienceStringAndIoError,
     ScienceStringAndTextError, ScienceTextError, ScienceTypeInfo, ScienceSplit, ScienceRangeI64,
 };
 
@@ -68,6 +69,7 @@ fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     agrees!(RtAggregate::MapInfo, ScienceMapInfo);
     agrees!(RtAggregate::NullableIoError, ScienceNullableIoError);
     agrees!(RtAggregate::StringAndIoError, ScienceStringAndIoError);
+    agrees!(RtAggregate::NullableStringAndIoError, ScienceNullableStringAndIoError);
     // `TextError` and the two parse pairs, `IoError`'s three one type over.
     agrees!(RtAggregate::TextError, ScienceTextError);
     agrees!(RtAggregate::NullableTextError, ScienceNullableTextError);
@@ -148,6 +150,13 @@ fn every_field_is_where_decision_17_puts_it() {
     let pair = layout_of(host(), &RtAggregate::StringAndIoError.cg_ty());
     assert_eq!(pair.field_offset(0), Some(offset_of!(ScienceStringAndIoError, value) as u64));
     assert_eq!(pair.field_offset(1), Some(offset_of!(ScienceStringAndIoError, error) as u64));
+
+    // `read_line`'s, with a `String?` in front: the tag at 0 and the string at
+    // the next word, which is `CgTy::nullable`'s tagged layout — the one a
+    // Science `(String?, IoError?)` local gets — agreeing with `#[repr(C)]`.
+    let pair = layout_of(host(), &RtAggregate::NullableStringAndIoError.cg_ty());
+    assert_eq!(pair.field_offset(0), Some(offset_of!(ScienceNullableStringAndIoError, value) as u64));
+    assert_eq!(pair.field_offset(1), Some(offset_of!(ScienceNullableStringAndIoError, error) as u64));
 
     // `String.from_bytes`'s, the same shape with `TextError?`.
     let pair = layout_of(host(), &RtAggregate::StringAndTextError.cg_ty());

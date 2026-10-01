@@ -212,6 +212,10 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // same four-word `(String, TextError?)` as `from_utf8`, and
     // `science_string_split` a nine-word `Split`. `science_split_next` returns
     // a `Bool` and `science_split_free` nothing.
+    //
+    // **Twenty.** `science_read_line` returns `(String?, IoError?)`, forty
+    // bytes — `science_read_file`'s pair with a tagged `String?` in front —
+    // MEMORY everywhere.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -225,6 +229,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_io_error_message",
             "science_map_new",
             "science_read_file",
+            "science_read_line",
             "science_string_chars",
             "science_string_clone",
             "science_string_from_bytes",
@@ -410,7 +415,14 @@ fn nothing_outside_the_table_is_callable() {
     // there because `Split` owns copies of its two operands, which its
     // `science-rt` doc comment argues; releasing two buffers is two calls to a
     // function this table already has, made where the layout is known.
-    assert_eq!(RUNTIME.len(), 109);
+    //
+    // **One hundred and ten.** `science_read_line`, `stdlib-core.md` §4.4's
+    // `read_line()`: a read of standard input up to a newline through the
+    // process's one buffer, then a UTF-8 check — a system call and a loop,
+    // `science_read_file`'s door. `io`'s `File.open`, `File.read` and
+    // `Stdin.read` are Science calling `science-rt` through an `extern` block,
+    // so they are not in this table, as `File.create` is not.
+    assert_eq!(RUNTIME.len(), 110);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

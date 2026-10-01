@@ -292,7 +292,7 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         assert!(name.starts_with("science_"), "`{name}` breaks §8's one-prefix rule");
     }
 
-    // **The second caller.** `science-rt/src/file.rs`'s three,
+    // **The second caller.** `science-rt/src/file.rs`'s six,
     // `science-rt/src/os.rs`'s five, `science-rt/src/time.rs`'s three,
     // `science-rt/src/fs.rs`'s twelve and `science-rt/src/random.rs`'s one are
     // called by the bundled `io`, `os`, `time`, `fs`, `path` and `random`
@@ -304,6 +304,11 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         "science_file_create",
         "science_file_write",
         "science_file_close",
+        // The read half: `File.open`, `File implements Read` and `Stdin
+        // implements Read`, in `io` beside the three above.
+        "science_file_open",
+        "science_file_read",
+        "science_stdin_read",
         "science_os_argument_count",
         "science_os_argument_length",
         "science_os_argument_copy",

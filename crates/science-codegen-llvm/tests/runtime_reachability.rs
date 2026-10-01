@@ -588,6 +588,18 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   for piece in t.split(\",\"):\n\
          \x20       print(f\"{part} {piece}\")\n",
     ),
+    // `input.rs`, reduced: `stdlib-core.md` §4.4's `read_line()`, the ninth
+    // free function, which joined `RUNTIME` with its caller — the backend's
+    // free-builtin arm beside `read_file`'s.
+    (
+        "read_line",
+        "def main():\n\
+         \x20   let line, err be read_line()\n\
+         \x20   if err?:\n\
+         \x20       print(err.message())\n\
+         \x20   if line?:\n\
+         \x20       print(line)\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over
