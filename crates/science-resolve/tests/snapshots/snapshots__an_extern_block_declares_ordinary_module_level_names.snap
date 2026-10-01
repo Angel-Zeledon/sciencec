@@ -2,42 +2,42 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![scale, openblas, uses_union]))"
 ---
-Module `main` #1818 @0..226
-  Fn `scale` #1819 @0..53
+Module `main` #2307 @0..226
+  Fn `scale` #2308 @0..53
     body: Block @0..53
       tail: Unsafe @0..45
         body: Block @0..38
-          Path -> `H5T_NATIVE_DOUBLE_g` #1824 @17..36
+          Path -> `H5T_NATIVE_DOUBLE_g` #2313 @17..36
           tail: Call @0..16
-            callee: Path -> `cblas_dgemm` #1823 @0..11
+            callee: Path -> `cblas_dgemm` #2312 @0..11
             args
               Int 4 @12..13
   Extern "C" unsafe @54..202
     Library "openblas" @195..202
     items
-      ExternAlias `BlasInt` #1820 @54..65
+      ExternAlias `BlasInt` #2309 @54..65
         type: Path -> `I32` #4 @54..57
-      ExternConst `CBLAS_ROW_MAJOR` #1821 @66..89
+      ExternConst `CBLAS_ROW_MAJOR` #2310 @66..89
         value: Int 101
-        type: Path -> `BlasInt` #1820 @66..73
-      ExternConst `H5I_BADID` #1822 negative @90..107
+        type: Path -> `BlasInt` #2309 @66..73
+      ExternConst `H5I_BADID` #2311 negative @90..107
         value: Int 1
-        type: Path -> `BlasInt` #1820 @90..97
-      ExternFn `cblas_dgemm` #1823 symbol "dgemm_" @108..140
+        type: Path -> `BlasInt` #2309 @90..97
+      ExternFn `cblas_dgemm` #2312 symbol "dgemm_" @108..140
         params
-          Param `m` #1827 @108..117
-            type: Path -> `BlasInt` #1820 @108..115
+          Param `m` #2316 @108..117
+            type: Path -> `BlasInt` #2309 @108..115
         ret: Path -> `I32` #4 @118..121
-      ExternStatic `H5T_NATIVE_DOUBLE_g` #1824 @141..164
+      ExternStatic `H5T_NATIVE_DOUBLE_g` #2313 @141..164
         type: Path -> `I64` #5 @141..144
-      ExternUnion `H5R_ref_t` #1825 @165..174
+      ExternUnion `H5R_ref_t` #2314 @165..174
         size: 64
         align: 8
-  Fn `inspect` #1826 @203..226
+  Fn `inspect` #2315 @203..226
     params
-      Param `r` #1828 @211..224
+      Param `r` #2317 @211..224
         type: Borrowed @211..222
-          Path -> `H5R_ref_t` #1825 @211..220
+          Path -> `H5R_ref_t` #2314 @211..220
     body: Block @225..226
 --- diagnostics ---
 (none)

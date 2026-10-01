@@ -435,6 +435,43 @@
 //! [`Callee::Def`] edge reaches it, and `science-regions` checks it as an
 //! unreferenced singleton component.
 //!
+//! ## 8.7 A `Copy` capture of a closure that can leave the function is a value
+//!
+//! > **Decision. In a function whose return type mentions a closure type, a
+//! > capture the body only reads and whose type is `Copy` is captured *by value*:
+//! > the closure's environment holds a copy of it, made where the closure is
+//! > created, and no loan is taken. Everything else keeps §8's borrow.**
+//!
+//! §8.1 left the language question open on purpose and said why no F0 program
+//! could tell the two answers apart. That stopped being true the day a function
+//! could return a closure: `def make(k: Int) -> (Int) -> Int: x giving x * k`
+//! borrows `k`, a slot of `make`'s own frame, and returns the borrow. Rule 5
+//! refuses it (`SC0333`), correctly, and the program is the most ordinary way to
+//! write a closure factory. A `Copy` value has no identity to preserve, so
+//! copying it is not a decision about ownership — it is the one reading under
+//! which the program means something.
+//!
+//! *Why only a function that returns a closure.* The by-value environment has to
+//! outlive the frame, so the backend gives it heap storage; a closure has no drop
+//! glue, so that storage is never released. Confining the cost to functions whose
+//! result can carry a closure keeps a chain's `each giving each + n` in a loop
+//! exactly as cheap as before, and a closure factory pays one small allocation
+//! per closure it makes. §8.1's observable difference (a write to the captured
+//! variable after the closure is made) is likewise confined to those functions,
+//! where it now compiles and the closure sees the value as of its creation.
+//!
+//! *Why only `Copy`, and only a read.* An owned non-`Copy` capture would have to
+//! *move* into an escaping closure, which needs a closure destructor and a move
+//! the caller's drop elaboration can see. That is the work §8.2 names and this
+//! does not do: such a capture is still a borrow and is still refused when it
+//! escapes. A write through the capture would make the copy and the original
+//! diverge, so it stays a borrow too.
+//!
+//! *Representation.* The capture's operand is the value (`Operand::Copy` of the
+//! captured place) rather than the reference temporary §8 builds; the closure's
+//! body is unchanged and still receives a reference, which the backend points at
+//! the copy inside the heap environment.
+//!
 //! ## 8.6 A capture reaches the body as a parameter
 //!
 //! > **Decision. A closure's body takes one trailing parameter per capture,
@@ -5297,6 +5334,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         mut block: BlockId,
     ) -> (Vec<Operand>, Vec<CaptureParam>, BlockId) {
         let found = crate::capture::captures_of(self.context.decls, self.thir, params, body);
+        let escapes = ty_contains_closure(self.context.types, self.thir.ret());
         let mut captures = Vec::with_capacity(found.len());
         let mut params = Vec::with_capacity(found.len());
         for capture in found {
@@ -5320,6 +5358,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 crate::capture::Use::Write => true,
             };
             let borrowed = self.context.types.borrowed(mutable, ty);
+            // §8.7. A `Copy` capture read by a closure that may leave the
+            // function is the value itself, not a loan of this frame's slot.
+            if escapes && !mutable && self.is_copy(ty) {
+                captures.push(Operand::Copy(place));
+                params.push(CaptureParam {
+                    def: capture.def,
+                    reference_ty: borrowed,
+                    referent_ty: ty,
+                    span: capture.span,
+                    moves: false,
+                });
+                continue;
+            }
             let temp = self.temp(borrowed, capture.span, block);
             // §8.4: `in_argument` is false however the closure got here.
             block =
@@ -6277,6 +6328,22 @@ fn force_copy(operand: Operand) -> Operand {
     match operand {
         Operand::Move(place) => Operand::Copy(place),
         other => other,
+    }
+}
+
+/// Whether a closure type appears anywhere in `ty`: §8.7's test for *a
+/// function whose result may carry a closure out of its frame*.
+fn ty_contains_closure(types: &Types, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Closure { .. } => true,
+        TyKind::Named { args, .. } | TyKind::Object { args, .. } => args.iter().any(|arg| {
+            matches!(arg, GenericArg::Type(inner) if ty_contains_closure(types, *inner))
+        }),
+        TyKind::Borrowed { inner, .. } | TyKind::Nullable(inner) => {
+            ty_contains_closure(types, *inner)
+        }
+        TyKind::Tuple(elements) => elements.iter().any(|element| ty_contains_closure(types, *element)),
+        _ => false,
     }
 }
 

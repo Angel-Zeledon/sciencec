@@ -6748,7 +6748,7 @@ impl<'a> Lowerer<'a> {
             // bytes, a descriptor, a function"*), which is what makes the code
             // half one store and no new backend primitive.
             Rvalue::Closure { param, captures, .. } => {
-                self.lower_closure(ctx, *param, captures, dest, layout, insts)
+                self.lower_closure(body, ctx, *param, captures, dest, layout, insts)
             }
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
@@ -7922,8 +7922,10 @@ impl<'a> Lowerer<'a> {
     /// at all. That is the property [`Lowerer::cg_ty_in`]'s own note declines to
     /// spend: such a closure may still be returned out of the function that
     /// wrote it, exactly as it could when it was a bare function pointer.
+    #[allow(clippy::too_many_arguments)]
     fn lower_closure(
         &mut self,
+        body: &MirBody,
         ctx: &mut BodyCtx,
         param: DefId,
         captures: &[mir::Operand],
@@ -7958,8 +7960,89 @@ impl<'a> Lowerer<'a> {
             }
         };
 
+        // `science-mir`'s `lower.rs` §8.7: a capture whose operand is a *value*
+        // and not a reference is a `Copy` the closure owns, and the closure
+        // may outlive this frame. One such capture puts the whole environment
+        // on the heap, with the values stored after the pointer table.
+        let by_value: Vec<Option<Layout>> = captures
+            .iter()
+            .map(|capture| {
+                let ty = self.operand_ty(body, capture)?;
+                if matches!(self.types.kind(ty), TyKind::Borrowed { .. }) {
+                    return None;
+                }
+                self.layout_of_ty(ty).ok()
+            })
+            .collect();
         // The environment first, because the pair below stores its address.
-        let env = match captures.is_empty() {
+        let env = if by_value.iter().any(Option::is_some) {
+            let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+            let table = captures.len() as u64 * pointer.size;
+            let mut size = table;
+            let mut align = pointer.align.max(1);
+            let mut cells = Vec::with_capacity(captures.len());
+            for layout in &by_value {
+                match layout {
+                    Some(layout) => {
+                        let cell_align = layout.align.max(1);
+                        size = size.div_ceil(cell_align) * cell_align;
+                        cells.push(Some(size));
+                        size += layout.size;
+                        align = align.max(cell_align);
+                    }
+                    None => cells.push(None),
+                }
+            }
+            size = size.div_ceil(align) * align;
+            let alloc = self.declare("science_alloc")?;
+            let block = ctx.value();
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: Some(block),
+                callee: Callee::Runtime("science_alloc"),
+                args: vec![Operand::ConstInt(size as i128), Operand::ConstInt(align as i128)],
+                ret: alloc.ret.clone(),
+                sret_slot: None,
+            }));
+            for (at, capture) in captures.iter().enumerate() {
+                let slot = ctx.value();
+                insts.push(ExtInst::FieldAddr {
+                    dest: slot,
+                    base: Operand::Value(block),
+                    offset: at as u64 * pointer.size,
+                });
+                match (&by_value[at], cells[at]) {
+                    (Some(layout), Some(offset)) => {
+                        let cell = ctx.value();
+                        insts.push(ExtInst::FieldAddr {
+                            dest: cell,
+                            base: Operand::Value(block),
+                            offset,
+                        });
+                        let value = self.typed_operand(ctx, capture, layout, insts)?;
+                        insts.push(ExtInst::StoreAt {
+                            address: Operand::Value(cell),
+                            layout: layout.clone(),
+                            value,
+                        });
+                        insts.push(ExtInst::StoreAt {
+                            address: Operand::Value(slot),
+                            layout: pointer.clone(),
+                            value: Operand::Value(cell),
+                        });
+                    }
+                    _ => {
+                        let value = self.typed_operand(ctx, capture, &pointer, insts)?;
+                        insts.push(ExtInst::StoreAt {
+                            address: Operand::Value(slot),
+                            layout: pointer.clone(),
+                            value,
+                        });
+                    }
+                }
+            }
+            Operand::Value(block)
+        } else {
+          match captures.is_empty() {
             true => Operand::Null,
             false => {
                 let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
@@ -7999,6 +8082,7 @@ impl<'a> Lowerer<'a> {
                 }
                 Operand::Value(base)
             }
+          }
         };
 
         let base = ctx.value();

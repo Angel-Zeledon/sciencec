@@ -2,31 +2,31 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![window, row, width, size]))"
 ---
-Module `main` #1818 @10..78
-  Record `Window` #1819 @10..28
+Module `main` #2307 @10..78
+  Record `Window` #2308 @10..28
     generics
-      TypeParam `T` #1824 @0..1
-      ConstParam `N` #1825 @2..7
+      TypeParam `T` #2313 @0..1
+      ConstParam `N` #2314 @2..7
         kind: Int @2..5
     fields
-      Field `items` #1820 @10..21
+      Field `items` #2309 @10..21
         type: Path -> `Array` #18 @10..15
           generics
-            Path -> `T` #1824 @8..9
-  Alias `Row` #1821 @35..45
-    type: Path -> `Window` #1819 @35..41
+            Path -> `T` #2313 @8..9
+  Alias `Row` #2310 @35..45
+    type: Path -> `Window` #2308 @35..41
       generics
         Path -> `I64` #5 @29..32
         Const Int 4 @33..34
-  Const `WIDTH` #1822 @50..59
+  Const `WIDTH` #2311 @50..59
     type: Path -> `I64` #5 @46..49
     value: Int 768 @50..53
-  Fn `size` #1823 @60..78
+  Fn `size` #2312 @60..78
     generics
-      ConstParam `N` #1826 @65..70
+      ConstParam `N` #2315 @65..70
         kind: Int @65..68
     ret: Path -> `I64` #5 @71..74
     body: Block @75..78
-      tail: Path -> `N` #1826 @75..76
+      tail: Path -> `N` #2315 @75..76
 --- diagnostics ---
 (none)
