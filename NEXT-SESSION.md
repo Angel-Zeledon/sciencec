@@ -407,7 +407,8 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
 **Huecos del núcleo todavía abiertos:**
 1. `Array.clone()` de elementos que poseen algo distinto de `String`
    (`ScienceTypeInfo` no lleva una función de clonado por elemento);
-2. `match` sobre un `(&T)?` estrechado falla en el backend;
+2. ~~`match` sobre un `(&T)?` estrechado falla en el backend~~ (cerrado:
+   `lower_match` desreferencia el nicho);
 3. (cerrado) `fail(c, "…", c.pos)` ya compila: MIR copia las lecturas de
    campo a temporales antes de la activación. Reasignar un préstamo compartido
    (`current be next`) ya funcionaba; reasignar un `&mut` es decisión de

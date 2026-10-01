@@ -2260,6 +2260,30 @@ fn a_padded_keys_glue_loads_its_fields_and_never_its_padding() {
     }
 }
 
+/// `match` on a narrowed `(&T)?` reads the **referent's** tag. The place is
+/// still the nullable (a niche: the option and the borrow are one word), so
+/// the scrutinee needs one `Deref` before the discriminant read; without it
+/// the backend refused with SC0400 "a discriminant read of a value that is not
+/// a `choice`".
+#[cfg(feature = "llvm")]
+#[test]
+fn match_on_a_narrowed_borrowed_nullable_reads_the_referents_tag() {
+    let source = "choice Shape:\n    Dot\n    Line(Int)\n\n\
+                  def main():\n    let xs be [Shape.Line(3), Shape.Dot]\n    \
+                  let c be xs.get(0)\n    if c?:\n        match c:\n            \
+                  Dot: print(\"dot\")\n            Line(n): print(n)\n    \
+                  let d be xs.get(1)\n    if d?:\n        match d:\n            \
+                  Dot: print(\"dot\")\n            Line(n): print(n)\n";
+    let file = scratch("match_narrowed_borrow.science", source.as_bytes());
+    let run = sciencec(&["test", &file]);
+    run.succeeded();
+    assert!(
+        run.stdout.starts_with("3\ndot\n"),
+        "each narrowed borrow must match on its own variant:\n{}",
+        run.stdout
+    );
+}
+
 /// Every line of the function `needle` defines, from its `define` to its
 /// closing brace.
 #[cfg(feature = "llvm")]

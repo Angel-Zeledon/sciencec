@@ -2409,7 +2409,13 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         span: Span,
     ) -> BlockId {
         let (place, mut block) = match self.as_place(scrutinee, block) {
-            Some((place, block)) => (self.narrowed_place(place, scrutinee), block),
+            Some((place, block)) => {
+                // A narrowed `(&T)?` is a niche: the place is still the
+                // nullable, the scrutinee is the borrow, and the tag to read
+                // is the referent's, so step through the pointer first.
+                let place = self.narrowed_place(place, scrutinee);
+                (self.deref_to_hole(place, scrutinee), block)
+            }
             None => {
                 let ty = self.thir.ty(scrutinee);
                 let temp = self.temp(ty, span, block);
