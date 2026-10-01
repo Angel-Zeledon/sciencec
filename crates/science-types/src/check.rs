@@ -2014,7 +2014,16 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Unary { op, operand } => self.unary(*op, operand, span),
             hir::ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, span),
             hir::ExprKind::Cast { expr: operand, ty } => {
-                let operand = self.synth(operand).id;
+                // **`as` reads its operand, as every other operator on §4.6's
+                // table does**, so a `Copy` borrow is read out first: `byte as
+                // Int`, where `byte` came out of `Array[U8].get` as a `&U8`,
+                // reached the backend as a cast *from a pointer* and was
+                // refused there (`SC0400`, "a cast from `&U8` to `I64`, which
+                // §5.1 does not define") after this phase had accepted it.
+                // The bundled `time` module's RFC 3339 parser is the program
+                // that found it.
+                let synthesized = self.synth(operand);
+                let operand = self.read_value(synthesized, span).id;
                 let ty = self.lower_ty(ty);
                 let id = self.body.push_expr(ExprKind::Cast { operand }, ty, span);
                 Typed { id, ty: InferTy::Known(ty) }

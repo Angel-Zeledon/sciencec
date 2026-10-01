@@ -1401,6 +1401,21 @@ fn a_tuple_after_an_unsafe_block_is_not_a_call_on_it() {
     ));
 }
 
+/// The same for a binary operator, one row out. `-1` on the line after an
+/// `if` block began the tail of the function and was read as `(if …) - 1`:
+/// `-` is both binary and prefix, so the climb in `parse_binary` took it as
+/// the first and subtracted from the `if`. The tail must be `Unary -`, alone.
+#[test]
+fn a_negative_line_after_a_block_is_not_a_subtraction_from_it() {
+    insta::assert_snapshot!(parse_body(
+        "def sign(x: Int) -> Int:
+    if x > 0:
+        return 1
+    -1
+"
+    ));
+}
+
 /// The fix keys on the `Dedent`, not on which primary was parsed, so a chain
 /// broken over several lines must still be one expression.
 ///

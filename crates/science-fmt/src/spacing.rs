@@ -215,6 +215,11 @@ impl Spacing {
                     at_line_start = true;
                     in_use = false;
                     depth = 0;
+                    // A line break ends the expression it follows, so a `-`
+                    // that begins the next line is unary. Keeping `previous`
+                    // across it read `return 1` / `-1` as a subtraction and
+                    // wrote `- 1`, which `sciencec fmt` then never undid.
+                    previous = None;
                     continue;
                 }
                 K::Minus | K::Amp => unary[i] = !previous.is_some_and(ends_expression),
@@ -359,5 +364,20 @@ mod tests {
             .map(|(i, _)| spacing.unary[i])
             .collect();
         assert_eq!(minuses, vec![true, false, true]);
+    }
+
+    #[test]
+    fn a_minus_that_begins_a_line_is_unary() {
+        use science_diagnostics::FileId;
+        let source = "def sign(x: Int) -> Int:
+    if x > 0:
+        return 1
+    -1
+";
+        let (tokens, _) = science_lexer::lex(FileId(0), source);
+        let spacing = Spacing::of(&tokens);
+        let minus = tokens.iter().position(|t| t.kind == K::Minus).expect("a minus");
+        assert!(spacing.unary[minus]);
+        assert!(spacing.glued_at(&tokens, minus + 1));
     }
 }

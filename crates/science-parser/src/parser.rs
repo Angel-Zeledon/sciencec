@@ -4038,6 +4038,11 @@ impl<'t> Parser<'t> {
     fn parse_range(&mut self) -> Expr {
         let start = self.span();
         let lhs = self.parse_binary(1);
+        // A block closes its line here as on every other row: see
+        // `just_closed_an_indented_block`.
+        if self.just_closed_an_indented_block() {
+            return lhs;
+        }
         let inclusive = match self.peek() {
             TokenKind::DotDot => false,
             TokenKind::DotDotEq => true,
@@ -4063,6 +4068,16 @@ impl<'t> Parser<'t> {
         let mut lhs = self.parse_cast();
         while let Some((op, prec, width)) = self.peek_binary_op() {
             if prec < min_prec {
+                break;
+            }
+            // **The postfix row's rule, one row out.** An operand that closed
+            // an indented block ended its line, so the operator at the cursor
+            // starts the *next* statement: `if x > 0:` / `return 1` / `-1`
+            // read as `(if …) - 1`, a subtraction from an `if`, and the type
+            // checker reported the `if` as `()` where an `I64` was wanted.
+            // `-` is the operator that bites, being the only one that also
+            // begins an expression. See `just_closed_an_indented_block`.
+            if self.just_closed_an_indented_block() {
                 break;
             }
             // A pre-revision comparison phrase is reported here rather than
@@ -4177,7 +4192,7 @@ impl<'t> Parser<'t> {
     fn parse_cast(&mut self) -> Expr {
         let start = self.span();
         let mut expr = self.parse_unary();
-        while self.eat(&TokenKind::As).is_some() {
+        while !self.just_closed_an_indented_block() && self.eat(&TokenKind::As).is_some() {
             let ty = self.parse_type();
             let span = start.merge(self.last_text_span());
             expr = Expr { kind: ExprKind::Cast { expr: Box::new(expr), ty }, span };

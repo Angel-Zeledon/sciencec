@@ -1,0 +1,17 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+assertion_line: 1410
+expression: "parse_body(\"def sign(x: Int) -> Int:\n    if x > 0:\n        return 1\n    -1\n\")"
+---
+Block @29..62
+  If @29..55
+    cond: Binary `>` @32..37
+      lhs: Path `x` @32..33
+      rhs: Int 0 @36..37
+    then: Block @47..55
+      Return @47..55
+        value: Int 1 @54..55
+  tail: Unary `-` @60..62
+    Int 1 @61..62
+--- diagnostics ---
+(none)

@@ -467,6 +467,7 @@ mod panic;
 mod stdout;
 mod string;
 mod text;
+mod time;
 
 pub use abi::*;
 pub use array::*;
@@ -482,3 +483,4 @@ pub use os::*;
 pub use panic::*;
 pub use string::*;
 pub use text::*;
+pub use time::*;

@@ -292,12 +292,13 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         assert!(name.starts_with("science_"), "`{name}` breaks §8's one-prefix rule");
     }
 
-    // **The second caller.** `science-rt/src/file.rs`'s three and
-    // `science-rt/src/os.rs`'s five are called by the bundled `io` and `os`
-    // modules' `unsafe extern "C":` blocks — Science source, not emitted
-    // code — so they are not `RUNTIME` rows and must not be: `RUNTIME` is what
-    // codegen may call, and codegen never calls these. Named here so that the
-    // next symbol nothing declares still fails.
+    // **The second caller.** `science-rt/src/file.rs`'s three,
+    // `science-rt/src/os.rs`'s five and `science-rt/src/time.rs`'s three are
+    // called by the bundled `io`, `os` and `time` modules' `unsafe extern
+    // "C":` blocks — Science source, not emitted code — so they are not
+    // `RUNTIME` rows and must not be: `RUNTIME` is what codegen may call, and
+    // codegen never calls these. Named here so that the next symbol nothing
+    // declares still fails.
     const LIBRARY: &[&str] = &[
         "science_file_create",
         "science_file_write",
@@ -307,6 +308,9 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         "science_os_argument_copy",
         "science_os_variable_length",
         "science_os_variable_copy",
+        "science_time_monotonic_nanos",
+        "science_time_unix_nanos",
+        "science_time_sleep_nanos",
     ];
     // And each of them is declared by a bundled module: a symbol on this list
     // that no module calls any more would be dead code this exemption hid.
