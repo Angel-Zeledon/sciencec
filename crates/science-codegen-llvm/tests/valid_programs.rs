@@ -267,3 +267,28 @@ def main():
         "xxx\nfoobar\nfoo\nliteral\nhello, bar!\n9\n"
     );
 }
+
+/// `Stack[String](items: ...)`: a record built with one explicit type argument.
+/// `Stack[String]` and `xs[i]` are the same tokens, so the parser read it as a
+/// subscript and refused the construction with `SC0110`; a named-argument list
+/// right after the brackets is what marks them as type arguments.
+#[test]
+fn a_record_built_with_explicit_type_arguments_runs() {
+    let source = "type Stack[T]:
+    items: Array[T]
+    label: String
+
+def main():
+    let mutable s be Stack[String](items: Array[String].new(), label: \"words\")
+    s.items.push(\"a\")
+    s.items.push(\"b\")
+    print(s.items.length())
+    print(s.label)
+    let t be Stack[Int](items: [1, 2, 3], label: \"n\")
+    print(t.items.length())
+    let xs be [5, 6]
+    let i be 1
+    print(xs[i])
+";
+    assert_eq!(prints("explicit_record_args", source), "2\nwords\n3\n6\n");
+}

@@ -1326,6 +1326,17 @@ fn a_parenthesised_name_still_constructs() {
     );
 }
 
+/// `Stack[String](items: xs)`: one bracketed argument followed by named
+/// arguments. Without a comma the brackets look like a subscript, and the
+/// construction was refused with `SC0110`; the named list that follows is what
+/// says they are a record's type arguments.
+#[test]
+fn a_record_constructed_with_explicit_type_arguments() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "def f():\n    let s be Stack[String](items: xs)\n    let v be xs[i]\n"
+    ));
+}
+
 /// A token that can neither start nor continue an expression is reported once,
 /// and the next statement still parses.
 #[test]

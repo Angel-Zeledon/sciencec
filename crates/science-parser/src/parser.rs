@@ -3077,6 +3077,39 @@ impl<'t> Parser<'t> {
         }
     }
 
+    /// Whether the brackets at the cursor are closed by a `]` that is
+    /// followed by a named-argument list: `Stack[String](items: xs)`.
+    ///
+    /// **Named arguments are the evidence a lone subscript lacks.** A value
+    /// subscripted by one name is `xs[i]`, and nothing after it can be a
+    /// record construction, because only a record's name takes `(field: v)`
+    /// and an indexed element is not one. So `Name[Arg](field: ...)` has one
+    /// reading: `Arg` is a type argument to the record `Name`, and the
+    /// brackets are read as generic arguments, as a comma already settles for
+    /// `Map[String, Int]`. Same scan as [`Self::brackets_hold_a_list`]: no
+    /// token is consumed.
+    fn brackets_precede_named_args(&self) -> bool {
+        let mut depth = 0usize;
+        let mut at = 0usize;
+        loop {
+            match self.peek_ahead(at) {
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::RBracket => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return matches!(self.peek_ahead(at + 1), TokenKind::LParen)
+                            && matches!(self.peek_ahead(at + 2), TokenKind::Ident(_))
+                            && matches!(self.peek_ahead(at + 3), TokenKind::Colon);
+                    }
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
     fn parse_generic_args(&mut self) -> Vec<Type> {
         self.advance(); // `[`
         let mut args = Vec::new();
@@ -4445,7 +4478,10 @@ impl<'t> Parser<'t> {
                 // shape `ExprKind::Field` already has, two arms up: a field
                 // access whose base is a module is a path, and this arm's
                 // neighbour already rewrites it.
-                TokenKind::LBracket if instantiable_path(&expr) && self.brackets_hold_a_list() => {
+                TokenKind::LBracket
+                    if instantiable_path(&expr)
+                        && (self.brackets_hold_a_list() || self.brackets_precede_named_args()) =>
+                {
                     let args = self.parse_generic_args();
                     let end = self.last_text_span();
                     if let ExprKind::Path(path) = &mut expr.kind {
