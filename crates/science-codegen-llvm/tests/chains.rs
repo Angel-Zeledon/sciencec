@@ -628,8 +628,9 @@ fn an_empty_source_gives_every_terminal_its_empty_answer() {
 /// `first()` is §1.4's top-one: the `1` is returned, the `4`, `3` and `2` it
 /// did not return are dropped when the statement ends. `take(1)` after a
 /// descending sort pops the `4`, pops the `3` and drops it at the limit, and
-/// the `1` and `2` the loop never reached go with the buffer. (The `dropped 1`
-/// after `top 1` is the `if top?:` narrowing's, which does it without a sort.)
+/// the `1` and `2` the loop never reached go with the buffer. `top` itself is
+/// a binding of `main` and is dropped when `main` ends: reading its field
+/// inside `if top?:` no longer moves the payload out and releases it early.
 #[test]
 fn a_terminal_after_the_barrier_pops_an_owned_buffer() {
     assert_eq!(
@@ -657,8 +658,8 @@ def main():
     print(\"end\")
 ",
         ),
-        "dropped 4\ndropped 3\ndropped 2\nafter first\ntop 1\ndropped 1\n\
-         dropped 3\ndropped 1\ndropped 2\nbest 4\nend\ndropped 4\n"
+        "dropped 4\ndropped 3\ndropped 2\nafter first\ntop 1\n\
+         dropped 3\ndropped 1\ndropped 2\nbest 4\nend\ndropped 4\ndropped 1\n"
     );
 }
 
