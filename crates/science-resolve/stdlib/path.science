@@ -1,0 +1,279 @@
+# path — `data-io.md` §7's `Path`, Level 2 here: `use path (Path)`.
+#
+# A path is its own type and not a `String`, for §7's three reasons: separator
+# handling is platform business and belongs behind a method; *"a function
+# taking `borrowed Path` cannot be handed a column name or a URL by accident"*;
+# and F2's object-store paths need somewhere to live that does not break every
+# signature. Bundled and reached the way `io` is (`science_resolve::stdlib`).
+#
+# Ten decisions are this file's, and each is written where it applies:
+#
+# - `Path` lives here, at Level 2, where `stdlib-core.md` §5.1 puts it at Level
+#   1 with its manipulation methods. `io.science`'s reason for `File`, word for
+#   word: the prelude is declared as data and cannot hold a body, and every
+#   method below is a body. Moving it back is a `use` line in every program
+#   that names it, the day the prelude can hold Science.
+# - `read_file`, `write_file`, `io`'s `File.create` and every function of `fs`
+#   take `&String`, where §5.2 decides `&Path`, and they keep it: Science has
+#   no overloading, so a `&Path` form would be a second name, which §5.2
+#   rejects in so many words. A caller writes `read_file(p.text())`, which is
+#   §7's own `text()` and is exactly as long as the conversion §5.2's `SC0257`
+#   would insert in the other direction. The day those signatures change, a
+#   `.text()` at each call site is the whole migration.
+# - **POSIX only.** The separator is `/` and nothing else, so on Windows a
+#   `\` is an ordinary character of a name and `C:\data` is a relative path
+#   with no separator in it. F0 builds for macOS and Linux; §7's *"normalized
+#   separators"* on Windows is a `cfg` question this file leaves open rather
+#   than answers with a guess.
+# - **Normalised means separators and nothing else.** `Path.from` collapses a
+#   run of `/` into one and drops a trailing `/`, so `a//b/` is `a/b`; the
+#   root `/` stays `/`. `.` and `..` are kept as written and never resolved:
+#   `a/../b` is not `b` when `a` is a symbolic link, and only the filesystem
+#   knows whether it is. A leading `//`, which POSIX leaves to the platform,
+#   is collapsed like any other.
+# - The text is the field `value`, which a program can read and can write a
+#   record literal for: the language has no private field yet, so
+#   `Path(value: "a//b")` builds a path `Path.from` would not have, and the
+#   methods answer from its text as written — its `parent()` is `a/`. Use
+#   `Path.from`, the one constructor this file documents; a private field is
+#   the fix, the day the language has one. The field is `value` and not
+#   `text` so that `p.text()` and `p.text` are not two spellings a reader
+#   must tell apart.
+# - **The empty path is the working directory.** `Path.from("")` is `""`,
+#   which `parent()` of a one-component path returns, and which `join` treats
+#   as nothing to the left. Asked of the filesystem it is asked as `.`, so
+#   `exists`, `is_directory`, `size` and `absolute` agree with `parent()` about
+#   what it names.
+# - The component rules are Rust's `std::path`, where §7 gives none: `join`
+#   with an absolute right side replaces the left; `name()` is the last
+#   component, and `null` for `/`, `""`, `.` and `..`, none of which names an
+#   entry of its own; the extension is what follows the last `.` of the name
+#   unless that `.` is its first byte, so `.hidden` has none and
+#   `file.tar.gz`'s is `gz`; and `with_extension("")` removes it.
+# - `absolute()` is lexical: the working directory joined with the path,
+#   without resolving `..` or a symbolic link — `std::path::absolute`'s rule.
+#   Resolving them is `canonicalize`, which §7 does not have, and which fails
+#   for a path that does not exist yet, the usual case for an output file.
+# - `absolute()` and `size()` fail with `io`'s `FileError` behind `Error?`,
+#   where §7 names `IoError` — `fs.science`'s reason: nothing here can build
+#   an `IoError`. `exists()` and `is_directory()` answer `false` for anything
+#   they cannot see, a permission refusal included, as §7's `-> Bool` says.
+# - `Path implements Ord` by byte order, which is code-point order for UTF-8
+#   and `fs.list_directory`'s order. Its method is `less`, the name the
+#   corpus gives it, because `Ord` declares none. **`a < b` on two paths does
+#   not build yet** — the backend lowers no user `Ord` to an operator, and
+#   refuses `<` on a `String` too (`SC0400`) — so the order is
+#   `a.less(&b)` until it does.
+
+use io (FileError)
+use fs (current_directory)
+
+# `science-rt`'s `fs.rs`, the same convention as `fs.science`'s block: a
+# negative result is `-(code + 1)`. `kind` answers `1` for a file, `2` for a
+# directory and `3` for anything else that is there.
+unsafe extern "C" library "science-rt":
+    def science_fs_kind(path: ffi.Span[U8], length: I64) -> I64
+    def science_fs_size(path: ffi.Span[U8], length: I64) -> I64
+
+# --- Path ---------------------------------------------------------------------
+
+# A filesystem path: UTF-8, with its separators normalised (see the header).
+# The text is reached through `text()`; build one with `Path.from`, which is
+# what normalises it.
+public type Path:
+    value: String
+
+# The byte offset of the last `/` in `text`, or `null` when there is none. A
+# `/` is one byte that never occurs inside a multi-byte character, so the
+# offset is always on a character boundary and `slice` at it cannot fail.
+def last_separator(text: &String) -> Int?:
+    let bytes be text.bytes()
+    let mutable found: Int? be null
+    for index in 0..bytes.length():
+        if bytes[index] is 47:
+            found be index
+    found
+
+# The byte offset of the last `.` in `name`, by `last_separator`'s argument.
+def last_dot(name: &String) -> Int?:
+    let bytes be name.bytes()
+    let mutable found: Int? be null
+    for index in 0..bytes.length():
+        if bytes[index] is 46:
+            found be index
+    found
+
+# `text[range]`, where `range` is known to lie on character boundaries.
+def cut(text: &String, range: Range[Int]) -> String:
+    let piece, err be text.slice(range)
+    if err?:
+        panic("path: a separator offset was not on a character boundary")
+    piece
+
+# `text` with every run of `/` made one and a trailing `/` dropped; `/` alone
+# stays `/`.
+def normalised(text: &String) -> String:
+    let mutable out be String.new()
+    if text.starts_with("/"):
+        out.push_str("/")
+    let mutable first be true
+    for piece in text.split("/"):
+        if piece.is_empty():
+            continue
+        if not first:
+            out.push_str("/")
+        out.push_str(&piece)
+        first be false
+    out
+
+Path has:
+    # `text` as a path, its separators normalised: `a//b/` is `a/b`.
+    public def from(text: &String) -> Path:
+        Path(value: normalised(text))
+
+    # The path's text, to hand to a function that takes a `String` —
+    # `read_file(p.text())` (see the header).
+    public def text(self) -> &String:
+        &self.value
+
+    # `part` appended as one or more components: `Path.from("a").join("b/c")`
+    # is `a/b/c`. An absolute `part` replaces the path, and an empty one
+    # leaves it as it is.
+    public def join(self, part: &String) -> Path:
+        if part.starts_with("/") or self.value.is_empty():
+            return Path.from(part)
+        if part.is_empty():
+            return Path(value: self.value.clone())
+        let mutable joined be self.value.clone()
+        joined.push_str("/")
+        joined.push_str(part)
+        Path.from(&joined)
+
+    # Everything before the last component, or `null` when there is no last
+    # component to remove: `a/b` gives `a`, `/a` gives `/`, `a` gives the
+    # empty path, and `/` and `""` give `null`. `..` is a component like any
+    # other, so `a/..` gives `a`.
+    public def parent(self) -> Path?:
+        if self.value.is_empty() or self.value is "/":
+            return null
+        let at be last_separator(&self.value)
+        if at?:
+            if at is 0:
+                return Path(value: "/")
+            return Path(value: cut(&self.value, 0..at))
+        Path(value: "")
+
+    # The last component, or `null` for `/`, `""`, `.` and `..`.
+    public def name(self) -> String?:
+        let mutable last be self.value.clone()
+        let at be last_separator(&self.value)
+        if at?:
+            last be cut(&self.value, at + 1..self.value.length())
+        if last.is_empty() or last is "." or last is "..":
+            return null
+        last
+
+    # The name without its extension: `file.tar.gz` gives `file.tar`, and
+    # `.hidden`, which has no extension, gives `.hidden`.
+    public def stem(self) -> String?:
+        let name be self.name()
+        if name?:
+            let dot be last_dot(&name)
+            if dot?:
+                if dot > 0:
+                    return cut(&name, 0..dot)
+            return name
+        null
+
+    # What follows the last `.` of the name, or `null` when there is no such
+    # `.` past its first byte: `file.tar.gz` gives `gz`, `.hidden` and `README`
+    # give `null`, and `a.` gives the empty string.
+    public def extension(self) -> String?:
+        let name be self.name()
+        if name?:
+            let dot be last_dot(&name)
+            if dot?:
+                if dot > 0:
+                    return cut(&name, dot + 1..name.length())
+        null
+
+    # The path with its extension replaced by `extension`, added when it has
+    # none, and removed when `extension` is empty: `a/b.txt` with `csv` is
+    # `a/b.csv`. A path with no name — `/`, `""`, `..` — is returned as it is.
+    public def with_extension(self, extension: &String) -> Path:
+        let stem be self.stem()
+        if stem?:
+            let mutable out be String.new()
+            let at be last_separator(&self.value)
+            if at?:
+                out.push_str(&cut(&self.value, 0..at + 1))
+            out.push_str(&stem)
+            if not extension.is_empty():
+                out.push_str(".")
+                out.push_str(extension)
+            return Path.from(&out)
+        Path(value: self.value.clone())
+
+    # Whether the path starts at the root.
+    public def is_absolute(self) -> Bool:
+        self.value.starts_with("/")
+
+    # The working directory joined with the path, or the path itself when it
+    # is already absolute. Lexical: `..` and symbolic links are left alone.
+    public def absolute(self) -> (Path, Error?):
+        if self.is_absolute():
+            return (Path(value: self.value.clone()), null)
+        let directory, err be current_directory()
+        if err?:
+            return (Path(value: self.value.clone()), err)
+        (Path.from(&directory).join(&self.value), null)
+
+    # Whether anything is at the path, following symbolic links.
+    public def exists(self) -> Bool:
+        let asked be self.asked()
+        unsafe: science_fs_kind(asked.bytes(), asked.length()) > 0
+
+    # Whether a directory is at the path, following symbolic links.
+    public def is_directory(self) -> Bool:
+        let asked be self.asked()
+        unsafe: science_fs_kind(asked.bytes(), asked.length()) is 2
+
+    # The size in bytes of what is at the path, following symbolic links.
+    public def size(self) -> (U64, Error?):
+        let asked be self.asked()
+        let status be unsafe: science_fs_size(asked.bytes(), asked.length())
+        if status < 0:
+            return (0, FileError(code: -status - 1))
+        (status as U64, null)
+
+    # The text the filesystem is asked about: the path, or `.` for the empty
+    # one (see the header).
+    def asked(self) -> String:
+        if self.value.is_empty():
+            return "."
+        self.value.clone()
+
+Path implements Clone:
+    def clone(self) -> Path:
+        Path(value: self.value.clone())
+
+Path implements Eq:
+    def eq(self, other: &Path) -> Bool:
+        self.value is other.value
+
+# Byte order (see the header): the first differing byte decides, and a prefix
+# comes first.
+Path implements Ord:
+    def less(self, other: &Path) -> Bool:
+        let mine be self.value.bytes()
+        let theirs be other.value.bytes()
+        for index in 0..mine.length():
+            if index >= theirs.length():
+                return false
+            if mine[index] is not theirs[index]:
+                return mine[index] < theirs[index]
+        mine.length() < theirs.length()
+
+Path implements Display:
+    def display(self, into: &mut Formatter):
+        into.raw(&self.value)

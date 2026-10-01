@@ -9,10 +9,11 @@
 #
 # Six decisions are this file's, and each is written where it applies:
 #
-# - Paths are `&String`, where `data-io.md` §7 writes `borrowed Path`: there is
-#   no `Path` yet, and `read_file`, `write_file` and `io`'s `File.create` take
-#   a `String` today. The day `Path` lands, every signature here changes its
-#   parameter type and nothing else.
+# - Paths are `&String`, where `data-io.md` §7 writes `borrowed Path`: `Path`
+#   is the bundled `path` module's and not the prelude's, and `read_file`,
+#   `write_file` and `io`'s `File.create` take a `String` today. A caller
+#   holding a `Path` writes `remove_file(p.text())`. The day `Path` is in the
+#   prelude, every signature here changes its parameter type and nothing else.
 # - The error is `io`'s `FileError`, where §7 names `IoError` — `io.science`'s
 #   own reason: the prelude declares no `IoError` variants, so nothing here can
 #   build one. It reads one sentence more than `io` needs, *"directory not
@@ -21,8 +22,9 @@
 #   IoError?)`: `write_file` and `File.close` already return the bare error,
 #   and a pair whose first half is `()` is that error with a word in front.
 # - `list_directory` returns **names**, not paths — `a.txt`, never `dir/a.txt`
-#   — because there is no `Path` to join them with, and a name is what a
-#   listing shows.
+#   — because a name is what a listing shows, and `Path` is a module of its
+#   own that `fs` does not make every caller import: `dir.join(&name)` is
+#   the path.
 # - `list_directory` is **sorted in byte order**: `reproducibility.md` G7, which
 #   applies `data-io.md` §7's argument for `glob` to it verbatim — a program
 #   whose input order is the filesystem's gives different output on a laptop

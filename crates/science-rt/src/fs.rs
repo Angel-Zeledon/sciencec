@@ -160,6 +160,65 @@ pub unsafe extern "C" fn science_fs_rename(from: *const u8, from_len: i64, to: *
     done(std::fs::rename(from, to))
 }
 
+/// What [`science_fs_kind`] answers for a file.
+pub const KIND_FILE: i64 = 1;
+/// What [`science_fs_kind`] answers for a directory.
+pub const KIND_DIRECTORY: i64 = 2;
+/// What [`science_fs_kind`] answers for anything else that is there — a
+/// device, a socket, a FIFO.
+pub const KIND_OTHER: i64 = 3;
+
+/// `Path.exists` and `Path.is_directory`, the bundled `path` module's: what
+/// is at `path[..len]` — [`KIND_FILE`], [`KIND_DIRECTORY`] or [`KIND_OTHER`] —
+/// or a negative status when nothing can be found there.
+///
+/// **Symbolic links are followed**, so a link to a directory is a directory
+/// and a dangling link is not found. That is what `exists` means in Rust's,
+/// Python's and POSIX `test -e`'s hands, and the one a program asking "can I
+/// open this" wants. **One call, not two**: `exists` and `is_directory` read
+/// the same `stat`, and the Science side asks the question it has.
+///
+/// # Safety
+///
+/// `path` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn science_fs_kind(path: *const u8, len: i64) -> i64 {
+    // SAFETY: forwarded from the caller.
+    let Some(path) = (unsafe { path_of(path, len) }) else {
+        return status(ScienceIoError::INVALID_DATA.0);
+    };
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => KIND_DIRECTORY,
+        Ok(metadata) if metadata.is_file() => KIND_FILE,
+        Ok(_) => KIND_OTHER,
+        Err(error) => status_of(&error),
+    }
+}
+
+/// `Path.size`: the length in bytes of what is at `path[..len]`, following
+/// symbolic links, or a negative status. A directory's size is whatever the
+/// operating system reports for it, which is not a sum of anything — `ls -l`'s
+/// number, passed through rather than refused, since refusing it would be a
+/// second `stat` and the same race [`science_fs_rename`] declines to move.
+///
+/// A length past `i64::MAX` cannot exist on any filesystem F0 runs on; it is
+/// clamped rather than allowed to read as a status.
+///
+/// # Safety
+///
+/// `path` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn science_fs_size(path: *const u8, len: i64) -> i64 {
+    // SAFETY: forwarded from the caller.
+    let Some(path) = (unsafe { path_of(path, len) }) else {
+        return status(ScienceIoError::INVALID_DATA.0);
+    };
+    match std::fs::metadata(path) {
+        Ok(metadata) => i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+        Err(error) => status_of(&error),
+    }
+}
+
 fn into_handle(entries: Vec<String>) -> i64 {
     Box::into_raw(Box::new(entries)) as i64
 }
@@ -175,8 +234,8 @@ unsafe fn entries<'a>(handle: i64) -> &'a [String] {
 /// `list_directory`: the names in `path[..len]`, as a handle, or a negative
 /// status.
 ///
-/// **Names, not paths.** `a.txt`, never `dir/a.txt`: there is no `Path` to
-/// join them with yet, and a name is what `ls` prints. `.` and `..` are not
+/// **Names, not paths.** `a.txt`, never `dir/a.txt`: a name is what `ls`
+/// prints, and the bundled `path` module's `join` makes the path. `.` and `..` are not
 /// entries (`read_dir` never yields them).
 ///
 /// **Sorted in byte order.** `reproducibility.md` G7: *"`list_directory`
@@ -328,6 +387,28 @@ mod tests {
             science_fs_list_close(handle);
         }
         Ok(names)
+    }
+
+    fn kind_and_size(path: &std::path::Path) -> (i64, i64) {
+        let path = path.to_str().expect("a UTF-8 scratch path");
+        // SAFETY: `path` is live for both calls.
+        unsafe {
+            (
+                science_fs_kind(path.as_ptr(), path.len() as i64),
+                science_fs_size(path.as_ptr(), path.len() as i64),
+            )
+        }
+    }
+
+    #[test]
+    fn a_file_a_directory_and_nothing_are_told_apart() {
+        let dir = scratch("kind");
+        std::fs::write(dir.join("five"), "12345").unwrap();
+        assert_eq!(kind_and_size(&dir.join("five")), (KIND_FILE, 5));
+        assert_eq!(kind_and_size(&dir).0, KIND_DIRECTORY);
+        let missing = status(ScienceIoError::NOT_FOUND.0);
+        assert_eq!(kind_and_size(&dir.join("missing")), (missing, missing));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -16,8 +16,10 @@
 # - The error type is `FileError`, where `data-io.md` §7 names `IoError`: this
 #   file cannot construct an `IoError`, whose variants the prelude does not
 #   declare. Both implement `Error` and read the same five sentences.
-# - `File.create` takes `&String`, not `data-io.md`'s `&Path`: there is no
-#   `Path` yet, and `read_file` and `write_file` take a `String` today.
+# - `File.create` takes `&String`, not `data-io.md`'s `&Path`: `Path` is the
+#   bundled `path` module's and not the prelude's, and `read_file` and
+#   `write_file` take a `String` today. A caller holding a `Path` writes
+#   `File.create(p.text())`.
 # - `BufferedWriter` flushes when it is dropped, and a failure there is not
 #   reported — a destructor has nowhere to report it. Call `flush()` to see it.
 #   Dropping without flushing losing the output silently is the alternative,
