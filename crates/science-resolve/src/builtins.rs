@@ -1403,10 +1403,8 @@ const BLOCKS: &[Block] = &[
     //   type §9 lists and the prelude does not have, the first a borrowed
     //   `String` in the middle of another, which has no `String` header of its
     //   own to point at (the reason `Lines` hands out owned lines).
-    // - `from_bytes` is **expressible today** — `&Array of U8` and `(String,
-    //   TextError?)` name nothing the prelude lacks, and a prelude type is a
-    //   valid receiver of an associated call — and no program calls it, so it
-    //   waits for one.
+    // - `from_bytes` was left out while no program called it. The bundled
+    //   `os` module does, and it is declared at the end of the block.
     //
     // `lines` and `bytes` joined for Gate C1: a file split into lines, and a
     // dump written through `Write.write(bytes: &Array[U8])`.
@@ -1539,6 +1537,20 @@ const BLOCKS: &[Block] = &[
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Pair(&F64, &Ty::Opt(&Ty::Name("TextError")))),
+            },
+            // §6.9's `def from_bytes(bytes: borrowed Array of U8) -> (String,
+            // TextError?)`, transcribed. It waited, as the note above this
+            // block said, for a program that calls it: the bundled `os`
+            // module is that program. A string leaving the runtime crosses
+            // the `extern` boundary as bytes copied into a Science-owned
+            // `Array of U8`, and this is the one door from there to a
+            // `String` that does not trust the bytes.
+            Method {
+                name: "from_bytes",
+                generics: &[],
+                recv: None,
+                params: &[("bytes", Ty::Ref(&Ty::App("Array", &[Ty::Name("U8")])))],
+                ret: Some(Ty::Pair(&STRING, &Ty::Opt(&Ty::Name("TextError")))),
             },
         ],
     },
@@ -2136,9 +2148,10 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // five and gives the reason for each:
     // `slice`/`lines`/`split` because they return
     // Level 1 types the prelude does not have, and `from_bytes`/`bytes`
-    // because no program in `examples/` calls either.
+    // because no program in `examples/` calls either. `from_bytes` retired
+    // from this list the day the bundled `os` module called it.
     ("String", &[
-        "slice", "lines", "split", "from_bytes", "bytes",
+        "slice", "lines", "split", "bytes",
         // `clone` retired from this list the day `INTERFACE_DECLS` gained
         // `Clone.clone`: §6.2's *"`.owned()` and `.clone()` are both written"*
         // is now true of the first half. `owned()` stays — it is

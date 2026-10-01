@@ -292,19 +292,31 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         assert!(name.starts_with("science_"), "`{name}` breaks §8's one-prefix rule");
     }
 
-    // **The second caller.** `science-rt/src/file.rs`'s three are called by
-    // the bundled `io` module's `unsafe extern "C":` block — Science source,
-    // not emitted code — so they are not `RUNTIME` rows and must not be:
-    // `RUNTIME` is what codegen may call, and codegen never calls these.
-    // Named here so that the next symbol nothing declares still fails.
-    const LIBRARY: &[&str] = &["science_file_create", "science_file_write", "science_file_close"];
-    // And each of them is declared where the note says: a symbol on this list
-    // that `io` stopped calling would be dead code this exemption hid.
-    let io = science_resolve::stdlib::source("io.science").expect("`io` is bundled");
+    // **The second caller.** `science-rt/src/file.rs`'s three and
+    // `science-rt/src/os.rs`'s five are called by the bundled `io` and `os`
+    // modules' `unsafe extern "C":` blocks — Science source, not emitted
+    // code — so they are not `RUNTIME` rows and must not be: `RUNTIME` is what
+    // codegen may call, and codegen never calls these. Named here so that the
+    // next symbol nothing declares still fails.
+    const LIBRARY: &[&str] = &[
+        "science_file_create",
+        "science_file_write",
+        "science_file_close",
+        "science_os_argument_count",
+        "science_os_argument_length",
+        "science_os_argument_copy",
+        "science_os_variable_length",
+        "science_os_variable_copy",
+    ];
+    // And each of them is declared by a bundled module: a symbol on this list
+    // that no module calls any more would be dead code this exemption hid.
+    // Every bundled module is searched, so the list does not have to say which
+    // module calls which.
     for symbol in LIBRARY {
+        let declaration = format!("def {symbol}(");
         assert!(
-            io.contains(&format!("def {symbol}(")),
-            "`{symbol}` is exempted as called by the bundled `io` module, which does not declare it"
+            science_resolve::stdlib::modules().any(|(_, source)| source.contains(&declaration)),
+            "`{symbol}` is exempted as called by a bundled module, and none declares it"
         );
     }
     let defined: Vec<String> =

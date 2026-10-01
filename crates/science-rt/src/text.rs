@@ -1,5 +1,6 @@
-//! `TextError`, and the two `String` methods that produce one:
-//! `parse_int(self) -> (I64, TextError?)` and `parse_float(self) -> (F64,
+//! `TextError`, and the three `String` methods that produce one:
+//! `parse_int(self) -> (I64, TextError?)`, `parse_float(self) -> (F64,
+//! TextError?)` and `from_bytes(bytes: borrowed Array of U8) -> (String,
 //! TextError?)` of `stdlib-core.md` §6.9.
 //!
 //! The layout follows `io.rs` exactly, for `io.rs`'s reasons: a payload-free
@@ -16,10 +17,10 @@ use crate::string::ScienceString;
 ///
 /// **One byte, payload-free, numbered in `stdlib-core.md` §7.4's declaration
 /// order**: `NotUtf8`, `NotACharacterBoundary`, `NotANumber`, `OutOfRange` are
-/// 0 to 3. Only the last two are produced, by the two parse entry points below;
-/// the first two belong to `String.from_bytes` and `String.slice`, which have
-/// no entry point yet and are numbered now so that they do not renumber these
-/// when they arrive.
+/// 0 to 3. The last two are produced by the two parse entry points below and
+/// the first by [`science_string_from_utf8`]; the second belongs to
+/// `String.slice`, which has no entry point yet and is numbered now so that it
+/// does not renumber the others when it arrives.
 ///
 /// # The reason
 ///
@@ -46,7 +47,8 @@ use crate::string::ScienceString;
 pub struct ScienceTextError(pub u8);
 
 impl ScienceTextError {
-    /// The bytes are not valid UTF-8. §7.4's `NotUtf8`; not produced yet.
+    /// The bytes are not valid UTF-8. §7.4's `NotUtf8`, from
+    /// [`science_string_from_utf8`].
     pub const NOT_UTF8: Self = Self(0);
     /// A byte offset falls inside a character. §7.4's `NotACharacterBoundary`;
     /// not produced yet.
@@ -262,6 +264,56 @@ pub unsafe extern "C" fn science_string_parse_float(text: *const ScienceString) 
     }
 }
 
+/// Science's `(String, TextError?)`, the return type of
+/// [`science_string_from_utf8`].
+///
+/// [`crate::ScienceStringAndIoError`]'s layout with the other error: `value`
+/// at 0, `error` at 24, thirty-two bytes aligned to eight — over the `sret`
+/// line on every F0 target, so it comes back through a hidden pointer
+/// everywhere, as `science_read_file`'s pair does. On the failing path `value`
+/// is the empty string, which allocates nothing.
+#[repr(C)]
+pub struct ScienceStringAndTextError {
+    /// The decoded string, or the empty string when `error` is present. Owned
+    /// by the caller either way.
+    pub value: ScienceString,
+    /// What went wrong, or null.
+    pub error: ScienceNullableTextError,
+}
+
+/// Science's `String.from_bytes(bytes: borrowed Array of U8) -> (String,
+/// TextError?)`, `stdlib-core.md` §6.9.
+///
+/// **Strict, never lossy.** Bytes that are not well-formed UTF-8 are
+/// [`ScienceTextError::NOT_UTF8`] and an empty string, which is §7.4's
+/// variant for exactly this; a replacement character is a decision about the
+/// caller's data that the caller did not take. A caller that wants the lossy
+/// form — the bundled `os` module, for a command line that is not UTF-8 — does
+/// its replacement before the bytes reach here, where it can say so.
+///
+/// The bytes are copied: the array stays the caller's.
+///
+/// # Safety
+///
+/// `bytes` must be a non-null, aligned pointer to a live `Array of U8`.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_from_utf8(bytes: *const crate::ScienceArray) -> ScienceStringAndTextError {
+    // SAFETY: the caller guarantees a live array, which owns `len` initialised
+    // one-byte elements at a non-null `ptr`.
+    let bytes = unsafe { std::slice::from_raw_parts((*bytes).ptr, (*bytes).len) };
+    match std::str::from_utf8(bytes) {
+        Ok(text) => ScienceStringAndTextError {
+            // SAFETY: `text` is valid UTF-8 of its own length.
+            value: unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) },
+            error: ScienceNullableTextError::null(),
+        },
+        Err(_) => ScienceStringAndTextError {
+            value: ScienceString::empty(),
+            error: ScienceNullableTextError::present(ScienceTextError::NOT_UTF8),
+        },
+    }
+}
+
 /// Whether an accepted float text spelled infinity out, rather than
 /// overflowing to it. After the sign, Rust's grammar starts a number with a
 /// digit or a `.` and a word with a letter, so the first byte decides.
@@ -354,6 +406,27 @@ mod tests {
         }
         assert_eq!(float("1e400"), (0.0, Some(ScienceTextError::OUT_OF_RANGE)));
         assert_eq!(float("-1e400"), (0.0, Some(ScienceTextError::OUT_OF_RANGE)));
+    }
+
+    fn from_bytes(bytes: &[u8]) -> (String, Option<ScienceTextError>) {
+        let array = crate::ScienceArray { ptr: bytes.as_ptr() as *mut u8, len: bytes.len(), cap: bytes.len() };
+        // SAFETY: `array` borrows `bytes`, live for the call, and is not freed.
+        let pair = unsafe { science_string_from_utf8(&array) };
+        // SAFETY: the runtime returned a valid string.
+        let text = unsafe { pair.value.as_str() }.to_string();
+        // SAFETY: freed once.
+        unsafe { crate::science_string_free(&pair.value as *const _ as *mut _) };
+        let error = (pair.error.present == SCIENCE_NULLABLE_PRESENT).then_some(pair.error.error);
+        (text, error)
+    }
+
+    #[test]
+    fn from_bytes_copies_utf8_and_refuses_anything_else_with_an_empty_string() {
+        assert_eq!(from_bytes(b""), (String::new(), None));
+        assert_eq!(from_bytes("héllo, 世界".as_bytes()), ("héllo, 世界".to_string(), None));
+        for bad in [&b"\xff"[..], b"ab\xc3", b"\xed\xa0\x80", b"\xc0\x80"] {
+            assert_eq!(from_bytes(bad), (String::new(), Some(ScienceTextError::NOT_UTF8)), "{bad:?}");
+        }
     }
 
     #[test]

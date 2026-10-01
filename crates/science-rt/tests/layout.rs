@@ -144,6 +144,15 @@ fn string_and_io_error_is_a_pair_with_both_fields_live() {
 }
 
 #[test]
+fn string_and_text_error_is_string_and_io_error_s_shape() {
+    // `String.from_bytes`'s pair: the same offsets, the other error byte.
+    assert_eq!(align_of::<ScienceStringAndTextError>(), align_of::<usize>());
+    assert_eq!(size_of::<ScienceStringAndTextError>(), 4 * WORD);
+    assert_eq!(offset_of!(ScienceStringAndTextError, value), 0);
+    assert_eq!(offset_of!(ScienceStringAndTextError, error), 3 * WORD);
+}
+
+#[test]
 fn text_error_is_one_byte_numbered_in_declaration_order() {
     // `stdlib-core.md` §7.4's four variants, in its order. The first two are not
     // produced yet and are numbered so that they will not renumber the last two.
@@ -251,6 +260,7 @@ fn every_aggregate_return_is_three_words_or_more() {
         ("science_array_new / with_capacity", std::mem::size_of::<ScienceArray>()),
         ("science_map_new", std::mem::size_of::<ScienceMap>()),
         ("science_read_file", std::mem::size_of::<ScienceStringAndIoError>()),
+        ("science_string_from_utf8", std::mem::size_of::<ScienceStringAndTextError>()),
     ] {
         assert!(
             size >= 3 * word,

@@ -9964,6 +9964,11 @@ impl<'a> Lowerer<'a> {
             // registers rather than LLVM's per-member split.
             ("String", "parse_int", "science_string_parse_int"),
             ("String", "parse_float", "science_string_parse_float"),
+            // §6.9's `from_bytes`, an associated call like `new`: the array
+            // is borrowed, so it arrives as its address, and the
+            // `(String, TextError?)` pair comes back through `sret` exactly
+            // as `science_read_file`'s does.
+            ("String", "from_bytes", "science_string_from_utf8"),
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),

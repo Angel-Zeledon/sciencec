@@ -1,4 +1,5 @@
-//! `String.parse_int` and `String.parse_float`, **built, linked, run**.
+//! `String.parse_int` and `String.parse_float`, **built, linked, run** — and
+//! `String.from_bytes`, the third producer of a `TextError`, at the end.
 //!
 //! # What these pin
 //!
@@ -244,4 +245,35 @@ fn a_text_error_prints_its_message() {
         "not a number\n0: not a number = not a number\nnumber out of range (0)\n0.0 <not a number>\n"
     );
     assert_eq!(ran.stderr, "not a number\n");
+}
+
+/// §6.9's `String.from_bytes`: well-formed UTF-8 becomes a `String` whose
+/// length is its bytes; anything else is `not valid UTF-8` and the empty
+/// string. Its `(String, TextError?)` is thirty-two bytes and comes back
+/// through `sret`, so the error is read from offset 24 of a slot the runtime
+/// wrote — a tag read from the wrong byte would print `false` for the second
+/// call.
+#[test]
+fn bytes_become_a_string_only_when_they_are_utf8() {
+    assert_eq!(
+        prints(
+            "from_bytes",
+            "def main():
+    let mutable bytes be Array[U8].new()
+    bytes.push(104)
+    bytes.push(195)
+    bytes.push(169)
+    let text, err be String.from_bytes(&bytes)
+    print(err?)
+    print(f\"[{text}] {text.length()}\")
+    bytes.push(255)
+    let bad, bad_err be String.from_bytes(&bytes)
+    if bad_err?:
+        print(bad_err.message())
+    print(f\"[{bad}] {bad.length()}\")
+    print(bytes.length())
+",
+        ),
+        "false\n[hé] 3\nnot valid UTF-8\n[] 0\n4\n"
+    );
 }

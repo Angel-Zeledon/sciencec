@@ -1,0 +1,106 @@
+# os — `stdlib-standard.md` §4, Level 2: `use os (args, env)`.
+#
+# The process's command line and environment, which is how a CLI starts at all
+# (`self-hosting.md` §5.4). Bundled like `io` and reached the same way: a
+# sibling `os.science` of the program's own is found first.
+#
+# Four decisions are this file's, and each is written where it applies:
+#
+# - `env(name)` is a function of `os`, where §4.6 writes `get(name)` in a
+#   module `os.env`, called as `os.env.get(…)`. That spelling needs the
+#   module-name form of `use` that §16's ask 14 says it assumes and nothing
+#   implements, and `use os.env (get)` would leave a bare `get` at the call
+#   site, which says nothing about what it gets. `env` is `get`'s signature
+#   under the name a caller would write. The cost is a rename the day `use os`
+#   alone can be written.
+# - Only `args` and `env`, of §4.4's thirteen. They are §5.4's two; `exit`,
+#   `run` and the rest arrive with a program that calls them.
+# - An argument or a value that is not UTF-8 arrives with U+FFFD in place of
+#   each invalid sequence, rather than being refused: `args` has no error
+#   channel, and a program that cannot start cannot print its usage either.
+#   `science-rt`'s `os.rs` states the cost — a non-UTF-8 file name does not
+#   round-trip.
+# - A variable name that cannot name a variable — empty, or holding `=` or
+#   NUL — is unset, so `env` answers `null` for it rather than failing.
+
+# `science-rt`'s five entry points, called from here and from nowhere else.
+# Each string leaves the runtime in two calls: its length in bytes, then a copy
+# into a buffer this file allocated at that length — a negative length is
+# *absent*. `os.rs` says why ownership never crosses.
+unsafe extern "C" library "science-rt":
+    def science_os_argument_count() -> I64
+    def science_os_argument_length(index: I64) -> I64
+    def science_os_argument_copy(
+        index: I64,
+        buffer: ffi.MutableSpan[U8],
+        capacity: I64
+    ) -> I64
+    def science_os_variable_length(name: ffi.Span[U8], length: I64) -> I64
+    def science_os_variable_copy(
+        name: ffi.Span[U8],
+        length: I64,
+        buffer: ffi.MutableSpan[U8],
+        capacity: I64
+    ) -> I64
+
+# --- the protocol's Science half -----------------------------------------------
+
+# `length` zero bytes, for the runtime to copy into.
+def zeroed(length: Int) -> Array[U8]:
+    let mutable buffer be Array[U8].new()
+    for index in 0..length:
+        buffer.push(0)
+    buffer
+
+# The bytes the runtime copied out, as a `String`. They are UTF-8 by
+# construction — the runtime replaced what was not — so a failure here is the
+# runtime breaking its half of the protocol, not anything a caller did.
+def decoded(bytes: &Array[U8]) -> String:
+    let text, err be String.from_bytes(bytes)
+    if err?:
+        panic("os: the runtime handed over bytes that are not UTF-8")
+    text
+
+# Argument `index`, which the caller has checked exists.
+def argument(index: Int) -> String:
+    let length be unsafe: science_os_argument_length(index)
+    let mutable buffer be zeroed(length)
+    let _whole be unsafe: science_os_argument_copy(index, &mut buffer, length)
+    decoded(&buffer)
+
+# --- the surface ----------------------------------------------------------------
+
+# The command line, argument zero included — §4.6's *"Answers `script-mode.md`
+# §10"*. Argument zero is what the program was started as, which is the
+# platform's to say and not always a path.
+public def args() -> Array[String]:
+    let mutable all be Array[String].new()
+    let count be unsafe: science_os_argument_count()
+    for index in 0..count:
+        all.push(argument(index))
+    all
+
+# The variable `name`, or `null` when it is unset. An empty variable is set and
+# empty (§4.6). The lookup is the platform's: case-sensitive on Unix and
+# case-insensitive on Windows, which §4.2 decides not to paper over.
+#
+# Another thread can change the variable between the length and the copy — only
+# through `setenv`, which §4.2 makes `unsafe` — so the copy reports the length
+# it found, and a disagreement starts over.
+public def env(name: &String) -> String?:
+    let mutable value: String? be null
+    loop:
+        let length be unsafe: science_os_variable_length(name.bytes(), name.length())
+        if length < 0:
+            break
+        let mutable buffer be zeroed(length)
+        let whole be unsafe: science_os_variable_copy(
+            name.bytes(),
+            name.length(),
+            &mut buffer,
+            length
+        )
+        if whole is length:
+            value be decoded(&buffer)
+            break
+    value

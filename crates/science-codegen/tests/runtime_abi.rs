@@ -203,6 +203,9 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // `String` back, three words. The two parse pairs beside it do **not**
     // join this list, which is System V's — sixteen bytes is two registers
     // there; see `the_sret_set_differs_between_targets_…` for Windows.
+    //
+    // `science_string_from_utf8` joins as `science_read_file` did: its
+    // `(String, TextError?)` is thirty-two bytes, MEMORY everywhere.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -219,6 +222,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_chars",
             "science_string_clone",
             "science_string_from_bytes",
+            "science_string_from_utf8",
             "science_string_lines",
             "science_string_new",
             "science_string_replace",
@@ -368,7 +372,13 @@ fn nothing_outside_the_table_is_callable() {
     // `science_io_error_message`'s reason; emitting the table here instead
     // would be a second copy that `print(err)` and `print(err.message())` could
     // disagree through.
-    assert_eq!(RUNTIME.len(), 86);
+    //
+    // **Eighty-seven.** `science_string_from_utf8` is §6.9's
+    // `String.from_bytes`. UTF-8 validation is a loop over the bytes, not an
+    // instruction sequence, and it is the only way a `String` is built from
+    // bytes a program did not write as a literal — the bundled `os` module's
+    // way back from the runtime.
+    assert_eq!(RUNTIME.len(), 87);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

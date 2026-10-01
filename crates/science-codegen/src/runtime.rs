@@ -157,6 +157,10 @@ pub enum RtAggregate {
     /// pair. On System V the value is an SSE eightbyte and the error an
     /// INTEGER one, so this is also the first mixed-class register return.
     F64AndTextError,
+    /// `{ value: ScienceString, error: ScienceNullableTextError }` —
+    /// `String.from_bytes`'s pair, [`RtAggregate::StringAndIoError`]'s shape
+    /// with the other error. Thirty-two bytes, `sret` on every convention.
+    StringAndTextError,
     /// `strings-formatting-and-docs.md` §3.1's `FormatSpec`: `{ fill: Char,
     /// align: Align?, sign: Sign?, width: Int?, precision: Int?, code: Code?,
     /// alternate: Bool, grouping: Grouping? }`, in that field order.
@@ -183,8 +187,8 @@ pub enum RtAggregate {
 }
 
 impl RtAggregate {
-    /// All sixteen, in a fixed order.
-    pub const ALL: [RtAggregate; 16] = [
+    /// All seventeen, in a fixed order.
+    pub const ALL: [RtAggregate; 17] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Lines,
@@ -199,6 +203,7 @@ impl RtAggregate {
         RtAggregate::NullableTextError,
         RtAggregate::I64AndTextError,
         RtAggregate::F64AndTextError,
+        RtAggregate::StringAndTextError,
         RtAggregate::FormatSpec,
         RtAggregate::Formatter,
     ];
@@ -220,6 +225,7 @@ impl RtAggregate {
             RtAggregate::NullableTextError => "ScienceNullableTextError",
             RtAggregate::I64AndTextError => "ScienceI64AndTextError",
             RtAggregate::F64AndTextError => "ScienceF64AndTextError",
+            RtAggregate::StringAndTextError => "ScienceStringAndTextError",
             RtAggregate::FormatSpec => "ScienceFormatSpec",
             RtAggregate::Formatter => "ScienceFormatter",
         }
@@ -352,6 +358,13 @@ impl RtAggregate {
                 "ScienceF64AndTextError",
                 vec![
                     Field::new("value", CgTy::Float(crate::layout::FloatTy::F64)),
+                    Field::new("error", RtAggregate::NullableTextError.cg_ty()),
+                ],
+            ),
+            RtAggregate::StringAndTextError => CgTy::strukt(
+                "ScienceStringAndTextError",
+                vec![
+                    Field::new("value", RtAggregate::String.cg_ty()),
                     Field::new("error", RtAggregate::NullableTextError.cg_ty()),
                 ],
             ),
@@ -646,7 +659,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 84 entry points. §2.6: *"They are the whole list."*
+/// The 85 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -858,6 +871,14 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // `science_string_push_io_error`'s twin for `TextError`, and for its
     // reason.
     RuntimeFn { symbol: "science_string_push_text_error", params: &[P, P], ret: RtRet::Void },
+    // **Eighty-seven: §6.9's `String.from_bytes`**, which validates UTF-8 —
+    // a loop over the bytes with a lookup per lead byte, a library and not an
+    // instruction sequence, so Decision 14's door again. Named `from_utf8`
+    // because `science_string_from_bytes` is already the trusting
+    // constructor a literal compiles to; this is the one that checks. Its
+    // pair is thirty-two bytes and comes back through `sret` everywhere,
+    // `science_read_file`'s case.
+    RuntimeFn { symbol: "science_string_from_utf8", params: &[P], ret: RtRet::Aggregate(RtAggregate::StringAndTextError) },
     // --- math.rs ---
     //
     // The fifty-sixth and fifty-seventh, and the first addition since
@@ -1205,9 +1226,15 @@ mod tests {
     /// duplicating `science-rt`'s table, so Decision 14 is met by the table
     /// living in one place. Both return `()`, so the `sret` list below did not
     /// move.
+    ///
+    /// **Eighty-seven**: `science_string_from_utf8`, §6.9's `String.from_bytes`,
+    /// the first `String` a program can build from bytes it did not write as a
+    /// literal. The bundled `os` module is its caller — a string out of the
+    /// runtime crosses an `extern` boundary as copied bytes — and UTF-8
+    /// validation is a loop, not an instruction sequence.
     #[test]
-    fn there_are_eighty_six_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 86, "§2.6: \"they are the whole list\"");
+    fn there_are_eighty_seven_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 87, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1345,6 +1372,10 @@ mod tests {
             "science_formatter_spec",
             "science_format_spec_default",
             "science_text_error_message",
+            // `String.from_bytes`'s pair: a `ScienceString` and two bytes,
+            // thirty-two in all — `science_read_file`'s case, on every
+            // convention.
+            "science_string_from_utf8",
         ];
         // **And for the first time the set differs by convention.**
         // `science_string_parse_int` and `science_string_parse_float` return

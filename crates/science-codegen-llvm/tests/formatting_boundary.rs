@@ -168,21 +168,25 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// `science_string_push_io_error` and `science_string_push_text_error`, the
 /// builder's pushes for the two error types, return `()` like every other
 /// `science_string_push_*`. The table grew and the derived set did not.
+///
+/// **And sixteen — or eighteen, with eighty-seven rows.** `science_string_from_utf8`, §6.9's
+/// `String.from_bytes`, returns `(String, TextError?)`: thirty-two bytes,
+/// `science_read_file`'s case, a hidden pointer on every convention.
 #[test]
-fn the_derived_sret_set_is_fifteen_and_seventeen_on_windows_and_has_moved_seven_times() {
+fn the_derived_sret_set_is_sixteen_and_eighteen_on_windows_and_has_moved_eight_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
         .map(|entry| runtime_signature(triple, entry))
         .filter(|sig| sig.ret.is_sret())
         .count();
-    let expected = if triple == Triple::X86_64WindowsMsvc { 17 } else { 15 };
+    let expected = if triple == Triple::X86_64WindowsMsvc { 18 } else { 16 };
     assert_eq!(
         indirect, expected,
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 86, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 87, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

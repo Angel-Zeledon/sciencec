@@ -29,7 +29,7 @@ use science_rt::{
     SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec, ScienceLines,
     ScienceF64AndTextError, ScienceFormatter, ScienceI64AndTextError, ScienceMap, ScienceMapInfo,
     ScienceNullableIoError, ScienceNullableTextError, ScienceString, ScienceStringAndIoError,
-    ScienceTextError, ScienceTypeInfo,
+    ScienceStringAndTextError, ScienceTextError, ScienceTypeInfo,
 };
 
 /// The host triple. These comparisons are only meaningful against the target
@@ -73,6 +73,7 @@ fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     agrees!(RtAggregate::NullableTextError, ScienceNullableTextError);
     agrees!(RtAggregate::I64AndTextError, ScienceI64AndTextError);
     agrees!(RtAggregate::F64AndTextError, ScienceF64AndTextError);
+    agrees!(RtAggregate::StringAndTextError, ScienceStringAndTextError);
     // §3.1's two. `FormatSpec` is the one row in `RtAggregate` that is also a
     // record a *Science program* declares fields on, so it has three layouts
     // to agree rather than two — `science-codegen`'s, `rustc`'s, and the one
@@ -129,6 +130,11 @@ fn every_field_is_where_decision_17_puts_it() {
     let pair = layout_of(host(), &RtAggregate::StringAndIoError.cg_ty());
     assert_eq!(pair.field_offset(0), Some(offset_of!(ScienceStringAndIoError, value) as u64));
     assert_eq!(pair.field_offset(1), Some(offset_of!(ScienceStringAndIoError, error) as u64));
+
+    // `String.from_bytes`'s, the same shape with `TextError?`.
+    let pair = layout_of(host(), &RtAggregate::StringAndTextError.cg_ty());
+    assert_eq!(pair.field_offset(0), Some(offset_of!(ScienceStringAndTextError, value) as u64));
+    assert_eq!(pair.field_offset(1), Some(offset_of!(ScienceStringAndTextError, error) as u64));
 }
 
 #[test]

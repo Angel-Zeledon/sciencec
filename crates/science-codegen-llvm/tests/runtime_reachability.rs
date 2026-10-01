@@ -273,6 +273,18 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   if text_err?:\n\
          \x20       print(f\"{n}: {text_err}\")\n",
     ),
+    // §6.9's `String.from_bytes`, `science_string_from_utf8`: the bundled
+    // `os` module's way from copied bytes back to a `String`, and
+    // `tests/text.rs`'s execution test, reduced.
+    (
+        "string_from_bytes",
+        "def main():\n\
+         \x20   let bytes be [104 as U8, 105 as U8]\n\
+         \x20   let text, err be String.from_bytes(bytes)\n\
+         \x20   if err?:\n\
+         \x20       print(err.message())\n\
+         \x20   print(text)\n",
+    ),
     // `arrays.rs`'s literal, `get`, `push` and `get_mutably` (the row
     // `tests/arrays.rs` itself does not exercise; `get_mutably` has an
     // execution test nowhere in this crate today, so this is that call's

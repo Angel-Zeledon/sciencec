@@ -1201,15 +1201,43 @@ def scratch() -> String:
     assert_eq!(checked.codes(), vec![532]);
 }
 
-/// And its pair: `from_bytes` is one of §6.9's nineteen, so an associated
-/// function the prelude has not transcribed is still silent.
+/// And its pair: an associated function a note gives and the prelude has not
+/// transcribed is still silent. `Map.from` is in `UNWRITTEN`; this test named
+/// `String.from_bytes` until the bundled `os` module called it and the
+/// prelude declared it — the test below is what that one became.
 #[test]
 fn an_untranscribed_associated_function_on_a_builtin_is_silent() {
     check(
         "\
+def scratch(pairs: &Array[Int]) -> Bool:
+    let counts be Map.from(pairs)
+    true
+",
+    )
+    .assert_clean();
+}
+
+/// `String.from_bytes`, transcribed: its result is §6.9's `(String,
+/// TextError?)` and not an error type that agrees with anything, so the
+/// `TextError?` half is an error a program must check — `SC0140` for leaving
+/// it unread — and the `String` half is a `String`.
+#[test]
+fn a_transcribed_associated_function_on_a_builtin_is_typed() {
+    let checked = check(
+        "\
 def scratch(bytes: &Array[U8]) -> Bool:
     let s, err be String.from_bytes(bytes)
     true
+",
+    );
+    assert_eq!(checked.codes(), vec![140]);
+    check(
+        "\
+def scratch(bytes: &Array[U8]) -> Int:
+    let s, err be String.from_bytes(bytes)
+    if err?:
+        return -1
+    s.length()
 ",
     )
     .assert_clean();
