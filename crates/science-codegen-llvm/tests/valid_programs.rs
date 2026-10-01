@@ -335,6 +335,7 @@ fn an_unannotated_let_closure_infers_its_parameter_from_its_body() {
     print(half(5.0))
 ";
     assert_eq!(prints("let_closure_infers", source), "7\n2.5\n");
+}
 
 /// `x.clone()` on an `Int` or a `Float`. The prelude listed `Int`/`Float` *and*
 /// `I64`/`F64` as implementing `Clone`, and they are one definition, so the
