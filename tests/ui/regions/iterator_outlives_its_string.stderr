@@ -1,0 +1,33 @@
+error[SC0333]: this expression is borrowed for longer than this expression exists
+  --> tests/ui/regions/iterator_outlives_its_string.science:14:15
+   |
+14 |     let it be "x\ny".lines()
+   |               -------------- this expression is borrowed here
+   |               ^^^^^^^^^^^^^^ ...and the borrow is still needed here, after the value is gone
+   |               -------------- this expression is declared here
+   |
+   = note: a borrow may not outlive what it points at (§6.1 rule 5); the value's storage ends at the close of the scope it was declared in
+   = note: there is no lifetime syntax to widen: the fix is to return an owned value or an index, which is what `examples/21_compiler_shapes.science` §1 does
+
+error[SC0333]: this expression is borrowed for longer than this expression exists
+  --> tests/ui/regions/iterator_outlives_its_string.science:19:15
+   |
+19 |     let it be "xyz".chars()
+   |               ------------- this expression is borrowed here
+   |               ^^^^^^^^^^^^^ ...and the borrow is still needed here, after the value is gone
+   |               ------------- this expression is declared here
+   |
+   = note: a borrow may not outlive what it points at (§6.1 rule 5); the value's storage ends at the close of the scope it was declared in
+   = note: there is no lifetime syntax to widen: the fix is to return an owned value or an index, which is what `examples/21_compiler_shapes.science` §1 does
+
+error[SC0330]: `s` is borrowed here and modified before the borrow ends
+  --> tests/ui/regions/iterator_outlives_its_string.science:26:9
+   |
+25 |     for l in s.lines():
+   |              --------- `s` is borrowed here, shared
+   |              --------- the first borrow is still needed here
+26 |         s be "zzzzzzzzzzzzzzzz"
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ ...and modified here, which needs it exclusively
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix

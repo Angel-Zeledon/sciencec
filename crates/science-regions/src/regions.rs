@@ -197,7 +197,68 @@ pub enum Step {
     /// conservative answer [`projection_path`] already gives a
     /// [`science_mir::mir::Projection::Index`].
     Payload,
+    /// The borrow a prelude iterator holds of the value it was made from —
+    /// [`SOURCE_BORROWING`]'s types, and §6 below is the decision.
+    ///
+    /// **A step and not the empty path**, for [`Step::Deref`]'s reason turned
+    /// around: an empty-path position is what `generate`'s `own_reference`
+    /// reads as *"this whole local is a reference"*, and a `Lines` is not one
+    /// — a borrow of it is a borrow of the iterator's own storage, not a
+    /// reborrow through it. No [`Projection`] produces this step, because the
+    /// pointer it stands for is not a field a program can name.
+    Source,
 }
+
+/// The prelude types whose value points into the receiver it was made from.
+///
+/// # 6. A prelude iterator borrows its source, and the type has to say so
+///
+/// `String.chars()` and `String.lines()` return a `science-rt` iterator that is
+/// `{ ptr, len, offset }` — a pointer **into the receiver's buffer**, not a
+/// copy of it (`science-rt`'s `string.rs`, `ScienceChars` and
+/// `ScienceLines`). Both are `DefKind::Primitive` with no declared fields, so
+/// §1's walk found no position in them, the call's result was related to
+/// nothing, and the receiver's loan died at the call. Three programs read
+/// freed memory through that hole: `let it be "x\ny".lines()` then `for l in
+/// it:` (the literal's temporary is dropped at the end of the `let`); `s be
+/// make()` between the `let` and the loop; and `s be …` inside `for l in
+/// s.lines():`'s own body, which needs no `let` at all.
+///
+/// > **Decision. Each of these types has one region position, at
+/// > [`Step::Source`], and a body-less method that returns one is declared to
+/// > borrow its receiver** (`crate::analyse_crate`, beside
+/// > `Declarations::borrow_sources`).
+///
+/// *Reason.* It is the model `collections-and-chains.md` §2.3 already states
+/// for every chain — *"a chain value therefore **is** a borrow of its source,
+/// wearing a long type"* — given to the two source types that had no
+/// `borrowed` anywhere for the walk to find. With the position, the receiver's
+/// loan lives exactly as long as the iterator value does, so every one of the
+/// three programs above becomes an ordinary region error rule 4 or rule 5
+/// already reports, and `for c in text.chars():` — the corpus's form — is
+/// untouched, because the loan dies with the loop. The two alternatives were
+/// worse: refusing a stored iterator in a `let` (§2.3's shape) leaves the
+/// third program, which has no `let`, reading freed memory; and an iterator
+/// that owns a copy of its string costs a copy of the whole text per call to
+/// close a hole the region checker exists to close for free.
+///
+/// *Cost.* A name list, read off [`Def::name`](science_resolve::hir::Def) on
+/// a builtin definition — the string comparison the HIR exists to abolish,
+/// confined to one constant. It closes when Decision 4 grows a way for a
+/// declaration to say *"this type holds a borrow"*. And returning an iterator
+/// over a parameter, `def lines_of(text: borrowed String) -> Lines`, now has a
+/// summary like any function returning a borrow — which is §2.4's
+/// *"libraries return sources"* working as written, not a new rule.
+///
+/// **Not in the list, each for a reason.** `Range` computes its items and
+/// points at nothing. `ArrayIterate` and the six adapters are a borrow of
+/// their source by §2.3 and have the same hole in principle; nothing can store
+/// one today — the backend refuses every one of them as a local with
+/// `SC0400` — and a `for` over one inline keeps its source alive for the
+/// loop. They join this list the day a chain can be stored. `Map` and `Set`
+/// iteration has no iterator value at all: `for entry in m:` holds the loop's
+/// own borrow of `m` (`science-mir`'s `lower` §7.1).
+pub const SOURCE_BORROWING: &[&str] = &["Chars", "Lines"];
 
 /// Where in a type a `borrowed` sits: the path of fields to reach it.
 ///
@@ -335,11 +396,28 @@ impl Context<'_> {
                     }
                 }
             }
+            // §6: a prelude iterator that points into its receiver.
+            DefKind::Primitive if self.borrows_its_source(def) => {
+                path.push(Step::Source);
+                out.positions.push(Position { path: path.clone(), mutable: false });
+                path.pop();
+            }
             // A primitive, an `extern union`, an interface named as a type:
             // nothing declared to walk into.
             _ => {}
         }
         seen.pop();
+    }
+
+    /// Whether `def` is one of [`SOURCE_BORROWING`]'s prelude types. §6.
+    pub fn borrows_its_source(&self, def: DefId) -> bool {
+        let found = self.defs.get(def);
+        found.is_builtin() && SOURCE_BORROWING.contains(&found.name.as_str())
+    }
+
+    /// Whether a type holds a [`Step::Source`] borrow anywhere in it. §6.
+    pub fn holds_a_source(&mut self, ty: Ty) -> bool {
+        self.positions(ty).positions.iter().any(|it| it.path.contains(&Step::Source))
     }
 
     /// A choice's variants, in definition order.
@@ -633,6 +711,11 @@ pub fn describe_path(defs: &DefTable, path: &Path) -> String {
             // Filtered out above, with `Deref`: no name in the source, the
             // same way a `Downcast` has none.
             Step::Payload => {}
+            // §6: no name in the source either, so it is described.
+            Step::Source => {
+                out.pop();
+                out.push_str("the text it iterates");
+            }
         }
     }
     out

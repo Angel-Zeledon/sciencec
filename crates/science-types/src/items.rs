@@ -307,6 +307,11 @@ const WANTED: &[&str] = &[
     // runtime's one-byte code, and holding the prelude's ids is the only way
     // to tell the two apart.
     "IoError", "TextError",
+    // `Chars` and `Lines`, which [`crate::ownership::needs_drop`] answers
+    // `false` about. Here for `Map`'s reason: a user's own `type Lines:` with
+    // a `String` field owns something, and only the prelude's id says which
+    // `Lines` is the runtime's `{ ptr, len, offset }`.
+    "Chars", "Lines",
 ];
 
 impl Prelude {

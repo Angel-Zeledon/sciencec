@@ -286,3 +286,99 @@ def go(counts: &mut Map[Int, Int]):
 ";
     assert_eq!(reported(source), Vec::<u16>::new());
 }
+
+// --- `Lines` and `Chars`: an iterator that borrows its string -----------------
+//
+// `regions`' §6. Both are `science-rt` cursors into their receiver's buffer,
+// and their types used to carry no borrow at all, so each refusal below was a
+// program that compiled and read freed memory.
+
+/// **The reported program.** A string literal is a temporary whose storage ends
+/// with its `let`; the iterator made from it is read by the loop after that.
+/// It aborted in `science-rt` on a pointer into a freed buffer.
+#[test]
+fn an_iterator_over_a_temporary_string_kept_past_its_let_is_refused() {
+    let source = "\
+def go():
+    let it be \"x\\ny\".lines()
+    for l in it:
+        print(l)
+";
+    assert_eq!(reported(source), vec![333]);
+}
+
+/// `Chars` has the same layout and had the same hole.
+#[test]
+fn a_chars_kept_past_its_temporary_string_is_refused() {
+    let source = "\
+def go():
+    let it be \"xyz\".chars()
+    for c in it:
+        print(c)
+";
+    assert_eq!(reported(source), vec![333]);
+}
+
+/// Reassigning the string frees the buffer the iterator still points into.
+#[test]
+fn reassigning_the_string_while_its_lines_are_kept_is_refused() {
+    let source = "\
+def go(make: () -> String):
+    let mutable s be make()
+    let it be s.lines()
+    s be make()
+    for l in it:
+        print(l)
+";
+    assert_eq!(reported(source), vec![330]);
+}
+
+/// **The one a refusal of stored iterators would have missed**: there is no
+/// `let`, and the body frees the buffer the loop's own iterator is reading.
+#[test]
+fn reassigning_the_string_inside_its_own_lines_loop_is_refused() {
+    let source = "\
+def go(make: () -> String):
+    let mutable s be make()
+    for l in s.lines():
+        s be make()
+        print(l)
+";
+    assert_eq!(reported(source), vec![330]);
+}
+
+/// Returning an iterator over a local is returning a borrow of it.
+#[test]
+fn returning_the_lines_of_a_local_string_is_refused() {
+    let source = "\
+def go() -> Lines:
+    let s be \"one\\ntwo\"
+    s.lines()
+";
+    assert_eq!(reported(source), vec![333]);
+}
+
+/// The controls. The corpus's own form over a call's result — the iterator is
+/// dropped before the string it reads, because it owns nothing — a stored
+/// iterator over a string that outlives it, and §2.4's *"libraries return
+/// sources"* over a parameter, whose summary says the result borrows it.
+#[test]
+fn an_iterator_its_string_outlives_is_accepted() {
+    let source = "\
+def lines_of(text: &String) -> Lines:
+    text.lines()
+
+def go(make: () -> String):
+    for c in make().chars():
+        print(c)
+    for l in make().lines():
+        print(l)
+    let s be make()
+    let it be s.lines()
+    for l in it:
+        print(l)
+    for l in lines_of(s):
+        print(l)
+";
+    assert_eq!(reported(source), Vec::<u16>::new());
+}

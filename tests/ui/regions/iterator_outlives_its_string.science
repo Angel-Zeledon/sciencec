@@ -1,0 +1,32 @@
+# UI test: a `Lines` or `Chars` kept past the string it reads (SC0333, SC0330).
+#
+# Both iterators are `{ ptr, len, offset }` into their receiver's buffer, and
+# until `science-regions`' `regions` §6 their types carried no borrow, so all
+# three of these compiled and read freed memory: the first aborted in
+# `science-rt`, the other two printed whatever the allocator had left there.
+#
+# `literal_then_loop` is the reported program: the literal's temporary ends
+# with the `let`, and the iterator is still read by the loop. `chars_too` is
+# the same hole on the other type. `reassigned_inside_the_loop` is the one a
+# refusal of stored iterators would not have caught — it has no `let`.
+
+def literal_then_loop():
+    let it be "x\ny".lines()
+    for l in it:
+        print(l)
+
+def chars_too():
+    let it be "xyz".chars()
+    for c in it:
+        print(c)
+
+def reassigned_inside_the_loop():
+    let mutable s be "one\ntwo"
+    for l in s.lines():
+        s be "zzzzzzzzzzzzzzzz"
+        print(l)
+
+def main():
+    literal_then_loop()
+    chars_too()
+    reassigned_inside_the_loop()

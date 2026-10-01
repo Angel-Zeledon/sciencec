@@ -130,3 +130,47 @@ fn a_string_literal_can_be_moved_into_a_set_or_an_array() {
         "true\nfalse\n2\ntrue\n1\n"
     );
 }
+
+/// **The accepted half of a memory-safety fix.** `Lines` and `Chars` point
+/// into the string they were made from, and `science-regions`' `regions` §6
+/// now says so — `let it be "x\ny".lines()` followed by `for l in it:` read a
+/// freed buffer and is refused (`tests/ui/regions/iterator_outlives_its_string`).
+/// What stays legal has to stay *correct*: an iterator kept in a `let` over a
+/// string that outlives it, one returned from a function over its parameter,
+/// and the loop over a call's result — whose string is dropped after the loop,
+/// which is safe because the iterator owns nothing and is not dropped at all.
+#[test]
+fn an_iterator_its_string_outlives_reads_the_right_text() {
+    assert_eq!(
+        prints(
+            "iterator_outlived",
+            "def make() -> String:
+    let mutable s be String.new()
+    s.push_str(\"one\\ntwo\")
+    s
+
+def lines_of(text: &String) -> Lines:
+    text.lines()
+
+def main():
+    let text be \"x\\ny\"
+    let it be text.lines()
+    for l in it:
+        print(l)
+    let built be make()
+    let cs be built.chars()
+    for c in cs:
+        write(c)
+    print(\"\")
+    for l in lines_of(built):
+        print(l)
+    for l in make().lines():
+        print(l)
+    for c in make().chars():
+        write(c)
+    print(\"\")
+",
+        ),
+        "x\ny\none\ntwo\none\ntwo\none\ntwo\none\ntwo\n"
+    );
+}

@@ -145,6 +145,20 @@ fn needs_drop_inner(
             {
                 return false;
             }
+            // **A prelude iterator over a string owns nothing**: `Chars` and
+            // `Lines` are `science-rt`'s `{ ptr, len, offset }` *into* a
+            // string somebody else owns, which `science-codegen-llvm` already
+            // knows (its drop-glue list puts both beside `Char`). Answering
+            // `true` here was §2's conservatism and it was not free:
+            // `science-regions` gives both types a borrow of their receiver
+            // (its `regions` §6), a `Drop` is a use of everything a value
+            // borrows, and the iterator a `for c in make().chars():` builds
+            // was dropped *after* the temporary string it reads — so the
+            // loop's own clean-up kept the string's loan alive past the
+            // string, and the corpus's form was refused with `SC0333`.
+            if prelude.is(types, ty, "Chars") || prelude.is(types, ty, "Lines") {
+                return false;
+            }
             // A recursive record cannot have a finite layout, so this guard
             // never fires on a program that will compile. It is here because a
             // program that will *not* compile still reaches this pass, and a

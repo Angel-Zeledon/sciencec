@@ -606,7 +606,20 @@ pub fn analyse_crate(
     // components are handed over leaves first and a *declaration* is below
     // every leaf.
     for def in context.decls.without_bodies() {
-        if let Some(sources) = context.decls.borrow_sources(context.types, def) {
+        if let Some(mut sources) = context.decls.borrow_sources(context.types, def) {
+            // `regions`' §6: `chars` and `lines` return a type with no
+            // `borrowed` in it for `borrow_sources` to find, and point into
+            // their receiver all the same. Argument 0 is that receiver.
+            let returns_a_source = context
+                .decls
+                .signature(def)
+                .filter(|sig| sig.self_param.is_some())
+                .map(|sig| sig.ret);
+            if let Some(ret) = returns_a_source {
+                if context.holds_a_source(ret) && !sources.contains(&0) {
+                    sources.insert(0, 0);
+                }
+            }
             analysis.summaries.declare(def, sources);
         }
     }
