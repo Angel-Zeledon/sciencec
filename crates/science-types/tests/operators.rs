@@ -924,8 +924,9 @@ def largest[T](a: &T, b: &T) -> Bool
 }
 
 /// **A type parameter with no `Ord` bound has nothing to call**, and stays
-/// the structural `Binary` it was — silent, for `methods`' §5 reason, and
-/// left for the backend to refuse rather than reported here.
+/// the structural `Binary` it was. It used to be silent and left for the
+/// backend to refuse; the checker now reports it as `SC0535` naming the bound
+/// to write, and this test pins that no `less` was reached for all the same.
 #[test]
 fn a_comparison_on_an_unbounded_type_parameter_is_not_a_call() {
     let checked = support::check(
@@ -934,7 +935,7 @@ def bigger[T](a: &T, b: &T) -> Bool:
     a > b
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![535]);
     assert!(
         !checked
             .body("bigger")
