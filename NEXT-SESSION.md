@@ -393,22 +393,28 @@ devuelve un closure captura los `Copy` por valor (§8.7 de `science-mir`; el
 entorno no se libera todavía); `Stack[String](items: …)` construye; `String +
 String` concatena; closures de varios parámetros `(acc, x) giving …`.
 
+**Cerrados por el tercer barrido:** `show(&r)` con `r` ya un `&T` (era una
+miscompilación: puntero a puntero) es un reborrow; un método sobre un `T?` sin
+estrechar es `SC0532` con nota; `clone()` sobre `F64` (el preludio listaba
+`Int` e `I64` como dos impls); `let held be items[i]` copia un elemento `Copy`;
+`&mut` donde se espera `&`; `Array.clone()` para elementos planos y `String`;
+`panic(err)` imprime `message()`; `&[]` toma el tipo esperado; leer campos de un
+nullable estrechado ya no lo mueve ni lo libera antes; regiones de
+`Numbered[&T]`. Un diagnóstico con etiqueta en el preludio ya no tira abajo el
+renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 y
+`stdlib-core.md` §7.3: la conversión se escribe en el `return`).
+
 **Huecos del núcleo todavía abiertos:**
-1. **miscompilación:** `show(&r)` con `r` ya un `&T` pasa un puntero a puntero
-   y lee basura (había un agente de bugs encima; mirar su rama);
-2. `.message()` sobre un `Error?` sin estrechar pasa `check` y el backend lo
-   rechaza; `match` sobre un `(&T)?` estrechado, igual;
-3. `clone()` de `Array[String]`; `clone()` sobre `&String` devuelve `&String`;
-   `IoError?` no se convierte a `Error?`; `panic(err)` imprime vacío;
-4. leer un campo de un nullable estrechado y después otro da un `SC0301` falso
-   (layout de par etiquetado, `Narrow` en `science-mir`); `if top?:` sobre un
-   `T?` propio libera el contenido al final del `if`;
-5. no hay borrows en dos fases (`fail(c, "…", c.pos)` es `SC0330`); reasignar
+1. `Array.clone()` de elementos que poseen algo distinto de `String`
+   (`ScienceTypeInfo` no lleva una función de clonado por elemento);
+2. `match` sobre un `(&T)?` estrechado falla en el backend;
+3. no hay borrows en dos fases (`fail(c, "…", c.pos)` es `SC0330`); reasignar
    un préstamo (`current be next`) lo rechazan las regiones;
-6. `members[i].value be v` falla; `let a, _ be f()` y `f().0` no parsean;
-   el nombre de una función no es un valor (`map(half)` es `SC0400`);
-7. un closure que captura algo propio y no `Copy` no puede escapar, y los
-   entornos de closures escapados no se liberan.
+4. `members[i].value be v` falla; `let a, _ be f()` y `f().0` no parsean; el
+   nombre de una función no es un valor (`map(half)` es `SC0400`);
+5. un closure que captura algo propio y no `Copy` no puede escapar, y los
+   entornos de closures escapados no se liberan;
+6. `2.0 * z` (escalar a la izquierda) es un impl huérfano, `SC0207`.
 
 No están en la especificación (decisión de diseño, no huecos): guardas en
 `match` y argumentos con nombre en funciones propias.
