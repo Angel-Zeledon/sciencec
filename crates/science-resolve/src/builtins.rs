@@ -207,6 +207,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "Windows",
     "Batches",
     "Flatten",
+    "FollowedBy",
     // @LIB-END
 ];
 
@@ -1138,6 +1139,17 @@ macro_rules! chain_links {
             // can file (a number, `Bool`, `Char` or `String`, through one
             // borrow), and the fused loop keeps the seen keys in a `Set`.
             // **`unique(by: key)` is not declared**: one name, one shape.
+            // `followed_by(other)`: this chain's items, then `other`'s. Narrowed
+            // as `zip` is to an `Array.iterate()`, whose item is `&U`;
+            // `science-types` holds this chain's item to `&U` as well, since
+            // one chain cannot yield two types.
+            Method {
+                name: "followed_by",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("other", Ty::App("ArrayIterate", &[Ty::Var("U")]))],
+                ret: Some(Ty::App("FollowedBy", &[$this, Ty::Ref(&Ty::Var("U"))])),
+            },
             // `flatten()`: the items are arrays (or borrows of arrays) and the
             // chain yields their elements. The declaration names the item
             // unchanged; `science-types`' `chain_item_shape` replaces it with
@@ -2849,6 +2861,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Windows"),
     chain_adapter!("Batches"),
     chain_adapter!("Flatten"),
+    chain_adapter!("FollowedBy"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2942,6 +2955,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("Windows"),
     chain_iterate!("Batches"),
     chain_iterate!("Flatten"),
+    chain_iterate!("FollowedBy"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3311,6 +3325,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Windows", CHAIN_UNWRITTEN),
     ("Batches", CHAIN_UNWRITTEN),
     ("Flatten", CHAIN_UNWRITTEN),
+    ("FollowedBy", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3376,7 +3391,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     // Filtering and selecting.
     "keep_ok",
     // Pairing, grouping, windowing.
-    "followed_by",
     // Terminals.
     "collect_or_error",
     "partition_results",
@@ -3526,6 +3540,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "Windows",
     "Batches",
     "Flatten",
+    "FollowedBy",
     // @CHAIN-END
 ];
 

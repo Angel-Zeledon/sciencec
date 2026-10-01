@@ -1446,6 +1446,38 @@ fn batches_cut_the_chain_into_disjoint_arrays() {
     );
 }
 
+// --- followed_by ------------------------------------------------------------
+
+/// **`followed_by(other)` yields this chain's items, then borrows of `other`'s
+/// elements**: train then validation. It is a barrier like `reverse`, so the
+/// links before it run first, the links after it see both halves in order, and
+/// two of them chain.
+#[test]
+fn followed_by_appends_the_other_array() {
+    assert_eq!(
+        prints(
+            "followed-by",
+            r#"def main():
+    let train be [1, 2, 3]
+    let valid be [10, 20]
+    let all be train.iterate().followed_by(valid.iterate()).collect()
+    print(f"{all.length()} {all[2]} {all[3]}")
+    print(train.iterate().followed_by(valid.iterate()).sum())
+    print(train.iterate().keep(each > 1).followed_by(valid.iterate()).take(3).count())
+    for x in train.iterate().followed_by(valid.iterate()).reverse().take(2):
+        print(f"{x}")
+    let words be ["a"]
+    let more be ["b", "c"]
+    let w be words.iterate().followed_by(more.iterate()).followed_by(words.iterate()).collect()
+    print(f"{w.length()} {w[2]} {w[3]}")
+    let none be Array[Int].new()
+    print(none.iterate().followed_by(valid.iterate()).count())
+"#,
+        ),
+        "5 3 10\n36\n3\n20\n10\n4 c a\n2\n"
+    );
+}
+
 // --- flatten ----------------------------------------------------------------
 
 /// **`flatten()` yields the elements of each array item in turn**: borrowed

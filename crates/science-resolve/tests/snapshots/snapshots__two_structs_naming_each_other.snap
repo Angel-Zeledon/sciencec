@@ -2,14 +2,14 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![view, doc]))"
 ---
-Module `main` #2840 @0..29
-  Record `View` #2841 @0..15
+Module `main` #3025 @0..29
+  Record `View` #3026 @0..15
     fields
-      Field `source` #2842 @0..10
-        type: Path -> `Doc` #2843 @0..3
-  Record `Doc` #2843 @16..29
+      Field `source` #3027 @0..10
+        type: Path -> `Doc` #3028 @0..3
+  Record `Doc` #3028 @16..29
     fields
-      Field `back` #2844 @16..25
-        type: Path -> `View` #2841 @16..20
+      Field `back` #3029 @16..25
+        type: Path -> `View` #3026 @16..20
 --- diagnostics ---
 (none)

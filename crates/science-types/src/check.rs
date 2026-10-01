@@ -5403,6 +5403,49 @@ impl<'a> BodyChecker<'a> {
             }
             return ret;
         }
+        if on_a_chain && name == "followed_by" {
+            // `FollowedBy[S, &U]`: the receiver chain `S` must yield `&U` too.
+            let TyKind::Named { args, .. } = self.types.kind(ret).clone() else { return ret };
+            let (Some(GenericArg::Type(source)), Some(GenericArg::Type(item))) =
+                (args.first().cloned(), args.get(1).cloned())
+            else {
+                return ret;
+            };
+            if self.types.references_error(source) || self.types.references_error(item) {
+                return ret;
+            }
+            let mine = match self.types.kind(source).clone() {
+                TyKind::Named { def, args } => {
+                    let entry = self.defs.get(def);
+                    match (entry.name.as_str(), args.as_slice()) {
+                        ("ArrayIterate", [GenericArg::Type(element)]) => {
+                            Some(self.types.borrowed(false, *element))
+                        }
+                        (_, [_, GenericArg::Type(item)])
+                            if science_resolve::builtins::CHAIN_TYPES.contains(&entry.name.as_str()) =>
+                        {
+                            Some(*item)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if mine == Some(item) {
+                return ret;
+            }
+            let found = match mine {
+                Some(mine) => self.types.render(self.defs, mine),
+                None => "items of another shape".to_string(),
+            };
+            self.diagnostics.push(wrong_item_shape(
+                span,
+                "followed_by",
+                &found,
+                "the same items as the chain that follows it, borrows of its elements",
+            ));
+            return Ty::ERROR;
+        }
         if on_a_chain && name == "flatten" {
             // The item must be an array, owned or through one shared borrow;
             // the chain then yields the elements, owned or borrowed to match.

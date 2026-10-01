@@ -6692,6 +6692,10 @@ enum Step {
     /// yields their elements in turn. **A barrier**: see
     /// [`Builder::lower_chain_over`].
     Flatten,
+    /// `followed_by(other)` — the chain's items, then a borrow of each element
+    /// of `other`, an `Array`'s `iterate()` whose array this holds. **A
+    /// barrier**: see [`Builder::lower_chain_over`].
+    FollowedBy(ExprId),
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6897,6 +6901,19 @@ impl Builder<'_, '_> {
                 ("windows", Some(arg)) => Step::Windows(*arg),
                 ("batches", Some(arg)) => Step::Batches(*arg),
                 ("flatten", _) => Step::Flatten,
+                // Only an `Array.iterate()` can follow, as only one can be
+                // zipped: the declaration takes an `ArrayIterate`.
+                ("followed_by", Some(arg)) => {
+                    let ExprKind::MethodCall { receiver: other, method: Some(source), .. } =
+                        self.thir.expr(*arg).kind
+                    else {
+                        return None;
+                    };
+                    if self.chain_source_kind(source) != Some(Source::Array) {
+                        return None;
+                    }
+                    Step::FollowedBy(other)
+                }
                 ("accumulate", Some(initial)) if args.len() == 2 => {
                     Step::Accumulate(*initial, args[1])
                 }
@@ -7041,7 +7058,7 @@ impl Builder<'_, '_> {
         // buffer (`Source::Drain`) the length is known, so a `batches` at the
         // head of *that* pass is read in place, not split off again.
         let barrier = steps.iter().enumerate().position(|(index, (step, _))| match step {
-            Step::Sorted(_) | Step::Reverse | Step::Flatten => true,
+            Step::Sorted(_) | Step::Reverse | Step::Flatten | Step::FollowedBy(_) => true,
             Step::Batches(_) => !(kind == Source::Drain && index == 0),
             _ => false,
         });
@@ -7135,6 +7152,23 @@ impl Builder<'_, '_> {
                 // As it arrived is what a pass that pops wants; a `collect()`
                 // that ends here wants it turned round.
                 if finishing {
+                    block = self.chain_reverse_buffer(&buffer, block, span);
+                }
+            }
+            Step::FollowedBy(other) => {
+                block = self.chain_pass(
+                    buffer.clone(),
+                    Terminal::Collect,
+                    None,
+                    kind,
+                    source,
+                    &steps[..at],
+                    block,
+                    span,
+                );
+                block = self.chain_append_borrows(&buffer, other, block, span);
+                // Arrival order; a pass that pops wants it turned round.
+                if !finishing {
                     block = self.chain_reverse_buffer(&buffer, block, span);
                 }
             }
@@ -7233,6 +7267,54 @@ impl Builder<'_, '_> {
     fn chain_close_count(&mut self, cursor: Local, head: BlockId, end: BlockId, span: Span) {
         self.chain_add(&Place::local(cursor), Self::bits(1), end, span);
         self.terminate(end, TerminatorKind::Goto { target: head }, span);
+    }
+
+    /// A borrow of every element of the array `other` pushed onto `buffer`,
+    /// an `Array` of such borrows.
+    fn chain_append_borrows(
+        &mut self,
+        buffer: &Place,
+        other: ExprId,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+        let (place, mut block) = self.chain_source(other, block, span);
+        let array_ty = self.place_ty(&place);
+        let element = self.element_ty(&place);
+        let shared_ty = self.context.types.borrowed(false, array_ty);
+        let shared = self.temp(shared_ty, span, block);
+        block = self.borrow_place(Place::local(shared), false, place, block, span, false);
+        let length = self.temp(int_ty, span, block);
+        block = self.emit_call(
+            Place::local(length),
+            Callee::Runtime(ARRAY_LEN),
+            vec![Operand::Copy(Place::local(shared))],
+            block,
+            span,
+        );
+        let (cursor, head, mut body, exit) = self.chain_open_count(length, block, span);
+        let at = self.temp(int_ty, span, body);
+        self.assign(body, Place::local(at), Rvalue::Use(Operand::Copy(Place::local(cursor))), span);
+        let through = Place::local(shared)
+            .project(Projection::Deref { ty: array_ty })
+            .project(Projection::Index { index: at, ty: element });
+        let item_ty = self.context.types.borrowed(false, element);
+        let item = self.temp(item_ty, span, body);
+        body = self.borrow_place(Place::local(item), false, through, body, span, false);
+        let (buffer_ref, next) = self.exclusive_ref(buffer, body, span);
+        let discard = Place::local(self.temp(Ty::UNIT, span, next));
+        body = self.emit_call(
+            discard,
+            Callee::Runtime(ARRAY_PUSH),
+            vec![buffer_ref, Operand::Move(Place::local(item))],
+            next,
+            span,
+        );
+        self.chain_close_count(cursor, head, body, span);
+        exit
     }
 
     /// `flat` filled with the elements of every array in `outer`, in order.
@@ -7736,7 +7818,7 @@ impl Builder<'_, '_> {
                     self.chain_assign_bool(&Place::local(skipping), true, block, span);
                     limits.push(Some((skipping, skipping)));
                 }
-                Step::KeepSome | Step::Reverse | Step::Flatten => {
+                Step::KeepSome | Step::Reverse | Step::Flatten | Step::FollowedBy(_) => {
                     closures.push(None);
                     limits.push(None);
                 }
@@ -8736,7 +8818,7 @@ impl Builder<'_, '_> {
                         current = over;
                     }
                 }
-                Step::Sorted(_) | Step::Reverse | Step::Flatten => {
+                Step::Sorted(_) | Step::Reverse | Step::Flatten | Step::FollowedBy(_) => {
                     unreachable!("a barrier is split off before the pass")
                 }
             }

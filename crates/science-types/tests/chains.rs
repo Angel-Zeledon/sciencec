@@ -461,6 +461,18 @@ def refused(xs: &Array[Int]) -> Int:
     assert!(flat.messages()[0].contains("`flatten()`"), "{:?}", flat.messages());
     assert_eq!(terminal_type(&flat, "through_borrows", "collect"), "Array[&I64]");
     assert_eq!(terminal_type(&flat, "owned", "collect"), "Array[I64]");
+    let then = check(
+        "\
+def joined(xs: &Array[Int], ys: &Array[Int]) -> Array[&Int]:
+    xs.iterate().followed_by(ys.iterate()).collect()
+
+def mismatched(xs: &Array[Int], ys: &Array[Int]) -> Int:
+    xs.iterate().map(x giving x + 0).followed_by(ys.iterate()).count()
+",
+    );
+    assert_eq!(then.codes(), vec![549], "{:?}", then.messages());
+    assert!(then.messages()[0].contains("`followed_by()`"), "{:?}", then.messages());
+    assert_eq!(terminal_type(&then, "joined", "collect"), "Array[&I64]");
     let refused = check(
         "\
 def f(xs: &Array[F64]) -> Int:

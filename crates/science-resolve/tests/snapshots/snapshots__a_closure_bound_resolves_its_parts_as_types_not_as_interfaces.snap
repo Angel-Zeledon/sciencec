@@ -2,19 +2,19 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, f]))"
 ---
-Module `main` #2840 @0..21
-  Record `Doc` #2841 @0..3
-  Fn `f` #2842 @12..21
+Module `main` #3025 @0..21
+  Record `Doc` #3026 @0..3
+  Fn `f` #3027 @12..21
     generics
-      TypeParam `F` #2843 @14..15
+      TypeParam `F` #3028 @14..15
         bounds
           ClosureBound @4..11
             params
-              Path -> `Doc` #2841 @4..7
-            ret: Path -> `Doc` #2841 @8..11
+              Path -> `Doc` #3026 @4..7
+            ret: Path -> `Doc` #3026 @8..11
     params
-      Param `f` #2844 @16..19
-        type: Path -> `F` #2843 @16..17
+      Param `f` #3029 @16..19
+        type: Path -> `F` #3028 @16..17
     body: Block @20..21
 --- diagnostics ---
 (none)
