@@ -385,7 +385,10 @@ There are two layers, and the difference is one `use` line.
   `determinant`, `lu`, `cholesky`, `qr`, norms; each fallible one returns
   `(value, LinalgError?)`) and `string` (free functions over `&String`:
   `to_upper`, `to_lower`, `title_case`, `pad_start`, `center`, `wrap`,
-  `levenshtein`, …). Read the module's header before using it: each one
+  `levenshtein`, …) and `dataframe` (`DataFrame`, `Column`, `Agg`: typed
+  columns with `null` for missing cells, built from `csv` or columns; `filter`,
+  `sort_by`, `aggregate`, `inner_join`, `describe`, `to_ndarray`, `render`,
+  `write_csv`). Read the module's header before using it: each one
   states the decisions it made.
 
 ```science
