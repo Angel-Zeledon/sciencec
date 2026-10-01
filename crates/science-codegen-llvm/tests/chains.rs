@@ -1407,3 +1407,71 @@ fn windows_yields_overlapping_runs_in_order() {
         "3\n1 2 3\n2 3 4\n3 4 5\n1\n0\n5\n0\nab\nbc\nfirst 2\n2\n8\n"
     );
 }
+
+// --- batches ----------------------------------------------------------------
+
+/// **`batches(n)` cuts the chain into disjoint arrays of `n`, the last one
+/// shorter** when `n` does not divide the count: 7 items in threes is 3, 3, 1.
+/// A size at or above the count is one batch, an empty source has none, and a
+/// size below one is a batch of one. It is a barrier (the short batch needs to
+/// know which item was last), so what follows it runs over the buffer: a
+/// `take`, a `map`, a `sorted` before it, and a `for` all compose.
+#[test]
+fn batches_cut_the_chain_into_disjoint_arrays() {
+    assert_eq!(
+        prints(
+            "batches",
+            r#"def main():
+    let xs be [1, 2, 3, 4, 5, 6, 7]
+    let b be xs.iterate().batches(3).collect()
+    print(f"{b.length()} {b[0].length()} {b[1].length()} {b[2].length()}")
+    print(f"{b[0][0]} {b[1][0]} {b[2][0]}")
+    for batch in xs.iterate().batches(2):
+        print(f"{batch[0]}")
+    print(xs.iterate().batches(7).count())
+    print(xs.iterate().batches(8).count())
+    print(xs.iterate().batches(0).count())
+    let words be ["a", "b", "c"]
+    for pair in words.iterate().map(each.clone()).batches(2):
+        print(f"{pair.length()} {pair[0]}")
+    let none be Array[Int].new()
+    print(none.iterate().batches(2).count())
+    print(xs.iterate().keep(each > 2).batches(2).take(2).count())
+    print(xs.iterate().batches(3).map(each.length()).sum())
+    let backwards be xs.iterate().sorted(by: x giving 0 - x).batches(3).collect()
+    print(f"{backwards[0][0]} {backwards[2][0]}")
+"#,
+        ),
+        "3 3 3 1\n1 4 7\n1\n3\n5\n7\n1\n1\n7\n2 a\n1 c\n0\n2\n7\n7 1\n"
+    );
+}
+
+/// **A batch owns the items it holds, and the ones a `take` never reached are
+/// released with the buffer**: each `Tracer` is dropped exactly once, whether
+/// it was handed on in a batch or left behind.
+#[test]
+fn batches_of_owned_items_release_every_one() {
+    assert_eq!(
+        prints(
+            "batches-owned",
+            r#"type Tracer:
+    tag: Int
+
+Tracer implements Drop:
+    def drop(mutable self):
+        print(f"dropped {self.tag}")
+
+def make(n: Int) -> Tracer:
+    Tracer(tag: n)
+
+def main():
+    let xs be [1, 2, 3]
+    let n be xs.iterate().map(x giving make(x)).batches(2).count()
+    print(f"count {n}")
+    let first be xs.iterate().map(x giving make(x)).batches(2).take(1).count()
+    print(f"first {first}")
+"#,
+        ),
+        "dropped 1\ndropped 2\ndropped 3\ncount 2\ndropped 1\ndropped 2\ndropped 3\nfirst 1\n"
+    );
+}

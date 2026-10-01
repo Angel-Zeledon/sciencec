@@ -2,31 +2,31 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![window, row, width, size]))"
 ---
-Module `main` #2554 @10..78
-  Record `Window` #2555 @10..28
+Module `main` #2705 @10..78
+  Record `Window` #2706 @10..28
     generics
-      TypeParam `T` #2560 @0..1
-      ConstParam `N` #2561 @2..7
+      TypeParam `T` #2711 @0..1
+      ConstParam `N` #2712 @2..7
         kind: Int @2..5
     fields
-      Field `items` #2556 @10..21
+      Field `items` #2707 @10..21
         type: Path -> `Array` #18 @10..15
           generics
-            Path -> `T` #2560 @8..9
-  Alias `Row` #2557 @35..45
-    type: Path -> `Window` #2555 @35..41
+            Path -> `T` #2711 @8..9
+  Alias `Row` #2708 @35..45
+    type: Path -> `Window` #2706 @35..41
       generics
         Path -> `I64` #5 @29..32
         Const Int 4 @33..34
-  Const `WIDTH` #2558 @50..59
+  Const `WIDTH` #2709 @50..59
     type: Path -> `I64` #5 @46..49
     value: Int 768 @50..53
-  Fn `size` #2559 @60..78
+  Fn `size` #2710 @60..78
     generics
-      ConstParam `N` #2562 @65..70
+      ConstParam `N` #2713 @65..70
         kind: Int @65..68
     ret: Path -> `I64` #5 @71..74
     body: Block @75..78
-      tail: Path -> `N` #2562 @75..76
+      tail: Path -> `N` #2713 @75..76
 --- diagnostics ---
 (none)

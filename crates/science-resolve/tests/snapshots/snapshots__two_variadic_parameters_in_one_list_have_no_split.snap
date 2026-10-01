@@ -2,15 +2,15 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![pairing]))"
 ---
-Module `main` #2554 @23..40
-  Record `Pairing` #2555 @23..40
+Module `main` #2705 @23..40
+  Record `Pairing` #2706 @23..40
     generics
-      ConstParam `LEFT` #2557 @0..10
+      ConstParam `LEFT` #2708 @0..10
         kind: Shape @0..5
-      ConstParam `RIGHT` #2558 @11..22
+      ConstParam `RIGHT` #2709 @11..22
         kind: Shape @11..16
     fields
-      Field `value` #2556 @23..32
+      Field `value` #2707 @23..32
         type: Path -> `I64` #5 @23..26
 --- diagnostics ---
 SC0221 @11..22 a generic parameter list may declare at most one variadic parameter

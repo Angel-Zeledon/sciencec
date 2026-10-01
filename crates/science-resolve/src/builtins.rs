@@ -205,6 +205,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "Reverse",
     "Unique",
     "Windows",
+    "Batches",
     // @LIB-END
 ];
 
@@ -1136,6 +1137,16 @@ macro_rules! chain_links {
             // can file (a number, `Bool`, `Char` or `String`, through one
             // borrow), and the fused loop keeps the seen keys in a `Set`.
             // **`unique(by: key)` is not declared**: one name, one shape.
+            // `batches(n)`: disjoint runs of `n` items as arrays; the last is
+            // shorter when the chain does not divide. A size below one is a
+            // batch of one.
+            Method {
+                name: "batches",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Batches", &[$this, Ty::App("Array", &[$item])])),
+            },
             // `windows(n)`: every run of `n` consecutive items as an `Array` of
             // them — §1.4's overlapping pieces. A width below one yields none.
             Method {
@@ -2824,6 +2835,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Reverse"),
     chain_adapter!("Unique"),
     chain_adapter!("Windows"),
+    chain_adapter!("Batches"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2915,6 +2927,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("Reverse"),
     chain_iterate!("Unique"),
     chain_iterate!("Windows"),
+    chain_iterate!("Batches"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3282,6 +3295,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Reverse", CHAIN_UNWRITTEN),
     ("Unique", CHAIN_UNWRITTEN),
     ("Windows", CHAIN_UNWRITTEN),
+    ("Batches", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3349,7 +3363,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "keep_ok",
     // Pairing, grouping, windowing.
     "followed_by",
-    "batches",
     // Terminals.
     "collect_or_error",
     "partition_results",
@@ -3497,6 +3510,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "Reverse",
     "Unique",
     "Windows",
+    "Batches",
     // @CHAIN-END
 ];
 

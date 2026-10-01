@@ -6684,6 +6684,10 @@ enum Step {
     /// `windows(n)` — every run of `n` consecutive items, as an `Array` of
     /// them: a ring of the last `n` items that is cloned each time it is full.
     Windows(ExprId),
+    /// `batches(n)` — disjoint runs of `n` items as arrays, the last one
+    /// shorter when the chain does not divide. **A barrier in the pass that
+    /// reads it**: see [`Builder::lower_chain_over`].
+    Batches(ExprId),
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6887,6 +6891,7 @@ impl Builder<'_, '_> {
                 ("reverse", _) => Step::Reverse,
                 ("unique", _) => Step::Unique,
                 ("windows", Some(arg)) => Step::Windows(*arg),
+                ("batches", Some(arg)) => Step::Batches(*arg),
                 ("accumulate", Some(initial)) if args.len() == 2 => {
                     Step::Accumulate(*initial, args[1])
                 }
@@ -7026,15 +7031,36 @@ impl Builder<'_, '_> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
-        let barrier = steps
-            .iter()
-            .position(|(step, _)| matches!(step, Step::Sorted(_) | Step::Reverse));
+        // `batches(n)` is a barrier too: it needs to know which item is the
+        // last to flush the short batch. Once a barrier has made the source a
+        // buffer (`Source::Drain`) the length is known, so a `batches` at the
+        // head of *that* pass is read in place, not split off again.
+        let barrier = steps.iter().enumerate().position(|(index, (step, _))| match step {
+            Step::Sorted(_) | Step::Reverse => true,
+            Step::Batches(_) => !(kind == Source::Drain && index == 0),
+            _ => false,
+        });
         let Some(at) = barrier else {
             return self.chain_pass(dest, terminal, None, kind, source, steps, block, span);
         };
-        let rest = &steps[at + 1..];
-        let finishing = rest.is_empty() && matches!(terminal, Terminal::Collect);
-        let item_ty = steps[at].1;
+        let batching = matches!(steps[at].0, Step::Batches(_));
+        let rest = if batching { &steps[at..] } else { &steps[at + 1..] };
+        let finishing = !batching && rest.is_empty() && matches!(terminal, Terminal::Collect);
+        // What the buffer holds: the item before a `batches`, which is the
+        // element of the arrays it makes, and the barrier's own item otherwise.
+        let item_ty = if batching {
+            match self.context.types.kind(steps[at].1).clone() {
+                TyKind::Named { args, .. } => {
+                    match args.first().and_then(|arg| arg.as_type()) {
+                        Some(element) => element,
+                        None => return block,
+                    }
+                }
+                _ => return block,
+            }
+        } else {
+            steps[at].1
+        };
         let buffer = if finishing {
             dest.clone()
         } else {
@@ -7106,6 +7132,20 @@ impl Builder<'_, '_> {
                 if finishing {
                     block = self.chain_reverse_buffer(&buffer, block, span);
                 }
+            }
+            Step::Batches(_) => {
+                block = self.chain_pass(
+                    buffer.clone(),
+                    Terminal::Collect,
+                    None,
+                    kind,
+                    source,
+                    &steps[..at],
+                    block,
+                    span,
+                );
+                // Arrival order, popped from the end: turn it round.
+                block = self.chain_reverse_buffer(&buffer, block, span);
             }
             _ => unreachable!("`position` found a barrier"),
         }
@@ -7405,6 +7445,8 @@ impl Builder<'_, '_> {
         let mut limits: Vec<Option<(Local, Local)>> = Vec::with_capacity(steps.len());
         // A `zip`'s second array: the loan on it, its type and its element's.
         let mut zips: Vec<Option<(Local, Ty, Ty)>> = vec![None; steps.len()];
+        // A `batches`' count of what the batch holds and the buffer's length.
+        let mut batch_state: Vec<Option<(Local, Local)>> = vec![None; steps.len()];
         for (step, item_after) in steps {
             match step {
                 // The keys seen so far, in a `Set` made before the loop.
@@ -7504,6 +7546,52 @@ impl Builder<'_, '_> {
                     self.assign(block, Place::local(counted), Rvalue::Use(Self::bits(0)), span);
                     closures.push(None);
                     limits.push(Some((counted, counted)));
+                }
+                // The size, the batch being filled, how many it holds, and how
+                // many items the buffer has in all.
+                Step::Batches(arg) => {
+                    let limit = self.temp(int_ty, span, block);
+                    block = self.expr_into(Place::local(limit), *arg, block);
+                    let TyKind::Named { args, .. } = self.context.types.kind(*item_after).clone()
+                    else {
+                        return block;
+                    };
+                    let Some(element) = args.first().and_then(|arg| arg.as_type()) else {
+                        return block;
+                    };
+                    let batch_ty = self.array_of(element);
+                    let batch = self.temp(batch_ty, span, block);
+                    block = self.emit_call(
+                        Place::local(batch),
+                        Callee::Runtime(ARRAY_WITH_CAPACITY),
+                        vec![Operand::Const(Constant::Count(0))],
+                        block,
+                        span,
+                    );
+                    let held = self.temp(int_ty, span, block);
+                    self.assign(block, Place::local(held), Rvalue::Use(Self::bits(0)), span);
+                    let source_ty = self.place_ty(source);
+                    let shared_ty = self.context.types.borrowed(false, source_ty);
+                    let shared = self.temp(shared_ty, span, block);
+                    block = self.borrow_place(
+                        Place::local(shared),
+                        false,
+                        source.clone(),
+                        block,
+                        span,
+                        false,
+                    );
+                    let total = self.temp(int_ty, span, block);
+                    block = self.emit_call(
+                        Place::local(total),
+                        Callee::Runtime(ARRAY_LEN),
+                        vec![Operand::Copy(Place::local(shared))],
+                        block,
+                        span,
+                    );
+                    batch_state[closures.len()] = Some((held, total));
+                    closures.push(None);
+                    limits.push(Some((limit, batch)));
                 }
                 // The width, and the ring of the last `width` items.
                 Step::Windows(arg) => {
@@ -7846,6 +7934,96 @@ impl Builder<'_, '_> {
                         span,
                     );
                     value = Place::local(yielded);
+                }
+                Step::Batches(_) => {
+                    debug_assert!(drain, "a `batches` is read from a buffer");
+                    let (limit, batch) = limits[index].expect("a `batches` carries its batch");
+                    let (held, total) = batch_state[index].expect("a `batches` carries its count");
+                    // The item joins the batch...
+                    let (batch_ref, next) = self.exclusive_ref(&Place::local(batch), current, span);
+                    current = next;
+                    let discard = Place::local(self.temp(Ty::UNIT, span, current));
+                    current = self.emit_call(
+                        discard,
+                        Callee::Runtime(ARRAY_PUSH),
+                        vec![batch_ref, Operand::Move(value.clone())],
+                        current,
+                        span,
+                    );
+                    self.chain_add(&Place::local(held), Self::bits(1), current, span);
+                    // ...which is handed on when it is full, or when this was
+                    // the last item the buffer had. A size below one is a
+                    // batch of one.
+                    let full = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(full),
+                        Rvalue::Binary {
+                            op: BinaryOp::Ge,
+                            lhs: Operand::Copy(Place::local(held)),
+                            rhs: Operand::Copy(Place::local(limit)),
+                        },
+                        span,
+                    );
+                    let (flush, check_last) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(full)),
+                            then_block: flush,
+                            else_block: check_last,
+                        },
+                        span,
+                    );
+                    let consumed = self.temp(int_ty, span, check_last);
+                    self.assign(
+                        check_last,
+                        Place::local(consumed),
+                        Rvalue::Binary {
+                            op: BinaryOp::Add,
+                            lhs: Operand::Copy(Place::local(cursor)),
+                            rhs: Self::bits(1),
+                        },
+                        span,
+                    );
+                    let last = self.temp(self.bool_ty, span, check_last);
+                    self.assign(
+                        check_last,
+                        Place::local(last),
+                        Rvalue::Binary {
+                            op: BinaryOp::Ge,
+                            lhs: Operand::Copy(Place::local(consumed)),
+                            rhs: Operand::Copy(Place::local(total)),
+                        },
+                        span,
+                    );
+                    let wait = self.new_block();
+                    self.terminate(
+                        check_last,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(last)),
+                            then_block: flush,
+                            else_block: wait,
+                        },
+                        span,
+                    );
+                    self.chain_leave(wait, depth, step_block, span);
+                    let handed = self.temp(*item_after, span, flush);
+                    self.assign(
+                        flush,
+                        Place::local(handed),
+                        Rvalue::Use(Operand::Move(Place::local(batch))),
+                        span,
+                    );
+                    current = self.emit_call(
+                        Place::local(batch),
+                        Callee::Runtime(ARRAY_WITH_CAPACITY),
+                        vec![Operand::Const(Constant::Count(0))],
+                        flush,
+                        span,
+                    );
+                    self.assign(current, Place::local(held), Rvalue::Use(Self::bits(0)), span);
+                    value = Place::local(handed);
                 }
                 Step::Windows(_) => {
                     let (limit, ring) = limits[index].expect("a `windows` carries its ring");
