@@ -1,0 +1,998 @@
+# dataframe — `DREAM.md` §19.1: `use dataframe (DataFrame, Column, Agg)`.
+#
+# A table of named, typed columns over `csv` and `ndarray`, bundled the way they
+# are (`science_resolve::stdlib`) and written in Science. It needs no runtime.
+# `DREAM.md` §19.1 lists the capabilities (columns, rows, filter, select, sort,
+# group, aggregation, joins, missing values, conversion to a tensor) and gives
+# one example, `col("age") > 18`, which needs an expression type this language
+# does not have; `filter` takes a closure instead (see below). The decisions:
+#
+# - **Four column types**: `F64`, `Int`, `String` and `Bool`. A column holds
+#   one type, `Column.type_name()` says which, and a cell of another type is
+#   refused when a column is added, not found later.
+# - **Missing data is absence, per cell, in every type** (`missing-data.md`
+#   §0: there is no `NA` and no sentinel). Storage is columnar with a validity
+#   mask: `present[i]` is false when cell `i` is missing, and the value stored
+#   beside it is a placeholder nobody may read (`0.0`, `0`, `""`, `false`). The
+#   cells come out as `F64?`, `Int?`, `String?` and `Bool?` (`float_at`,
+#   `int_at`, `text_at`, `bool_at`), `null` being the missing case. A `NaN` is
+#   a number that came out of a computation and is **not** missing, as in
+#   `stats`. (The mask is not an `Array[F64?]` because this compiler cannot
+#   read an element of an array of nullables: see the report that came with the
+#   module.)
+# - **CSV in**: an empty field is missing, whatever the column's type. A
+#   column's type is the first of `Int` (every present field parses with
+#   `parse_int`), `F64` (every present field parses with `parse_float`),
+#   `Bool` (every present field is exactly `true` or `false`) that fits, and
+#   `String` otherwise; a column with no present field is `String`. Fields are
+#   not trimmed. A record shorter than the header (a `flexible` table) has its
+#   absent trailing cells missing. A table without a header names its columns
+#   `column_1`, `column_2`, ... **CSV out**: a missing cell is an empty field,
+#   so a `String` cell that is `""` and a missing one are the same on disk and
+#   read back as missing; a `F64` is written the way `print` writes it.
+# - **Errors come back beside the value** (`AGENTS.md` §2): `(DataFrame,
+#   Error?)`, the value an empty frame when the error is present. An unknown
+#   column, a duplicate column name, a length that disagrees with the frame's,
+#   or an operation a type does not support (`sum` of text) is a `FrameError`.
+# - **Column names are unique.** `add` refuses a duplicate; `inner_join` renames
+#   a right-hand column that collides with `_right` appended.
+# - **`filter` takes `(&DataFrame, Int) -> Bool`**: the frame and the row. Cells
+#   are read with `float_at(name, row)` and friends. The common case, a test on
+#   one column, is `filter_float`, `filter_int` and `filter_text`, which take
+#   the value alone and **drop rows whose cell is missing**. Row order is kept.
+# - **`sort_by` is stable, and missing cells sort last** in both directions
+#   (`descending` reverses only the order of present cells). `String` compares
+#   by bytes, `Bool` as `false < true`, a `NaN` compares equal to nothing and
+#   so keeps its place relative to its neighbours.
+# - **`aggregate` groups by one key column**, groups in order of first appearance;
+#   a missing key is a group of its own. Output: the key column, then one
+#   column per `Agg` named `<column>_<op>` (`rows` for `Agg.rows()`). `count`
+#   counts present cells (`Int`). `sum` skips missing cells, is `Int` for an
+#   `Int` column and `F64` for `F64`, is `0` for a group with nothing present,
+#   and adds left to right (no compensation). `mean` is `F64`, missing when
+#   nothing is present. `min` and `max` work on every type and are missing
+#   when nothing is present. `sum` and `mean` of `String` or `Bool` are errors.
+# - **`inner_join(other, key)`**: the key column has the same name and type on
+#   both sides. A missing key never matches. Output rows are in left order, and
+#   within a left row in right order; columns are the left's, then the right's
+#   but for the key.
+# - **`describe()`** has one row per `F64` or `Int` column: `column`, `count`
+#   (present cells), `mean`, `std`, `min`, `max`. `std` is the **sample**
+#   standard deviation (divisor `n - 1`, pandas' default; `stats` has no
+#   default and this call has no argument, so the choice is written here). It
+#   is missing for fewer than two values, `mean`/`min`/`max` for none.
+# - **`to_ndarray(names)`** is `rows x names.length()`, row-major, from `F64`
+#   and `Int` columns (an `Int` becomes the nearest `F64`). A missing cell is
+#   an error naming the column and row; `to_ndarray_filling(names, fill)`
+#   replaces it with `fill` instead. `from_ndarray` is the reverse for a 2-D
+#   array, all cells present.
+# - **`render()`** (and `Display`, and so `print(df)`) is an aligned table:
+#   header, a rule of `-`, rows; numbers right-aligned, `String` and `Bool`
+#   left-aligned, columns separated by two spaces, missing shown as `null`,
+#   no trailing spaces, no trailing newline, no row index.
+
+use csv (Table, Options, Writer)
+use ndarray (NdArray)
+use string (pad_start, pad_end, chars_count)
+
+# --- errors -------------------------------------------------------------------
+
+public type FrameError:
+    reason: String
+
+FrameError implements Error:
+    def message(self) -> String:
+        self.reason.clone()
+
+def failed(reason: String) -> Error?:
+    FrameError(reason: reason)
+
+# --- column kinds and aggregation operations ----------------------------------
+
+const FLOAT: Int be 0
+const INT: Int be 1
+const TEXT: Int be 2
+const BOOL: Int be 3
+
+const COUNT: Int be 0
+const SUM: Int be 1
+const MEAN: Int be 2
+const MIN: Int be 3
+const MAX: Int be 4
+const ROWS: Int be 5
+
+# --- Column -------------------------------------------------------------------
+
+# One named, typed column. Exactly one of `floats`, `ints`, `texts` and `bools`
+# (the one `kind` names) has a slot per row; the others are empty. `present[i]`
+# is false for a missing cell, and the slot then holds a placeholder.
+public type Column:
+    name: String
+    kind: Int
+    floats: Array[F64]
+    ints: Array[Int]
+    texts: Array[String]
+    bools: Array[Bool]
+    present: Array[Bool]
+
+Column has:
+    def empty(name: String, kind: Int) -> Column:
+        Column(name: name, kind: kind, floats: Array[F64].new(), ints: Array[Int].new(), texts: Array[String].new(), bools: Array[Bool].new(), present: Array[Bool].new())
+
+    # A column of `F64` with every cell present.
+    public def of_floats(name: String, values: Array[F64]) -> Column:
+        let mutable column be Column.empty(name, FLOAT)
+        for _ in 0..values.length():
+            column.present.push(true)
+        column.floats be values
+        column
+
+    public def of_ints(name: String, values: Array[Int]) -> Column:
+        let mutable column be Column.empty(name, INT)
+        for _ in 0..values.length():
+            column.present.push(true)
+        column.ints be values
+        column
+
+    public def of_texts(name: String, values: Array[String]) -> Column:
+        let mutable column be Column.empty(name, TEXT)
+        for _ in 0..values.length():
+            column.present.push(true)
+        column.texts be values
+        column
+
+    public def of_bools(name: String, values: Array[Bool]) -> Column:
+        let mutable column be Column.empty(name, BOOL)
+        for _ in 0..values.length():
+            column.present.push(true)
+        column.bools be values
+        column
+
+    # The same column with `present` as its validity mask: `false` marks a
+    # missing cell, whose stored value is then ignored. A mask of the wrong
+    # length is refused when the column is added to a frame.
+    public def masked(self: Self, present: Array[Bool]) -> Column:
+        Column(name: self.name, kind: self.kind, floats: self.floats, ints: self.ints, texts: self.texts, bools: self.bools, present: present)
+
+    public def renamed(self: Self, name: String) -> Column:
+        Column(name: name, kind: self.kind, floats: self.floats, ints: self.ints, texts: self.texts, bools: self.bools, present: self.present)
+
+    # The number of cells.
+    public def length(self) -> Int:
+        self.present.length()
+
+    # The number of missing cells.
+    public def missing(self) -> Int:
+        let mutable count be 0
+        for i in 0..self.present.length():
+            if not self.present[i]:
+                count be count + 1
+        count
+
+    # `"F64"`, `"Int"`, `"String"` or `"Bool"`.
+    public def type_name(self) -> String:
+        if self.kind is FLOAT:
+            return "F64"
+        if self.kind is INT:
+            return "Int"
+        if self.kind is TEXT:
+            return "String"
+        "Bool"
+
+    # How many slots the value array of this kind holds.
+    def slots(self) -> Int:
+        if self.kind is FLOAT:
+            return self.floats.length()
+        if self.kind is INT:
+            return self.ints.length()
+        if self.kind is TEXT:
+            return self.texts.length()
+        self.bools.length()
+
+    def push_missing(mutable self):
+        self.present.push(false)
+        if self.kind is FLOAT:
+            self.floats.push(0.0)
+        else if self.kind is INT:
+            self.ints.push(0)
+        else if self.kind is TEXT:
+            self.texts.push(String.new())
+        else:
+            self.bools.push(false)
+
+    # Appends cell `row` of `source` (same kind); a negative row is missing.
+    def push_from(mutable self, source: &Column, row: Int):
+        if row < 0:
+            self.push_missing()
+            return
+        if not source.present[row]:
+            self.push_missing()
+            return
+        self.present.push(true)
+        if self.kind is FLOAT:
+            self.floats.push(source.floats[row])
+        else if self.kind is INT:
+            self.ints.push(source.ints[row])
+        else if self.kind is TEXT:
+            self.texts.push(source.texts[row].clone())
+        else:
+            self.bools.push(source.bools[row])
+
+    # The cells at `rows`, in that order; a negative row gives a missing cell.
+    def gather(self, rows: &Array[Int]) -> Column:
+        let mutable out be Column.empty(self.name.clone(), self.kind)
+        for r in rows:
+            out.push_from(self, r)
+        out
+
+    def copy(self) -> Column:
+        let mutable rows be Array[Int].new()
+        for i in 0..self.present.length():
+            rows.push(i)
+        self.gather(&rows)
+
+    # The cell as text; the caller has checked it is present.
+    def text_of(self, row: Int) -> String:
+        if self.kind is FLOAT:
+            return f"{self.floats[row]}"
+        if self.kind is INT:
+            return f"{self.ints[row]}"
+        if self.kind is TEXT:
+            return self.texts[row].clone()
+        f"{self.bools[row]}"
+
+    # -1, 0 or 1: how present cells `a` and `b` order. `NaN` is 0 against all.
+    def compare(self, a: Int, b: Int) -> Int:
+        if self.kind is FLOAT:
+            if self.floats[a] < self.floats[b]:
+                return -1
+            if self.floats[a] > self.floats[b]:
+                return 1
+            return 0
+        if self.kind is INT:
+            if self.ints[a] < self.ints[b]:
+                return -1
+            if self.ints[a] > self.ints[b]:
+                return 1
+            return 0
+        if self.kind is TEXT:
+            if self.texts[a] < self.texts[b]:
+                return -1
+            if self.texts[a] > self.texts[b]:
+                return 1
+            return 0
+        if self.bools[a] is self.bools[b]:
+            return 0
+        if self.bools[b]:
+            return -1
+        1
+
+    # Whether cell `a` strictly precedes cell `b` in a sort. Missing is last.
+    def precedes(self, a: Int, b: Int, descending: Bool) -> Bool:
+        if not self.present[a]:
+            return false
+        if not self.present[b]:
+            return true
+        let order be self.compare(a, b)
+        if descending:
+            return order > 0
+        order < 0
+
+    def is_numeric(self) -> Bool:
+        self.kind is FLOAT or self.kind is INT
+
+    # The cell as an `F64`, for a numeric column; the caller checked it is present.
+    def number_at(self, row: Int) -> F64:
+        if self.kind is FLOAT:
+            return self.floats[row]
+        self.ints[row] as F64
+
+# --- Agg ----------------------------------------------------------------------
+
+# One aggregation for `aggregate`: an operation on a column.
+public type Agg:
+    column: String
+    op: Int
+
+Agg has:
+    # How many cells of `column` are present.
+    public def count(column: String) -> Agg:
+        Agg(column: column, op: COUNT)
+
+    public def sum(column: String) -> Agg:
+        Agg(column: column, op: SUM)
+
+    public def mean(column: String) -> Agg:
+        Agg(column: column, op: MEAN)
+
+    public def min(column: String) -> Agg:
+        Agg(column: column, op: MIN)
+
+    public def max(column: String) -> Agg:
+        Agg(column: column, op: MAX)
+
+    # The number of rows in the group; the output column is called `rows`.
+    public def rows() -> Agg:
+        Agg(column: String.new(), op: ROWS)
+
+    def label(self) -> String:
+        if self.op is ROWS:
+            return "rows"
+        if self.op is COUNT:
+            return f"{self.column}_count"
+        if self.op is SUM:
+            return f"{self.column}_sum"
+        if self.op is MEAN:
+            return f"{self.column}_mean"
+        if self.op is MIN:
+            return f"{self.column}_min"
+        f"{self.column}_max"
+
+# --- DataFrame ----------------------------------------------------------------
+
+public type DataFrame:
+    cols: Array[Column]
+    height: Int
+
+DataFrame has:
+    # A frame with no columns and no rows.
+    public def new() -> DataFrame:
+        DataFrame(cols: Array[Column].new(), height: 0)
+
+    # Appends `column`. The first column fixes the number of rows; a later one
+    # must have as many, and a mask as long as its values.
+    public def add(mutable self, column: Column) -> Error?:
+        if self.column_index(&column.name)?:
+            return failed(f"there is already a column named \"{column.name}\"")
+        if column.slots() is not column.present.length():
+            return failed(f"column \"{column.name}\" has {column.slots()} values and a mask of {column.present.length()}")
+        if self.cols.length() > 0 and column.length() is not self.height:
+            return failed(f"column \"{column.name}\" has {column.length()} rows, the frame has {self.height}")
+        self.height be column.length()
+        self.cols.push(column)
+        null
+
+    # --- shape and names ---
+
+    public def rows(self) -> Int:
+        self.height
+
+    public def columns(self) -> Int:
+        self.cols.length()
+
+    public def names(self) -> Array[String]:
+        let mutable out be Array[String].new()
+        for column in &self.cols:
+            out.push(column.name.clone())
+        out
+
+    public def column_index(self, name: &String) -> Int?:
+        for i in 0..self.cols.length():
+            if self.cols[i].name is name:
+                return i
+        null
+
+    # `"F64"`, `"Int"`, `"String"` or `"Bool"`; `null` for an unknown column.
+    public def type_of(self, name: &String) -> String?:
+        let index be self.column_index(name)
+        if not index?:
+            return null
+        self.cols[index].type_name()
+
+    # --- cells ---
+
+    # `null` for a missing cell, an unknown column, a column of another type or
+    # a row out of range.
+    public def float_at(self, name: &String, row: Int) -> F64?:
+        let index be self.column_index(name)
+        if not index?:
+            return null
+        let column be &self.cols[index]
+        if column.kind is not FLOAT or row < 0 or row >= column.length():
+            return null
+        if not column.present[row]:
+            return null
+        column.floats[row]
+
+    public def int_at(self, name: &String, row: Int) -> Int?:
+        let index be self.column_index(name)
+        if not index?:
+            return null
+        let column be &self.cols[index]
+        if column.kind is not INT or row < 0 or row >= column.length():
+            return null
+        if not column.present[row]:
+            return null
+        column.ints[row]
+
+    public def text_at(self, name: &String, row: Int) -> String?:
+        let index be self.column_index(name)
+        if not index?:
+            return null
+        let column be &self.cols[index]
+        if column.kind is not TEXT or row < 0 or row >= column.length():
+            return null
+        if not column.present[row]:
+            return null
+        column.texts[row].clone()
+
+    public def bool_at(self, name: &String, row: Int) -> Bool?:
+        let index be self.column_index(name)
+        if not index?:
+            return null
+        let column be &self.cols[index]
+        if column.kind is not BOOL or row < 0 or row >= column.length():
+            return null
+        if not column.present[row]:
+            return null
+        column.bools[row]
+
+    # Whether the cell is missing; also true for an unknown column or row.
+    public def is_missing(self, name: &String, row: Int) -> Bool:
+        let index be self.column_index(name)
+        if not index?:
+            return true
+        let column be &self.cols[index]
+        if row < 0 or row >= column.length():
+            return true
+        not column.present[row]
+
+    # --- selecting and slicing ---
+
+    # The named columns, in the order given.
+    public def select(self, names: &Array[String]) -> (DataFrame, Error?):
+        let mutable out be DataFrame.new()
+        for name in names:
+            let index be self.column_index(name)
+            if not index?:
+                return (DataFrame.new(), failed(f"no column named \"{name}\""))
+            let err be out.add(self.cols[index].copy())
+            if err?:
+                return (DataFrame.new(), err)
+        (out, null)
+
+    # The rows at `rows`, in that order (a row may repeat).
+    public def take(self, rows: &Array[Int]) -> (DataFrame, Error?):
+        for r in rows:
+            if r < 0 or r >= self.height:
+                return (DataFrame.new(), failed(f"no row {r}"))
+        (self.gather(rows), null)
+
+    def gather(self, rows: &Array[Int]) -> DataFrame:
+        let mutable out be DataFrame.new()
+        for column in &self.cols:
+            out.cols.push(column.gather(rows))
+        out.height be rows.length()
+        out
+
+    # The first `count` rows (all of them if there are fewer).
+    public def head(self, count: Int) -> DataFrame:
+        let mutable rows be Array[Int].new()
+        for i in 0..self.height:
+            if i < count:
+                rows.push(i)
+        self.gather(&rows)
+
+    # The rows for which `keep(frame, row)` is true.
+    public def filter(self, keep: (&DataFrame, Int) -> Bool) -> DataFrame:
+        let mutable rows be Array[Int].new()
+        for i in 0..self.height:
+            if keep(self, i):
+                rows.push(i)
+        self.gather(&rows)
+
+    # The rows whose `F64` cell in `name` satisfies `keep`; a missing cell fails.
+    public def filter_float(self, name: &String, keep: (F64) -> Bool) -> (DataFrame, Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (DataFrame.new(), failed(f"no column named \"{name}\""))
+        let column be &self.cols[index]
+        if column.kind is not FLOAT:
+            return (DataFrame.new(), failed(f"column \"{name}\" is {column.type_name()}, not F64"))
+        let mutable rows be Array[Int].new()
+        for i in 0..self.height:
+            if column.present[i] and keep(column.floats[i]):
+                rows.push(i)
+        (self.gather(&rows), null)
+
+    public def filter_int(self, name: &String, keep: (Int) -> Bool) -> (DataFrame, Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (DataFrame.new(), failed(f"no column named \"{name}\""))
+        let column be &self.cols[index]
+        if column.kind is not INT:
+            return (DataFrame.new(), failed(f"column \"{name}\" is {column.type_name()}, not Int"))
+        let mutable rows be Array[Int].new()
+        for i in 0..self.height:
+            if column.present[i] and keep(column.ints[i]):
+                rows.push(i)
+        (self.gather(&rows), null)
+
+    public def filter_text(self, name: &String, keep: (&String) -> Bool) -> (DataFrame, Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (DataFrame.new(), failed(f"no column named \"{name}\""))
+        let column be &self.cols[index]
+        if column.kind is not TEXT:
+            return (DataFrame.new(), failed(f"column \"{name}\" is {column.type_name()}, not String"))
+        let mutable rows be Array[Int].new()
+        for i in 0..self.height:
+            if column.present[i] and keep(&column.texts[i]):
+                rows.push(i)
+        (self.gather(&rows), null)
+
+    # --- sorting ---
+
+    # The rows ordered by column `name`; stable, missing cells last.
+    public def sort_by(self, name: &String, descending: Bool) -> (DataFrame, Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (DataFrame.new(), failed(f"no column named \"{name}\""))
+        let order be sorted_rows(&self.cols[index], descending, self.height)
+        (self.gather(&order), null)
+
+    # --- grouping ---
+
+    # Groups by column `key` and computes `specs` per group. See the header.
+    public def aggregate(self, key: &String, specs: &Array[Agg]) -> (DataFrame, Error?):
+        let key_index be self.column_index(key)
+        if not key_index?:
+            return (DataFrame.new(), failed(f"no column named \"{key}\""))
+        let keys be &self.cols[key_index]
+        let mutable seen be Map[String, Int].new()
+        let mutable group_of be Array[Int].new()
+        let mutable firsts be Array[Int].new()
+        for row in 0..self.height:
+            let mutable label be String.new()
+            if keys.present[row]:
+                label.push_str("v")
+                label.push_str(&keys.text_of(row))
+            else:
+                label.push_str("n")
+            let found be seen.get(&label)
+            if found?:
+                group_of.push(found)
+            else:
+                group_of.push(firsts.length())
+                seen.insert(label, firsts.length())
+                firsts.push(row)
+        let mutable out be DataFrame.new()
+        let first_err be out.add(keys.gather(&firsts))
+        if first_err?:
+            return (DataFrame.new(), first_err)
+        for spec in specs:
+            let made, err be self.compute(spec, &group_of, firsts.length())
+            if err?:
+                return (DataFrame.new(), err)
+            let add_err be out.add(made)
+            if add_err?:
+                return (DataFrame.new(), add_err)
+        (out, null)
+
+    # One aggregated column; `group_of[row]` is the row's group, of `groups`.
+    def compute(self, spec: &Agg, group_of: &Array[Int], groups: Int) -> (Column, Error?):
+        let none be Column.empty(String.new(), FLOAT)
+        let label be spec.label()
+        let mutable counts be Array[Int].new()
+        let mutable float_sums be Array[F64].new()
+        let mutable int_sums be Array[Int].new()
+        let mutable best be Array[Int].new()
+        for _ in 0..groups:
+            counts.push(0)
+            float_sums.push(0.0)
+            int_sums.push(0)
+            best.push(-1)
+        if spec.op is ROWS:
+            for row in 0..self.height:
+                counts[group_of[row]] be counts[group_of[row]] + 1
+            return (Column.of_ints(label, counts), null)
+        let index be self.column_index(&spec.column)
+        if not index?:
+            return (none, failed(f"no column named \"{spec.column}\""))
+        let column be &self.cols[index]
+        if (spec.op is SUM or spec.op is MEAN) and not column.is_numeric():
+            return (none, failed(f"cannot take the {label} of a {column.type_name()} column"))
+        for row in 0..self.height:
+            if not column.present[row]:
+                continue
+            let g be group_of[row]
+            counts[g] be counts[g] + 1
+            if spec.op is SUM or spec.op is MEAN:
+                if column.kind is INT:
+                    int_sums[g] be int_sums[g] + column.ints[row]
+                float_sums[g] be float_sums[g] + column.number_at(row)
+            else if spec.op is MIN or spec.op is MAX:
+                let incumbent be best[g]
+                if incumbent < 0:
+                    best[g] be row
+                else:
+                    let order be column.compare(row, incumbent)
+                    if spec.op is MIN and order < 0:
+                        best[g] be row
+                    if spec.op is MAX and order > 0:
+                        best[g] be row
+        if spec.op is COUNT:
+            return (Column.of_ints(label, counts), null)
+        if spec.op is SUM:
+            if column.kind is INT:
+                return (Column.of_ints(label, int_sums), null)
+            return (Column.of_floats(label, float_sums), null)
+        if spec.op is MEAN:
+            let mutable means be Array[F64].new()
+            let mutable mask be Array[Bool].new()
+            for g in 0..groups:
+                mask.push(counts[g] > 0)
+                if counts[g] > 0:
+                    means.push(float_sums[g] / (counts[g] as F64))
+                else:
+                    means.push(0.0)
+            return (Column.of_floats(label, means).masked(mask), null)
+        (column.gather(&best).renamed(label), null)
+
+    # --- joining ---
+
+    # Rows of `self` and `other` whose `key` cells are equal (and present).
+    public def inner_join(self, other: &DataFrame, key: &String) -> (DataFrame, Error?):
+        let left_index be self.column_index(key)
+        let right_index be other.column_index(key)
+        if not left_index? or not right_index?:
+            return (DataFrame.new(), failed(f"both frames need a column named \"{key}\""))
+        let left_key be &self.cols[left_index]
+        let right_key be &other.cols[right_index]
+        if left_key.kind is not right_key.kind:
+            return (DataFrame.new(), failed(f"column \"{key}\" is {left_key.type_name()} on the left and {right_key.type_name()} on the right"))
+        # Right rows by key, as chains: `head[key]` is the first, `next[r]` the
+        # next row with the same key (-1 at the end), built from the back.
+        let mutable head be Map[String, Int].new()
+        let mutable next be Array[Int].new()
+        for _ in 0..other.height:
+            next.push(-1)
+        let mutable r be other.height - 1
+        loop:
+            if r < 0:
+                break
+            if right_key.present[r]:
+                let old be head.insert(right_key.text_of(r), r)
+                if old?:
+                    next[r] be old
+            r be r - 1
+        let mutable left_rows be Array[Int].new()
+        let mutable right_rows be Array[Int].new()
+        for l in 0..self.height:
+            if not left_key.present[l]:
+                continue
+            let found be head.get(&left_key.text_of(l))
+            if not found?:
+                continue
+            let mutable at be found
+            loop:
+                if at < 0:
+                    break
+                left_rows.push(l)
+                right_rows.push(at)
+                at be next[at]
+        let mutable out be self.gather(&left_rows)
+        for column in &other.cols:
+            if column.name is key:
+                continue
+            let mutable name be column.name.clone()
+            if out.column_index(&name)?:
+                name.push_str("_right")
+            let err be out.add(column.gather(&right_rows).renamed(name))
+            if err?:
+                return (DataFrame.new(), err)
+        (out, null)
+
+    # --- statistics ---
+
+    # `column`, `count`, `mean`, `std`, `min`, `max` for each numeric column.
+    public def describe(self) -> DataFrame:
+        let mutable names be Array[String].new()
+        let mutable counts be Array[Int].new()
+        let mutable means be Array[F64].new()
+        let mutable stds be Array[F64].new()
+        let mutable lows be Array[F64].new()
+        let mutable highs be Array[F64].new()
+        let mutable mean_ok be Array[Bool].new()
+        let mutable std_ok be Array[Bool].new()
+        let mutable low_ok be Array[Bool].new()
+        let mutable high_ok be Array[Bool].new()
+        for column in &self.cols:
+            if not column.is_numeric():
+                continue
+            let mutable n be 0
+            let mutable total be 0.0
+            let mutable low be 0.0
+            let mutable high be 0.0
+            for i in 0..column.length():
+                if column.present[i]:
+                    let x be column.number_at(i)
+                    if n is 0 or x < low:
+                        low be x
+                    if n is 0 or x > high:
+                        high be x
+                    n be n + 1
+                    total be total + x
+            let mutable mean be 0.0
+            let mutable spread be 0.0
+            if n > 0:
+                mean be total / (n as F64)
+            if n > 1:
+                let mutable squares be 0.0
+                for i in 0..column.length():
+                    if column.present[i]:
+                        let d be column.number_at(i) - mean
+                        squares be squares + d * d
+                spread be (squares / ((n - 1) as F64)).sqrt()
+            names.push(column.name.clone())
+            counts.push(n)
+            means.push(mean)
+            stds.push(spread)
+            lows.push(low)
+            highs.push(high)
+            mean_ok.push(n > 0)
+            std_ok.push(n > 1)
+            low_ok.push(n > 0)
+            high_ok.push(n > 0)
+        let mutable out be DataFrame.new()
+        out.add(Column.of_texts("column", names))
+        out.add(Column.of_ints("count", counts))
+        out.add(Column.of_floats("mean", means).masked(mean_ok))
+        out.add(Column.of_floats("std", stds).masked(std_ok))
+        out.add(Column.of_floats("min", lows).masked(low_ok))
+        out.add(Column.of_floats("max", highs).masked(high_ok))
+        out
+
+    # --- tensors ---
+
+    # The named `F64` or `Int` columns as a `rows x names.length()` array. A
+    # missing cell is an error.
+    public def to_ndarray(self, names: &Array[String]) -> (NdArray, Error?):
+        self.build_array(names, false, 0.0)
+
+    # The same, a missing cell becoming `fill`.
+    public def to_ndarray_filling(self, names: &Array[String], fill: F64) -> (NdArray, Error?):
+        self.build_array(names, true, fill)
+
+    def build_array(self, names: &Array[String], filling: Bool, fill: F64) -> (NdArray, Error?):
+        let none be NdArray.zeros(&[0])
+        let mutable picked be Array[Int].new()
+        for name in names:
+            let index be self.column_index(name)
+            if not index?:
+                return (none, failed(f"no column named \"{name}\""))
+            if not self.cols[index].is_numeric():
+                return (none, failed(f"column \"{name}\" is {self.cols[index].type_name()}, not numeric"))
+            picked.push(index)
+        let mutable data be Array[F64].new()
+        for row in 0..self.height:
+            for p in picked:
+                let column be &self.cols[p]
+                if column.present[row]:
+                    data.push(column.number_at(row))
+                else if filling:
+                    data.push(fill)
+                else:
+                    return (none, failed(f"column \"{column.name}\", row {row + 1}: the cell is missing"))
+        NdArray.from_array(data, &[self.height, picked.length()])
+
+    # A frame from a 2-D array, column `j` called `names[j]`.
+    public def from_ndarray(array: &NdArray, names: &Array[String]) -> (DataFrame, Error?):
+        if array.dims.length() is not 2:
+            return (DataFrame.new(), failed(f"expected a 2-D array, found {array.dims.length()} dimensions"))
+        if array.dims[1] is not names.length():
+            return (DataFrame.new(), failed(f"the array has {array.dims[1]} columns and {names.length()} names were given"))
+        let mutable out be DataFrame.new()
+        let height: Int be array.dims[0]
+        let width: Int be array.dims[1]
+        for j in 0..names.length():
+            let mutable values be Array[F64].new()
+            for i in 0..height:
+                values.push(array.data[i * width + j])
+            let err be out.add(Column.of_floats(names[j].clone(), values))
+            if err?:
+                return (DataFrame.new(), err)
+        if names.length() is 0:
+            return (out, null)
+        (out, null)
+
+    # --- CSV ---
+
+    # Columns typed by what their fields parse as (see the header).
+    public def from_table(table: &Table) -> (DataFrame, Error?):
+        let mutable out be DataFrame.new()
+        for c in 0..table.column_count():
+            let mutable name be f"column_{c + 1}"
+            if c < table.header.length():
+                name be table.header[c].clone()
+            let err be out.add(infer(table, c, name))
+            if err?:
+                return (DataFrame.new(), err)
+        (out, null)
+
+    public def from_csv_text(text: &String) -> (DataFrame, Error?):
+        let table, err be Table.parse(text, &Options.new())
+        if err?:
+            return (DataFrame.new(), err)
+        DataFrame.from_table(&table)
+
+    public def read_csv(path: &String) -> (DataFrame, Error?):
+        let table, err be Table.read(path, &Options.new())
+        if err?:
+            return (DataFrame.new(), err)
+        DataFrame.from_table(&table)
+
+    # The frame as a `csv.Table`: the names as header, every cell as text, a
+    # missing cell as an empty field.
+    public def to_table(self) -> Table:
+        let mutable rows be Array[Array[String]].new()
+        let mutable lines be Array[Int].new()
+        for row in 0..self.height:
+            let mutable record be Array[String].new()
+            for column in &self.cols:
+                if column.present[row]:
+                    record.push(column.text_of(row))
+                else:
+                    record.push(String.new())
+            rows.push(record)
+            lines.push(row + 2)
+        Table(header: self.names(), rows: rows, lines: lines)
+
+    public def to_csv_text(self) -> String:
+        let mutable writer be Writer.new(&Options.new())
+        writer.write_table(&self.to_table())
+        f"{writer.text()}"
+
+    public def write_csv(self, path: &String) -> Error?:
+        let mutable writer be Writer.new(&Options.new())
+        writer.write_table(&self.to_table())
+        writer.save(path)
+
+    # --- display ---
+
+    # The aligned table the header describes.
+    public def render(self) -> String:
+        let mutable widths be Array[Int].new()
+        let mutable shown be Array[Array[String]].new()
+        for column in &self.cols:
+            let mutable cells be Array[String].new()
+            let mutable width be chars_count(&column.name)
+            for row in 0..self.height:
+                let mutable cell be String.new()
+                if column.present[row]:
+                    cell be column.text_of(row)
+                else:
+                    cell be "null"
+                if chars_count(&cell) > width:
+                    width be chars_count(&cell)
+                cells.push(cell)
+            widths.push(width)
+            shown.push(cells)
+        let mutable out be String.new()
+        for line in 0..self.height + 2:
+            if line > 0:
+                out.push_str("\n")
+            let mutable text be String.new()
+            for c in 0..self.cols.length():
+                let column be &self.cols[c]
+                let mutable cell be String.new()
+                if line is 0:
+                    cell be column.name.clone()
+                else if line is 1:
+                    cell be repeat_dash(widths[c])
+                else:
+                    cell be shown[c][line - 2].clone()
+                if c > 0:
+                    text.push_str("  ")
+                if column.is_numeric():
+                    text.push_str(&pad_start(&cell, widths[c], " "))
+                else if c + 1 < self.cols.length():
+                    text.push_str(&pad_end(&cell, widths[c], " "))
+                else:
+                    text.push_str(&cell)
+            out.push_str(&text)
+        out
+
+DataFrame implements Display:
+    def display(self, into: &mut Formatter):
+        let text be self.render()
+        into.raw(&text)
+
+# --- helpers ------------------------------------------------------------------
+
+def repeat_dash(count: Int) -> String:
+    let mutable out be String.new()
+    for _ in 0..count:
+        out.push_str("-")
+    out
+
+# A column from field `c` of every record of `table` (see the header).
+def infer(table: &Table, c: Int, name: String) -> Column:
+    let rows be &table.rows
+    let mutable ints be true
+    let mutable floats be true
+    let mutable bools be true
+    let mutable seen be false
+    for r in 0..rows.length():
+        if c >= rows[r].length() or rows[r][c].is_empty():
+            continue
+        seen be true
+        let field be &rows[r][c]
+        let _i, int_err be field.parse_int()
+        if int_err?:
+            ints be false
+        let _f, float_err be field.parse_float()
+        if float_err?:
+            floats be false
+        if field is not "true" and field is not "false":
+            bools be false
+    let mutable kind be TEXT
+    if not seen:
+        kind be TEXT
+    else if ints:
+        kind be INT
+    else if floats:
+        kind be FLOAT
+    else if bools:
+        kind be BOOL
+    let mutable column be Column.empty(name, kind)
+    for r in 0..rows.length():
+        if c >= rows[r].length() or rows[r][c].is_empty():
+            column.push_missing()
+            continue
+        let field be &rows[r][c]
+        column.present.push(true)
+        if kind is INT:
+            let value, _e be field.parse_int()
+            column.ints.push(value)
+        else if kind is FLOAT:
+            let value, _e be field.parse_float()
+            column.floats.push(value)
+        else if kind is BOOL:
+            column.bools.push(field is "true")
+        else:
+            column.texts.push(field.clone())
+    column
+
+# The rows `0..count` ordered by `column`: a stable bottom-up merge sort.
+def sorted_rows(column: &Column, descending: Bool, count: Int) -> Array[Int]:
+    let mutable order be Array[Int].new()
+    for i in 0..count:
+        order.push(i)
+    let mutable width be 1
+    loop:
+        if width >= count:
+            break
+        let mutable merged be Array[Int].new()
+        let mutable start be 0
+        loop:
+            if start >= count:
+                break
+            let mid be smaller(start + width, count)
+            let stop be smaller(start + 2 * width, count)
+            let mutable i be start
+            let mutable j be mid
+            loop:
+                if i >= mid and j >= stop:
+                    break
+                if j >= stop:
+                    merged.push(order[i])
+                    i be i + 1
+                else if i >= mid:
+                    merged.push(order[j])
+                    j be j + 1
+                else if column.precedes(order[j], order[i], descending):
+                    merged.push(order[j])
+                    j be j + 1
+                else:
+                    merged.push(order[i])
+                    i be i + 1
+            start be stop
+        order be merged
+        width be width * 2
+    order
+
+def smaller(a: Int, b: Int) -> Int:
+    if a < b:
+        return a
+    b
