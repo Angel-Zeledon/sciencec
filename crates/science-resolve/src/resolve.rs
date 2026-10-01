@@ -213,6 +213,10 @@ struct Resolver {
     /// Payload arity per variant, which decides whether a bare name in a
     /// pattern matches or binds (§4.4).
     variant_arity: HashMap<DefId, usize>,
+    /// Parameter count of every module-level function that is not generic,
+    /// which is what lets its bare name stand in for a closure of that many
+    /// parameters (see `Resolver::resolve_args`).
+    fn_arity: HashMap<DefId, usize>,
     /// How many fields each record has, which decides what `Doc()` means.
     record_fields: HashMap<DefId, Vec<DefId>>,
     /// The prelude's own declarations, built once and handed to the crate
@@ -262,6 +266,7 @@ impl Resolver {
             prelude_items: prelude.items,
             scopes,
             variant_arity: prelude.variant_arity.into_iter().collect(),
+            fn_arity: HashMap::new(),
             record_fields: HashMap::new(),
             ribs: Scopes::new(),
             current_module: root,
@@ -400,12 +405,18 @@ impl Resolver {
     fn collect_item(&mut self, module: DefId, item: &ast::Item) -> ItemDefs {
         match &item.kind {
             ast::ItemKind::Use(_) => ItemDefs::Use,
-            ast::ItemKind::Fn(decl) => ItemDefs::Fn(self.declare_in_module(
-                module,
-                DefKind::Fn,
-                &decl.name,
-                visibility(decl.is_pub),
-            )),
+            ast::ItemKind::Fn(decl) => {
+                let def = self.declare_in_module(
+                    module,
+                    DefKind::Fn,
+                    &decl.name,
+                    visibility(decl.is_pub),
+                );
+                if decl.generics.is_empty() && decl.self_param.is_none() {
+                    self.fn_arity.insert(def, decl.params.len());
+                }
+                ItemDefs::Fn(def)
+            }
             ast::ItemKind::Record(decl) => {
                 let def = self.declare_in_module(
                     module,
@@ -2421,14 +2432,61 @@ impl Resolver {
     /// parameter `by`, and there is no `by` in any scope; matching it to a
     /// parameter needs the callee's signature, which is `science-types`' to know.
     /// The label is carried through unchanged so that it can.
+    ///
+    /// **A bare function name as an argument is a closure.** `map(half)` is
+    /// `map(x giving half(x))`: the language has no function type beside the
+    /// closure's, so the only thing a function's name can mean where a value
+    /// is passed is the closure that calls it. Only a non-generic function
+    /// qualifies, because it is the arity that is needed here and a generic
+    /// one has no single instantiation to name.
     fn resolve_args(&mut self, args: &[ast::Arg]) -> Vec<hir::Arg> {
         args.iter()
-            .map(|arg| hir::Arg {
-                name: arg.name.clone(),
-                value: self.resolve_expr(&arg.value),
-                span: arg.span,
+            .map(|arg| {
+                let value = self.resolve_expr(&arg.value);
+                let value = self.function_as_closure(value);
+                hir::Arg { name: arg.name.clone(), value, span: arg.span }
             })
             .collect()
+    }
+
+    fn function_as_closure(&mut self, value: hir::Expr) -> hir::Expr {
+        let hir::ExprKind::Path { res: Res::Def(callee), generics } = &value.kind else {
+            return value;
+        };
+        let Some(&arity) = self.fn_arity.get(callee) else { return value };
+        if arity == 0 || !generics.is_empty() {
+            return value;
+        }
+        let span = value.span;
+        let params: Vec<DefId> = (0..arity)
+            .map(|at| {
+                let name = format!("arg{at}");
+                self.defs.alloc(DefKind::Param, &name, span, Some(self.current_module))
+            })
+            .collect();
+        let args = params
+            .iter()
+            .map(|param| hir::Arg {
+                name: None,
+                value: hir::Expr {
+                    kind: hir::ExprKind::Path { res: Res::Def(*param), generics: Vec::new() },
+                    span,
+                },
+                span,
+            })
+            .collect();
+        let call = hir::Expr {
+            kind: hir::ExprKind::Call { callee: Box::new(value), args },
+            span,
+        };
+        hir::Expr {
+            kind: hir::ExprKind::Closure {
+                param: params[0],
+                rest: params[1..].to_vec(),
+                body: Box::new(call),
+            },
+            span,
+        }
     }
 
     /// A dotted expression whose leftmost name is a module, folded back into

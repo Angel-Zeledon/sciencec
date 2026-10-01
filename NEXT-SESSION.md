@@ -412,8 +412,10 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
    campo a temporales antes de la activación. Reasignar un préstamo compartido
    (`current be next`) ya funcionaba; reasignar un `&mut` es decisión de
    `check.rs` (§4.7: asignar a un `&mut` escribe a través de él);
-4. `members[i].value be v` falla; `let a, _ be f()` y `f().0` no parsean; el
-   nombre de una función no es un valor (`map(half)` es `SC0400`);
+4. (cerrado) `let a, _ be f()`, `f().0`, `members[i].value be v` y `map(half)`
+   con una función de primer nivel no genérica ya funcionan. Quedan: `t.0.1`
+   (el lexer lo lee como el flotante `0.1`), `&t` sobre una tupla de literales
+   sin sufijo, y pasar `members[i]` a un parámetro `&mut M`;
 5. un closure que captura algo propio y no `Copy` no puede escapar, y los
    entornos de closures escapados no se liberan;
 6. `2.0 * z` (escalar a la izquierda) es un impl huérfano, `SC0207`.

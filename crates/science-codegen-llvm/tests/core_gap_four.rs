@@ -101,3 +101,23 @@ print(t.members[1].value)
 "#;
     assert_eq!(prints("indexed_field", source), "9\nz\nm1\nfirst\n8\n");
 }
+
+#[test]
+fn a_function_name_is_a_closure_where_one_is_expected() {
+    let source = r#"def half(x: Int) -> Int:
+    x / 2
+
+def add(a: Int, b: Int) -> Int:
+    a + b
+
+let xs be [2, 4, 6]
+let ys be xs.iterate().map(half).collect()
+print(ys.length())
+let first be ys.get(0)
+if first?:
+    print(first)
+print(xs.iterate().reduce(0, add))
+print(xs.iterate().map(half).sum())
+"#;
+    assert_eq!(prints("function_value", source), "3\n1\n12\n6\n");
+}
