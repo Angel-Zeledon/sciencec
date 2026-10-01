@@ -663,6 +663,15 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   if line?:\n\
          \x20       print(line)\n",
     ),
+    // `Array.clone()` of an element that owns more than a `String` reaches
+    // `science_array_clone_with`, which takes a per-element clone thunk.
+    (
+        "array_clone_of_arrays",
+        "def main():\n\
+         \x20   let rows be [[1, 2], [3]]\n\
+         \x20   let copy be rows.clone()\n\
+         \x20   print(copy.length())\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over

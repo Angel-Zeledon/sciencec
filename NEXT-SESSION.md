@@ -404,8 +404,11 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
 `stdlib-core.md` §7.3: la conversión se escribe en el `return`).
 
 **Huecos del núcleo todavía abiertos:**
-1. `Array.clone()` de elementos que poseen algo distinto de `String`
-   (`ScienceTypeInfo` no lleva una función de clonado por elemento);
+1. ~~`Array.clone()` de elementos que poseen algo distinto de `String`~~ —
+   cerrado: `science_array_clone_with` recibe un thunk de clonado por elemento
+   (`String`, `Array[U]` recursivo, o el `clone` de un `implements Clone:` no
+   genérico) al lado del descriptor; `ScienceTypeInfo` no cambió. Siguen sin
+   clonarse `Box`, tuplas, `T?` y tipos genéricos con elementos propietarios;
 2. ~~`match` sobre un `(&T)?` estrechado falla en el backend~~ (cerrado:
    `lower_match` desreferencia el nicho);
 3. (cerrado) `fail(c, "…", c.pos)` ya compila: MIR copia las lecturas de
@@ -416,8 +419,14 @@ renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 
    con una función de primer nivel no genérica ya funcionan. Quedan: `t.0.1`
    (el lexer lo lee como el flotante `0.1`), `&t` sobre una tupla de literales
    sin sufijo, y pasar `members[i]` a un parámetro `&mut M`;
-5. un closure que captura algo propio y no `Copy` no puede escapar, y los
-   entornos de closures escapados no se liberan;
+5. ~~un closure que captura algo propio y no `Copy` no puede escapar, y los
+   entornos de closures escapados no se liberan~~ — cerrado: un closure es
+   `{ code, env, drop }`; el entorno en el heap se libera (y sus capturas
+   propias se sueltan) al soltar el closure, y una variable local propia y no
+   `Copy` que el closure solo lee se *mueve* a su entorno cuando la función
+   puede devolverlo (§8.7). Sigue siendo préstamo (y `SC0333` si escapa): una
+   captura escrita o movida dentro del cuerpo, y un lugar alcanzado a través de
+   un préstamo o un campo;
 6. ~~`2.0 * z` es un impl huérfano~~ (cerrado: un tipo local entre los
    argumentos de la interfaz hace local el impl; `complex` y `ndarray`
    escriben `F64 implements Mul[…]`).

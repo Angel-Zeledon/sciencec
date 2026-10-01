@@ -452,20 +452,22 @@
 //! which the program means something.
 //!
 //! *Why only a function that returns a closure.* The by-value environment has to
-//! outlive the frame, so the backend gives it heap storage; a closure has no drop
-//! glue, so that storage is never released. Confining the cost to functions whose
+//! outlive the frame, so the backend gives it heap storage; a closure's third
+//! word is the destructor that releases it, and any owned capture, when the
+//! closure is dropped. Confining the cost to functions whose
 //! result can carry a closure keeps a chain's `each giving each + n` in a loop
 //! exactly as cheap as before, and a closure factory pays one small allocation
 //! per closure it makes. §8.1's observable difference (a write to the captured
 //! variable after the closure is made) is likewise confined to those functions,
 //! where it now compiles and the closure sees the value as of its creation.
 //!
-//! *Why only `Copy`, and only a read.* An owned non-`Copy` capture would have to
-//! *move* into an escaping closure, which needs a closure destructor and a move
-//! the caller's drop elaboration can see. That is the work §8.2 names and this
-//! does not do: such a capture is still a borrow and is still refused when it
-//! escapes. A write through the capture would make the copy and the original
-//! diverge, so it stays a borrow too.
+//! *An owned capture moves in.* A whole local that is not `Copy`, only read by
+//! the closure, in a function that may return it, is `Operand::Move`d into the
+//! environment: the caller's drop elaboration sees the move, and the closure's
+//! destructor (its third word) releases the value when the closure is dropped.
+//! A place reached through a borrow or a field is not the closure's to take and
+//! stays a borrow, as does anything the closure writes or moves out: a write
+//! would make the copy and the original diverge.
 //!
 //! *Representation.* The capture's operand is the value (`Operand::Copy` of the
 //! captured place) rather than the reference temporary §8 builds; the closure's
@@ -5424,6 +5426,28 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // function is the value itself, not a loan of this frame's slot.
             if escapes && !mutable && self.is_copy(ty) {
                 captures.push(Operand::Copy(place));
+                params.push(CaptureParam {
+                    def: capture.def,
+                    reference_ty: borrowed,
+                    referent_ty: ty,
+                    span: capture.span,
+                    moves: false,
+                });
+                continue;
+            }
+            // §8.7 (moving). An owned value that is not `Copy`, only read by a
+            // closure that may leave the function, moves into the closure's
+            // environment; the closure's destructor releases it. Only a whole
+            // local qualifies: a place reached through a borrow or a field is
+            // not the closure's to take.
+            let revealed = self.revealed(ty);
+            if escapes
+                && matches!(capture.use_kind, crate::capture::Use::Read)
+                && place.projection.is_empty()
+                && !matches!(self.context.types.kind(revealed), TyKind::Borrowed { .. })
+                && !self.is_copy(ty)
+            {
+                captures.push(Operand::Move(place));
                 params.push(CaptureParam {
                     def: capture.def,
                     reference_ty: borrowed,

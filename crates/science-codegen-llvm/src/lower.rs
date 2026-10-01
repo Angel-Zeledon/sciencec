@@ -1199,6 +1199,25 @@ impl<'a> Lowerer<'a> {
     fn drop_methods_of(&self, body: &MirBody) -> Vec<DefId> {
         let mut out = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
+        // A closure that owns a captured value releases it from its
+        // environment's destructor, which no `Drop` terminator in this body
+        // names the type of.
+        for (_, block) in body.blocks() {
+            for statement in &block.statements {
+                let StatementKind::Assign { rvalue: Rvalue::Closure { captures, .. }, .. } =
+                    &statement.kind
+                else {
+                    continue;
+                };
+                for capture in captures {
+                    if let Some(ty) = self.operand_ty(body, capture) {
+                        if !matches!(self.types.kind(ty), TyKind::Borrowed { .. }) {
+                            self.drop_methods_in(ty, 0, &mut seen, &mut out);
+                        }
+                    }
+                }
+            }
+        }
         for (_, block) in body.blocks() {
             let TerminatorKind::Drop { place, .. } = &block.terminator.kind else { continue };
             self.drop_methods_in(place.ty(body), 0, &mut seen, &mut out);
@@ -2276,6 +2295,9 @@ impl<'a> Lowerer<'a> {
         // and `Terminator::Branch` has been there since the CFG was; the
         // sentence *"one block per arm where this builds one block"* described
         // how this function was written, not what the emitter can do.
+        if matches!(self.types.kind(ty), TyKind::Closure { .. }) {
+            return self.intern_closure_glue(ty).map(Some);
+        }
         if let TyKind::Nullable(payload) = *self.types.kind(ty) {
             let rendered = self.types.render(self.defs, ty);
             let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
@@ -2916,6 +2938,221 @@ impl<'a> Lowerer<'a> {
         let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
         let rendered = self.types.render(self.defs, element);
         Ok(self.descriptors.intern(&MonoKey::plain(&[rendered.as_str()]), info))
+    }
+
+    /// Glue for a closure value: call the destructor its third field holds on
+    /// the environment its second field holds. A closure whose environment
+    /// owns nothing holds [`Lowerer::intern_closure_nodrop`], so there is no
+    /// branch and no case for a closure that captures nothing.
+    fn intern_closure_glue(&mut self, ty: Ty) -> Result<String, Unlowered> {
+        let rendered = self.types.render(self.defs, ty);
+        let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
+        if self.glue.contains(&symbol) {
+            return Ok(symbol);
+        }
+        self.glue.insert(symbol.clone());
+        let layout = self.layout_of_ty(ty)?;
+        let Repr::Aggregate { fields } = &layout.repr else {
+            return Err(Unlowered::new(
+                "closure drop glue for a layout that is not the `{ code, env, drop }` triple",
+            ));
+        };
+        let (Some(env), Some(drop)) = (fields.get(CLOSURE_ENV), fields.get(CLOSURE_DROP)) else {
+            return Err(Unlowered::new(
+                "closure drop glue for a layout with fewer than the three fields \
+                 `{ code, env, drop }`",
+            ));
+        };
+        let (env, drop) = (env.clone(), drop.clone());
+        let mut insts = Vec::new();
+        let mut loaded = [ValueId(0); 2];
+        let mut next_value = 0u32;
+        for (at, place) in [&env, &drop].into_iter().enumerate() {
+            let address = ValueId(next_value);
+            next_value += 1;
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Param(0),
+                offset: place.offset,
+            });
+            let value = ValueId(next_value);
+            next_value += 1;
+            insts.push(ExtInst::LoadAt {
+                dest: value,
+                address: Operand::Value(address),
+                layout: place.layout.clone(),
+            });
+            loaded[at] = value;
+        }
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+        let callee_signature = AbiSignature::science(
+            self.target,
+            "a closure's environment destructor".to_string(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![("env".to_string(), pointer.clone(), ParamAttrs::default())],
+        );
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Indirect {
+                function: loaded[1],
+                signature: Box::new(callee_signature),
+            },
+            args: vec![Operand::Value(loaded[0])],
+            ret: ReturnClass::Void,
+            sret_slot: None,
+        }));
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(symbol)
+    }
+
+    /// The destructor of an environment that owns nothing: it returns. Every
+    /// closure value holds some destructor so that [`Lowerer::intern_closure_glue`]
+    /// never branches.
+    fn intern_closure_nodrop(&mut self) -> String {
+        let symbol = format!("{}.nodrop", mangle(&MonoKey::plain(&["closure"])));
+        if self.glue.contains(&symbol) {
+            return symbol;
+        }
+        self.glue.insert(symbol.clone());
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "env".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts: Vec::new(),
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        symbol
+    }
+
+    /// The destructor of a heap environment: release each value it owns (in
+    /// reverse capture order), then return the block to the allocator.
+    ///
+    /// `cells` are the `(offset, type)` of the by-value captures, `size` and
+    /// `align` the block's, exactly as [`Lowerer::lower_closure`] allocated it.
+    fn intern_closure_env_drop(
+        &mut self,
+        body_symbol: &str,
+        size: u64,
+        align: u64,
+        cells: &[(u64, Ty)],
+    ) -> Result<String, Unlowered> {
+        let symbol = format!("{body_symbol}.env.drop");
+        if self.glue.contains(&symbol) {
+            return Ok(symbol);
+        }
+        self.glue.insert(symbol.clone());
+        let mut insts: Vec<ExtInst> = Vec::new();
+        let mut next_value = 0u32;
+        for (offset, ty) in cells.iter().rev() {
+            let inner = self.intern_drop_glue(*ty, 0)?;
+            let direct = match &inner {
+                Some(_) => None,
+                None => self.direct_release(*ty)?,
+            };
+            let (callee, ret) = match (&inner, &direct) {
+                (Some(glue), _) => (Callee::Science(glue.clone()), ReturnClass::Void),
+                (None, Some((runtime, _))) => {
+                    (Callee::Runtime(runtime), self.declare(runtime)?.ret.clone())
+                }
+                // Owns nothing: a `Copy` capture.
+                (None, None) => continue,
+            };
+            let address = ValueId(next_value);
+            next_value += 1;
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Param(0),
+                offset: *offset,
+            });
+            let args = match &direct {
+                Some(d) => self.release_args(
+                    d,
+                    address,
+                    &mut || {
+                        let id = ValueId(next_value);
+                        next_value += 1;
+                        id
+                    },
+                    &mut insts,
+                ),
+                None => vec![Operand::Value(address)],
+            };
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee,
+                args,
+                ret,
+                sret_slot: None,
+            }));
+        }
+        let dealloc = self.declare("science_dealloc")?;
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Runtime("science_dealloc"),
+            args: vec![
+                Operand::Param(0),
+                Operand::ConstInt(size as i128),
+                Operand::ConstInt(align as i128),
+            ],
+            ret: dealloc.ret.clone(),
+            sret_slot: None,
+        }));
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "env".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(symbol)
     }
 
     /// The one-argument `drop_fn` a container nested inside another container
@@ -4917,19 +5154,11 @@ impl<'a> Lowerer<'a> {
                     )),
                 }
             }
-            // A closure never owns anything under this backend, and this is
-            // the one arm of this match that is not conservative about a type
-            // it cannot see behind — because it does not have to. `cg_ty_in`'s
-            // `TyKind::Closure` arm gives every value of this type the same
-            // layout, `{ code, env }`, and **both words are borrows of storage
-            // somebody else owns**: the code is a function's address, and the
-            // environment is `science-mir`'s §8 discipline, which makes every
-            // capture *"a borrow of the captured place"* and no capture a
-            // by-value one. There is nothing a closure could release that its
-            // enclosing frame is not already releasing, which is why a
-            // capturing closure adds no drop here rather than adding one this
-            // arm would have to become conservative about.
-            TyKind::Closure { .. } => Ok(false),
+            // A closure owns its environment when that is on the heap
+            // (`science-mir` §8.7): its third word is the destructor, which
+            // is a no-op for a frame-slot environment, so the answer does
+            // not depend on which closure the value is.
+            TyKind::Closure { .. } => Ok(true),
             // A type parameter, `Self`, an associated type: nothing here can
             // see what is behind either.
             _ => Ok(true),
@@ -8026,12 +8255,16 @@ impl<'a> Lowerer<'a> {
                  every closure type",
             ));
         };
-        let (code_place, env_place) = match (fields.get(CLOSURE_CODE), fields.get(CLOSURE_ENV)) {
-            (Some(code), Some(env)) => (code.clone(), env.clone()),
+        let (code_place, env_place, drop_place) = match (
+            fields.get(CLOSURE_CODE),
+            fields.get(CLOSURE_ENV),
+            fields.get(CLOSURE_DROP),
+        ) {
+            (Some(code), Some(env), Some(drop)) => (code.clone(), env.clone(), drop.clone()),
             _ => {
                 return Err(Unlowered::new(
-                    "a closure value whose layout has fewer than the two fields `{ code, env }` \
-                     asks for",
+                    "a closure value whose layout has fewer than the three fields \
+                     `{ code, env, drop }` asks for",
                 ));
             }
         };
@@ -8050,6 +8283,14 @@ impl<'a> Lowerer<'a> {
                 self.layout_of_ty(ty).ok()
             })
             .collect();
+        let by_value_ty: Vec<Option<Ty>> = captures
+            .iter()
+            .zip(&by_value)
+            .map(|(capture, layout)| layout.as_ref().and_then(|_| self.operand_ty(body, capture)))
+            .collect();
+        // The environment's destructor: the thunk that frees a heap block, or
+        // the one that does nothing for a frame slot and for no environment.
+        let mut drop_symbol: Option<String> = None;
         // The environment first, because the pair below stores its address.
         let env = if by_value.iter().any(Option::is_some) {
             let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
@@ -8070,6 +8311,12 @@ impl<'a> Lowerer<'a> {
                 }
             }
             size = size.div_ceil(align) * align;
+            let owned: Vec<(u64, Ty)> = cells
+                .iter()
+                .zip(&by_value_ty)
+                .filter_map(|(offset, ty)| Some(((*offset)?, (*ty)?)))
+                .collect();
+            drop_symbol = Some(self.intern_closure_env_drop(&symbol, size, align, &owned)?);
             let alloc = self.declare("science_alloc")?;
             let block = ctx.value();
             insts.push(ExtInst::Above(Inst::Call {
@@ -8163,9 +8410,15 @@ impl<'a> Lowerer<'a> {
 
         let base = ctx.value();
         insts.push(ExtInst::LocalAddr { dest: base, local: dest });
-        for (place, value) in
-            [(code_place, Operand::GlobalAddr(symbol)), (env_place, env)]
-        {
+        let drop_symbol = match drop_symbol {
+            Some(symbol) => symbol,
+            None => self.intern_closure_nodrop(),
+        };
+        for (place, value) in [
+            (code_place, Operand::GlobalAddr(symbol)),
+            (env_place, env),
+            (drop_place, Operand::GlobalAddr(drop_symbol)),
+        ] {
             let address = ctx.value();
             insts.push(ExtInst::FieldAddr {
                 dest: address,
@@ -13959,6 +14212,9 @@ const CLOSURE_CODE: usize = 0;
 /// The field of a closure value holding its capture environment's address, or
 /// null when it captures nothing.
 const CLOSURE_ENV: usize = 1;
+/// The field holding the environment's destructor: a function of the
+/// environment's address, which is never null.
+const CLOSURE_DROP: usize = 2;
 
 /// §10's *"a struct of `{ fn ptr, captures }`"*, as the one layout every
 /// closure of every arrow type shares. [`Lowerer::cg_ty_in`]'s
@@ -13974,6 +14230,12 @@ fn closure_cg_ty() -> CgTy {
         fields: vec![
             CgField::new("code", CgTy::Ptr(PtrKind::Fn)),
             CgField::new("env", CgTy::Ptr(PtrKind::Borrow)),
+            // The environment's destructor: a function of the environment
+            // address, never null. A closure whose environment is a slot in a
+            // frame (or no environment at all) holds `closure.nodrop`; one
+            // whose environment is on the heap holds the thunk that drops the
+            // values it owns and frees the block.
+            CgField::new("drop", CgTy::Ptr(PtrKind::Fn)),
         ],
     }
 }

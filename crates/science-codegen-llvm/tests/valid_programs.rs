@@ -584,3 +584,51 @@ def main():
         "2\n2\n3\nq\ndrop a\ndrop b\ndrop a\ndrop b\n"
     );
 }
+
+/// An escaping closure owns the value it captured (`science-mir` §8.7): the
+/// value moves into the environment, is released exactly once when the closure
+/// is dropped (wherever it ended up: a local, a parameter, a record field, an
+/// array element), and the environment block itself is freed.
+#[test]
+fn an_escaping_closure_owns_its_capture_and_releases_it_once() {
+    let source = "type Tag:
+    label: String
+
+Tag implements Drop:
+    def drop(mutable self):
+        print(f\"drop {self.label}\")
+
+type Holder:
+    f: (Int) -> Int
+    n: Int
+
+def tagged(tag: Tag) -> (Int) -> Int:
+    x giving x + tag.label.length()
+
+def hold(tag: Tag) -> Holder:
+    Holder(f: tagged(tag), n: 1)
+
+def pick(flag: Bool, a: Tag, b: Tag) -> (Int) -> Int:
+    if flag:
+        return tagged(a)
+    tagged(b)
+
+def twice(f: (Int) -> Int, v: Int) -> Int:
+    f(f(v))
+
+def main():
+    let h be hold(Tag(label: \"held\"))
+    print((h.f)(1))
+    let p be pick(true, Tag(label: \"A\"), Tag(label: \"B\"))
+    print(p(0))
+    let q be tagged(Tag(label: \"consumed\"))
+    print(twice(q, 1))
+    print(\"end\")
+    let fs be [tagged(Tag(label: \"e1\")), tagged(Tag(label: \"e2\"))]
+    print(fs.length())
+";
+    assert_eq!(
+        prints("escaping_closure_owns", source),
+        "5\ndrop B\n1\ndrop consumed\n17\nend\n2\ndrop e1\ndrop e2\ndrop A\ndrop held\n"
+    );
+}
