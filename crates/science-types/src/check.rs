@@ -1452,6 +1452,22 @@ impl<'a> BodyChecker<'a> {
                 if let Some(element_ty) = self.array_element(revealed) {
                     return self.array_lit_expecting(elements, element_ty, expected, expr.span);
                 }
+                // `count([])` where `&Array[T]` is expected: the call site's
+                // auto-borrow, with the expectation crossing it into the
+                // literal as `&[]` does.
+                if site == Site::Argument {
+                    if let TyKind::Borrowed { mutable, inner: held } = *self.types.kind(revealed) {
+                        let held_revealed = self.revealed(held, expr.span);
+                        if self.array_element(held_revealed).is_some() {
+                            let operand = self.check(expr, held, Site::Elsewhere);
+                            return self.body.push_expr(
+                                ExprKind::Borrow { mutable, operand },
+                                expected,
+                                expr.span,
+                            );
+                        }
+                    }
+                }
                 let typed = self.synth(expr);
                 self.demand(typed, expected, site, expr.span)
             }

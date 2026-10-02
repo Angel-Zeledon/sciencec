@@ -713,3 +713,22 @@ def main():
         "4.0\n2\n1.5\nabsent\n5\n6\n3.0\n5.0\n"
     );
 }
+
+/// `[]` passed straight to a `&Array[T]` parameter takes its element type from
+/// the parameter, as `&[]` does; a non-empty literal still works there.
+#[test]
+fn an_empty_array_literal_argument_takes_the_parameters_type() {
+    let source = "def count(xs: &Array[Int]) -> Int:
+    xs.length()
+
+def names(xs: &Array[String]) -> Int:
+    xs.length()
+
+def main():
+    print(count([]))
+    print(count([4, 5, 6]))
+    print(names([]))
+    print(names([\"a\", \"b\"]))
+";
+    assert_eq!(prints("empty_array_argument", source), "0\n3\n0\n2\n");
+}
