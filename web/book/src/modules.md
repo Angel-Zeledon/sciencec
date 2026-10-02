@@ -31,7 +31,7 @@ def main():
 ```
 
 ```shell
-sciencec run main.science
+sciencec main.science
 ```
 
 ```output

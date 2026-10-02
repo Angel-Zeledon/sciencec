@@ -80,28 +80,27 @@ export SCIENCE_LLVM_PREFIX=&quot;$(brew --prefix llvm@18)&quot;</code></pre>
 <p>Most distributions package LLVM 18. On Debian or Ubuntu:</p>
 <pre class="shell"><code>sudo apt install llvm-18-dev clang-18
 export SCIENCE_LLVM_PREFIX=/usr/lib/llvm-18</code></pre>
-<h2 id="build-the-compiler">Build the compiler<a class="anchor" href="#build-the-compiler" aria-hidden="true">#</a></h2>
+<h2 id="build-and-install-the-compiler">Build and install the compiler<a class="anchor" href="#build-and-install-the-compiler" aria-hidden="true">#</a></h2>
 <pre class="shell"><code>git clone https://github.com/Angel-Zeledon/sciencec
 cd sciencec
-cargo build --release -p science-rt -p sciencec --features llvm</code></pre>
-<p>The compiler is now at <code>target/release/sciencec</code>. Put it on your <code>PATH</code> so you can call it from anywhere:</p>
-<pre class="shell"><code>export PATH=&quot;$PWD/target/release:$PATH&quot;
-sciencec --version</code></pre>
-<aside class="callout-note"><p><strong>Note:</strong> the <code>--features llvm</code> flag matters. Without it you get a compiler that can check programs but not build them, and every <code>build</code> or <code>run</code> stops with error <code>SC0400</code>.</p></aside>
+./install.sh</code></pre>
+<p><code>install.sh</code> builds the compiler and its runtime and installs them for your user, with <code>sciencec</code> in <code>~/.local/bin</code>. If that directory is not on your <code>PATH</code> yet, the script tells you the line to add. Then:</p>
+<pre class="shell"><code>sciencec --version</code></pre>
+<p>Run <code>./install.sh</code> again after <code>git pull</code> to update.</p>
 <h2 id="editor-support">Editor support<a class="anchor" href="#editor-support" aria-hidden="true">#</a></h2>
 <p>The repository ships a VS Code extension in <code>editors/vscode</code> with syntax highlighting. Install it from the <code>.vsix</code> file with <em>Extensions → … → Install from VSIX</em>.</p>
 <h2 id="check-that-it-works">Check that it works<a class="anchor" href="#check-that-it-works" aria-hidden="true">#</a></h2>
 <p>Make a file called <code>hello.science</code> containing one line:</p>
 <pre data-science><code>print(&quot;It works!&quot;)</code></pre>
 <p>and run it:</p>
-<pre class="shell"><code>sciencec run hello.science</code></pre>
+<pre class="shell"><code>sciencec hello.science</code></pre>
 <pre class="output"><code>It works!</code></pre>
 <p>If you see that, you are ready for the next chapter.</p>
 <nav class="pager"><a class="prev" href="index.html"><span>Previous</span>Introduction</a><a class="next" href="hello-world.html"><span>Next</span>Hello, world</a></nav>
 </main>
 
 <aside class="onpage">
-<p class="group">On this page</p><ul><li><a href="#requirements">Requirements</a></li><li><a href="#macos">macOS</a></li><li><a href="#linux">Linux</a></li><li><a href="#build-the-compiler">Build the compiler</a></li><li><a href="#editor-support">Editor support</a></li><li><a href="#check-that-it-works">Check that it works</a></li></ul>
+<p class="group">On this page</p><ul><li><a href="#requirements">Requirements</a></li><li><a href="#macos">macOS</a></li><li><a href="#linux">Linux</a></li><li><a href="#build-and-install-the-compiler">Build and install the compiler</a></li><li><a href="#editor-support">Editor support</a></li><li><a href="#check-that-it-works">Check that it works</a></li></ul>
 </aside>
 </div>
 

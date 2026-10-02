@@ -88,6 +88,7 @@ Usage:
                               the same over every top-level function: a
                               measurement of the type mapping, and not a list
                               of callables anything should be offered
+    sciencec FILE [ARGS...]    the same as `sciencec run FILE -- ARGS...`
     sciencec run FILE [-- ARGS...]
                               build FILE, then run it with ARGS
     sciencec --version        print the version
@@ -116,12 +117,35 @@ does not already lex and parse — reformatting a file whose token stream is a
 guess is how a formatter eats a program.";
 
 fn main() -> ExitCode {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let args = script_form(std::env::args_os().skip(1).collect());
     match run(&args) {
         Outcome::Clean => ExitCode::SUCCESS,
         Outcome::Failed => ExitCode::FAILURE,
         Outcome::Exit(code) => ExitCode::from(code),
     }
+}
+
+/// `sciencec FILE [ARGS...]` is `sciencec run FILE -- ARGS...`.
+///
+/// This is the form a shell uses for a script — `python3 analysis.py`, or a
+/// `#!/usr/bin/env sciencec` line the lexer already skips — so a file runs
+/// without the reader having to know the subcommand. It applies only when
+/// the first operand ends in `.science` and is not a subcommand's name, so
+/// every spelling that meant something before still means it.
+fn script_form(args: Vec<OsString>) -> Vec<OsString> {
+    let is_script = args
+        .first()
+        .and_then(|first| first.to_str())
+        .is_some_and(|first| first.ends_with(".science") && !first.starts_with('-'));
+    if !is_script {
+        return args;
+    }
+    let mut rewritten = vec![OsString::from("run"), args[0].clone()];
+    if args.len() > 1 {
+        rewritten.push(OsString::from("--"));
+        rewritten.extend(args[1..].iter().cloned());
+    }
+    rewritten
 }
 
 enum Outcome {

@@ -277,11 +277,9 @@ pub fn test(session: &mut Session, flags: BuildFlags) {
 pub fn run(session: &mut Session, file: Option<&Path>, args: &[OsString], flags: BuildFlags) -> Option<u8> {
     let exe = match file {
         // Decision 15 rule 1: `sciencec run scripts/plot.science` runs that
-        // file, built beside itself as `sciencec build` would.
-        Some(file) => {
-            let output = if cfg!(windows) { file.with_extension("exe") } else { file.with_extension("") };
-            session.build_entry(file, &output, flags).then_some(output)?
-        }
+        // file. Its executable comes out of the run cache rather than being
+        // left beside it; `sciencec build` is how to keep one.
+        Some(file) => session.build_for_run(file, flags)?,
         None => build(session, flags)?,
     };
     session.run_program(&exe, args)

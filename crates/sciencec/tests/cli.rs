@@ -2308,3 +2308,48 @@ fn define(ir: &str, needle: &str) -> String {
         .unwrap_or_else(|| panic!("no `define` of `{needle}` in:\n{ir}"))
         .to_string()
 }
+
+/// `sciencec FILE ARGS...` runs the file the way a shell runs a script, and a
+/// `#!/usr/bin/env sciencec` first line is skipped, so `./file.science` works
+/// once the file is executable.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_science_file_runs_as_a_script_with_its_arguments() {
+    let file = scratch(
+        "script_form.science",
+        b"#!/usr/bin/env sciencec\nuse os (args)\n\nfor a in args():\n    print(a)\nprint(\"done\")\n",
+    );
+    let run = sciencec(&[&file, "alpha", "beta"]);
+    run.succeeded();
+    assert!(
+        run.stdout.ends_with("alpha\nbeta\ndone\n"),
+        "the program's arguments must reach it, and its output the console:\n{}",
+        run.stdout
+    );
+}
+
+/// Running a file keeps its executable in the run cache, not beside it, and
+/// an edit to the file is what makes the next run rebuild.
+#[cfg(feature = "llvm")]
+#[test]
+fn running_a_file_leaves_nothing_beside_it_and_rebuilds_after_an_edit() {
+    let file = scratch("run_cache.science", b"print(\"first\")\n");
+    let path = repo_root().join(&file);
+    let cache = path.parent().unwrap().join("cache");
+    let _ = std::fs::remove_dir_all(&cache);
+    let run = |expected: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_sciencec"))
+            .current_dir(repo_root())
+            .env("SCIENCE_CACHE", &cache)
+            .arg(&file)
+            .output()
+            .expect("the sciencec binary must be runnable");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    };
+    run("first\n");
+    run("first\n");
+    assert!(!path.with_extension("").exists(), "no executable belongs beside the script");
+    std::fs::write(&path, "print(\"second\")\n").unwrap();
+    run("second\n");
+    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 2, "one cached build per version of the file");
+}

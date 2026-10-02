@@ -26,25 +26,23 @@ sudo apt install llvm-18-dev clang-18
 export SCIENCE_LLVM_PREFIX=/usr/lib/llvm-18
 ```
 
-## Build the compiler
+## Build and install the compiler
 
 ```shell
 git clone https://github.com/Angel-Zeledon/sciencec
 cd sciencec
-cargo build --release -p science-rt -p sciencec --features llvm
+./install.sh
 ```
 
-The compiler is now at `target/release/sciencec`. Put it on your `PATH` so
-you can call it from anywhere:
+`install.sh` builds the compiler and its runtime and installs them for your
+user, with `sciencec` in `~/.local/bin`. If that directory is not on your
+`PATH` yet, the script tells you the line to add. Then:
 
 ```shell
-export PATH="$PWD/target/release:$PATH"
 sciencec --version
 ```
 
-> **Note:** the `--features llvm` flag matters. Without it you get a
-> compiler that can check programs but not build them, and every `build` or
-> `run` stops with error `SC0400`.
+Run `./install.sh` again after `git pull` to update.
 
 ## Editor support
 
@@ -63,7 +61,7 @@ print("It works!")
 and run it:
 
 ```shell
-sciencec run hello.science
+sciencec hello.science
 ```
 
 ```output

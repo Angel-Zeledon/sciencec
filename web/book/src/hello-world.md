@@ -15,7 +15,7 @@ Hello, world!
 and run it:
 
 ```shell
-sciencec run hello.science
+sciencec hello.science
 ```
 
 A file with statements at the top level is a **script**: the statements run
@@ -41,9 +41,36 @@ whatever is inside `{…}` is evaluated and put into the text.
 
 A file can have a `main` or top-level statements, not both.
 
+## Running it like any script
+
+Give the file a first line that names `sciencec`, and make it executable:
+
+```text
+#!/usr/bin/env sciencec
+print("Hello from a script!")
+```
+
+```shell
+chmod +x hello.science
+./hello.science
+```
+
+Arguments after the file name reach the program, through `args()` in the
+`os` module (the first one is the program's own name):
+
+```shell
+sciencec greet.science Ada Grace
+```
+
+The first run of a file compiles it, which takes a moment. Runs after that
+reuse the compiled program until you change the file, so they start
+immediately. Nothing is left next to your file; the compiled programs are
+kept in a cache (`~/Library/Caches/science` on macOS, `~/.cache/science` on
+Linux).
+
 ## Building an executable
 
-`sciencec run` compiles the file and runs it straight away. To keep the
+`sciencec hello.science` compiles the file and runs it straight away. To keep the
 executable instead, use `build`:
 
 ```shell
@@ -80,7 +107,7 @@ error[SC0100]: expected `be`, found `=`
 
 ## Summary
 
-- `sciencec run FILE` compiles and runs.
+- `sciencec FILE` compiles and runs, like `python FILE`.
 - `sciencec build FILE` produces an executable.
 - `sciencec check FILE` only looks for mistakes.
 - A file is either a script (top-level statements) or a program (`def main()`).

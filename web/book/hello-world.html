@@ -75,7 +75,7 @@
 <pre data-science><code>print(&quot;Hello, world!&quot;)</code></pre>
 <pre class="output"><code>Hello, world!</code></pre>
 <p>and run it:</p>
-<pre class="shell"><code>sciencec run hello.science</code></pre>
+<pre class="shell"><code>sciencec hello.science</code></pre>
 <p>A file with statements at the top level is a <strong>script</strong>: the statements run from top to bottom, like Python. That is the quickest way to try something.</p>
 <h2 id="a-program-with-main">A program with <code>main</code><a class="anchor" href="#a-program-with-main" aria-hidden="true">#</a></h2>
 <p>Once a file grows, put the starting point in a function called <code>main</code>:</p>
@@ -85,8 +85,17 @@
 <pre class="output"><code>Hello, Ada!</code></pre>
 <p><code>def</code> declares a function. The body is the indented block under it. <code>let name be &quot;Ada&quot;</code> gives a name to a value, and <code>f&quot;…&quot;</code> is a <em>formatted string</em>: whatever is inside <code>{…}</code> is evaluated and put into the text.</p>
 <p>A file can have a <code>main</code> or top-level statements, not both.</p>
+<h2 id="running-it-like-any-script">Running it like any script<a class="anchor" href="#running-it-like-any-script" aria-hidden="true">#</a></h2>
+<p>Give the file a first line that names <code>sciencec</code>, and make it executable:</p>
+<pre><code>#!/usr/bin/env sciencec
+print(&quot;Hello from a script!&quot;)</code></pre>
+<pre class="shell"><code>chmod +x hello.science
+./hello.science</code></pre>
+<p>Arguments after the file name reach the program, through <code>args()</code> in the <code>os</code> module (the first one is the program's own name):</p>
+<pre class="shell"><code>sciencec greet.science Ada Grace</code></pre>
+<p>The first run of a file compiles it, which takes a moment. Runs after that reuse the compiled program until you change the file, so they start immediately. Nothing is left next to your file; the compiled programs are kept in a cache (<code>~/Library/Caches/science</code> on macOS, <code>~/.cache/science</code> on Linux).</p>
 <h2 id="building-an-executable">Building an executable<a class="anchor" href="#building-an-executable" aria-hidden="true">#</a></h2>
-<p><code>sciencec run</code> compiles the file and runs it straight away. To keep the executable instead, use <code>build</code>:</p>
+<p><code>sciencec hello.science</code> compiles the file and runs it straight away. To keep the executable instead, use <code>build</code>:</p>
 <pre class="shell"><code>sciencec build hello.science
 ./hello</code></pre>
 <p>The result is an ordinary native program. It does not need <code>sciencec</code>, a virtual machine or an interpreter to run; you can copy it to another machine with the same operating system and run it there.</p>
@@ -99,12 +108,12 @@ print(name)</code></pre>
 <p>and the compiler tells you so, pointing at the <code>=</code> and offering the fix:</p>
 <pre class="err"><code>error[SC0100]: expected `be`, found `=`</code></pre>
 <h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
-<ul><li><code>sciencec run FILE</code> compiles and runs.</li><li><code>sciencec build FILE</code> produces an executable.</li><li><code>sciencec check FILE</code> only looks for mistakes.</li><li>A file is either a script (top-level statements) or a program (<code>def main()</code>).</li></ul>
+<ul><li><code>sciencec FILE</code> compiles and runs, like <code>python FILE</code>.</li><li><code>sciencec build FILE</code> produces an executable.</li><li><code>sciencec check FILE</code> only looks for mistakes.</li><li>A file is either a script (top-level statements) or a program (<code>def main()</code>).</li></ul>
 <nav class="pager"><a class="prev" href="installation.html"><span>Previous</span>Installation</a><a class="next" href="first-project.html"><span>Next</span>Your first project</a></nav>
 </main>
 
 <aside class="onpage">
-<p class="group">On this page</p><ul><li><a href="#a-script">A script</a></li><li><a href="#a-program-with-main">A program with <code>main</code></a></li><li><a href="#building-an-executable">Building an executable</a></li><li><a href="#checking-without-building">Checking without building</a></li><li><a href="#summary">Summary</a></li></ul>
+<p class="group">On this page</p><ul><li><a href="#a-script">A script</a></li><li><a href="#a-program-with-main">A program with <code>main</code></a></li><li><a href="#running-it-like-any-script">Running it like any script</a></li><li><a href="#building-an-executable">Building an executable</a></li><li><a href="#checking-without-building">Checking without building</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

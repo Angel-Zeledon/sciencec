@@ -313,6 +313,73 @@ impl Session {
         built
     }
 
+    /// `sciencec run FILE`'s build: the executable for `path`, out of a cache
+    /// keyed by every source the crate reads, when it is already there.
+    ///
+    /// **Why a cache and not `build`'s artefact beside the file.** Running a
+    /// script is the loop a reader is in while writing one, and building
+    /// beside the file left an executable next to every script and relinked
+    /// it on every run. On macOS a freshly linked binary is also verified on
+    /// its first launch, which under load costs seconds; a binary that is not
+    /// rebuilt is not verified again. The front half still runs every time —
+    /// it is what reports a mistake, and it is fast — and only codegen and
+    /// the link are skipped.
+    ///
+    /// The key is the text of every module the crate reads, the compiler's
+    /// own executable (size and modification time, so a rebuilt `sciencec`
+    /// never runs a stale binary) and the flags. `--emit=llvm-ir` writes its
+    /// file beside the executable, so it bypasses the cache and builds beside
+    /// the source as `build` does.
+    pub fn build_for_run(&mut self, path: &Path, flags: BuildFlags) -> Option<PathBuf> {
+        let beside = if cfg!(windows) { path.with_extension("exe") } else { path.with_extension("") };
+        let Some(cache) = run_cache_dir().filter(|_| !flags.emit_ir) else {
+            return self.build_entry(path, &beside, flags).then_some(beside);
+        };
+        let file = self.load(path)?;
+        let all = self.diagnostics(path, file);
+        if has_error(&all) {
+            self.report(all);
+            return None;
+        }
+
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let (sources, _) = self.crate_sources(path, file);
+        for source in &sources {
+            source.path.hash(&mut hasher);
+            science_db::source_text(&self.db, source.file).hash(&mut hasher);
+        }
+        if let Some(compiler) = std::env::current_exe().ok().and_then(|exe| exe.metadata().ok()) {
+            compiler.len().hash(&mut hasher);
+            compiler.modified().ok().hash(&mut hasher);
+        }
+        format!("{flags:?}").hash(&mut hasher);
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = if cfg!(windows) { format!("{stem}.exe") } else { stem };
+        let output = cache.join(format!("{:016x}", hasher.finish())).join(name);
+
+        if output.is_file() {
+            self.report(all);
+            return Some(output);
+        }
+        if let Some(dir) = output.parent() {
+            if std::fs::create_dir_all(dir).is_err() {
+                self.report(all);
+                return self.build_entry(path, &beside, flags).then_some(beside);
+            }
+        }
+        let mut all = all;
+        let built = match self.emit_executable(path, file, flags, &output) {
+            Ok(()) => true,
+            Err(diagnostics) => {
+                all.extend(diagnostics);
+                false
+            }
+        };
+        self.report(all);
+        built.then_some(output)
+    }
+
     /// `sciencec run`: runs `exe` with `args`, the terminal handed straight
     /// through, and answers with the code the process should exit with.
     ///
@@ -1429,4 +1496,23 @@ mod tests {
         let message = read_source(dir, name).expect_err("a directory is not a source file");
         assert_eq!(message, "`crates/sciencec` is a directory, not a source file");
     }
+}
+
+/// Where `sciencec run FILE` keeps the executables it builds:
+/// `$SCIENCE_CACHE`, else the platform's per-user cache directory. `None`
+/// when there is no home to put one in, and then `run` builds beside the file.
+fn run_cache_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("SCIENCE_CACHE") {
+        return Some(PathBuf::from(dir));
+    }
+    if cfg!(windows) {
+        return std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("science").join("run"));
+    }
+    if cfg!(target_os = "macos") {
+        return std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/science/run"));
+    }
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .map(|d| d.join("science").join("run"))
 }
