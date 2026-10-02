@@ -208,6 +208,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "Batches",
     "Flatten",
     "FollowedBy",
+    "Owned",
     // @LIB-END
 ];
 
@@ -1139,6 +1140,18 @@ macro_rules! chain_links {
             // can file (a number, `Bool`, `Char` or `String`, through one
             // borrow), and the fused loop keeps the seen keys in a `Set`.
             // **`unique(by: key)` is not declared**: one name, one shape.
+            // `owned()`: a chain of borrows becomes a chain of copies, §1.4's
+            // replacement for Rust's `cloned` and `copied`. The declaration
+            // names the item unchanged; `science-types` replaces it with the
+            // referent and refuses an item that is not a borrow of something
+            // that can be copied or cloned.
+            Method {
+                name: "owned",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Owned", &[$this, $item])),
+            },
             // `followed_by(other)`: this chain's items, then `other`'s. Narrowed
             // as `zip` is to an `Array.iterate()`, whose item is `&U`;
             // `science-types` holds this chain's item to `&U` as well, since
@@ -2862,6 +2875,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Batches"),
     chain_adapter!("Flatten"),
     chain_adapter!("FollowedBy"),
+    chain_adapter!("Owned"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2956,6 +2970,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("Batches"),
     chain_iterate!("Flatten"),
     chain_iterate!("FollowedBy"),
+    chain_iterate!("Owned"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3326,6 +3341,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Batches", CHAIN_UNWRITTEN),
     ("Flatten", CHAIN_UNWRITTEN),
     ("FollowedBy", CHAIN_UNWRITTEN),
+    ("Owned", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3387,7 +3403,6 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 const CHAIN_UNWRITTEN: &[&str] = &[
     // Transforming.
     "expand",
-    "owned",
     // Filtering and selecting.
     "keep_ok",
     // Pairing, grouping, windowing.
@@ -3541,6 +3556,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "Batches",
     "Flatten",
     "FollowedBy",
+    "Owned",
     // @CHAIN-END
 ];
 

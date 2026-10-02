@@ -1446,6 +1446,47 @@ fn batches_cut_the_chain_into_disjoint_arrays() {
     );
 }
 
+// --- owned ------------------------------------------------------------------
+
+/// **`owned()` turns a chain of borrows into a chain of copies**: bitwise for
+/// numbers, `clone()` for a `String`, an `Array` and a user's own `Clone`
+/// record. The copies are the chain's, so a `map` after it may consume them.
+#[test]
+fn owned_copies_each_borrowed_item() {
+    assert_eq!(
+        prints(
+            "owned",
+            r#"type Point:
+    x: Int
+    y: Int
+
+Point implements Clone:
+    def clone(self) -> Point:
+        Point(x: self.x, y: self.y)
+
+def main():
+    let xs be [3, 1, 2]
+    let a be xs.iterate().owned().collect()
+    print(f"{a.length()} {a[0]}")
+    let words be ["x", "yy"]
+    let w be words.iterate().owned().map(s giving f"{s}!").collect()
+    print(f"{w[0]} {w[1]}")
+    let ow: Array[String] be words.iterate().owned().collect()
+    print(f"{ow[1]}")
+    let nested: Array[Array[Int]] be [[1], [2, 3]]
+    let copies be nested.iterate().owned().collect()
+    print(f"{copies[1].length()}")
+    let pts be [Point(x: 1, y: 2)]
+    let ps be pts.iterate().owned().collect()
+    print(f"{ps[0].y}")
+    print(xs.iterate().owned().sum())
+    print(xs.iterate().keep(each > 1).owned().count())
+"#,
+        ),
+        "3 3\nx! yy!\nyy\n2\n2\n6\n2\n"
+    );
+}
+
 // --- followed_by ------------------------------------------------------------
 
 /// **`followed_by(other)` yields this chain's items, then borrows of `other`'s

@@ -6696,6 +6696,9 @@ enum Step {
     /// of `other`, an `Array`'s `iterate()` whose array this holds. **A
     /// barrier**: see [`Builder::lower_chain_over`].
     FollowedBy(ExprId),
+    /// `owned()` — each item is a borrow of a `T`, and the chain yields a
+    /// copy of it: a bitwise one for a `Copy` type, `clone()` for the rest.
+    Owned,
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6901,6 +6904,7 @@ impl Builder<'_, '_> {
                 ("windows", Some(arg)) => Step::Windows(*arg),
                 ("batches", Some(arg)) => Step::Batches(*arg),
                 ("flatten", _) => Step::Flatten,
+                ("owned", _) => Step::Owned,
                 // Only an `Array.iterate()` can follow, as only one can be
                 // zipped: the declaration takes an `ArrayIterate`.
                 ("followed_by", Some(arg)) => {
@@ -7818,7 +7822,11 @@ impl Builder<'_, '_> {
                     self.chain_assign_bool(&Place::local(skipping), true, block, span);
                     limits.push(Some((skipping, skipping)));
                 }
-                Step::KeepSome | Step::Reverse | Step::Flatten | Step::FollowedBy(_) => {
+                Step::KeepSome
+                | Step::Reverse
+                | Step::Flatten
+                | Step::FollowedBy(_)
+                | Step::Owned => {
                     closures.push(None);
                     limits.push(None);
                 }
@@ -8460,6 +8468,37 @@ impl Builder<'_, '_> {
                         span,
                     );
                     value = Place::local(window);
+                }
+                Step::Owned => {
+                    let owned_ty = *item_after;
+                    let item_ty = self.place_ty(&value);
+                    let TyKind::Borrowed { inner, .. } = *self.context.types.kind(item_ty) else {
+                        unreachable!("`owned()` reads a chain of borrows")
+                    };
+                    let copy = self.temp(owned_ty, span, current);
+                    if self.is_copy(owned_ty) {
+                        self.assign(
+                            current,
+                            Place::local(copy),
+                            Rvalue::Use(Operand::Copy(
+                                value.clone().project(Projection::Deref { ty: inner }),
+                            )),
+                            span,
+                        );
+                    } else {
+                        let callee = match self.type_method(owned_ty, "clone", Form::Value) {
+                            Some(def) => Callee::Def { def, self_ty: None },
+                            None => Callee::Unresolved(Unresolved::Chain),
+                        };
+                        current = self.emit_call(
+                            Place::local(copy),
+                            callee,
+                            vec![Operand::Copy(value.clone())],
+                            current,
+                            span,
+                        );
+                    }
+                    value = Place::local(copy);
                 }
                 Step::Unique => {
                     let (seen, _) = limits[index].expect("a `unique` carries its set");

@@ -473,6 +473,18 @@ def mismatched(xs: &Array[Int], ys: &Array[Int]) -> Int:
     assert_eq!(then.codes(), vec![549], "{:?}", then.messages());
     assert!(then.messages()[0].contains("`followed_by()`"), "{:?}", then.messages());
     assert_eq!(terminal_type(&then, "joined", "collect"), "Array[&I64]");
+    let owned = check(
+        "\
+def copies(xs: &Array[String]) -> Array[String]:
+    xs.iterate().owned().collect()
+
+def refused(xs: &Array[Int]) -> Int:
+    xs.iterate().map(x giving x + 0).owned().count()
+",
+    );
+    assert_eq!(owned.codes(), vec![549], "{:?}", owned.messages());
+    assert!(owned.messages()[0].contains("`owned()`"), "{:?}", owned.messages());
+    assert_eq!(terminal_type(&owned, "copies", "collect"), "Array[String]");
     let refused = check(
         "\
 def f(xs: &Array[F64]) -> Int:

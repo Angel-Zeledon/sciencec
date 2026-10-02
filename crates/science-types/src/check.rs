@@ -5403,6 +5403,57 @@ impl<'a> BodyChecker<'a> {
             }
             return ret;
         }
+        if on_a_chain && name == "owned" {
+            let TyKind::Named { def: adapter, args } = self.types.kind(ret).clone() else {
+                return ret;
+            };
+            let (Some(source), Some(item)) =
+                (args.first().cloned(), args.get(1).and_then(|arg| arg.as_type()))
+            else {
+                return ret;
+            };
+            if self.types.references_error(item) {
+                return ret;
+            }
+            // A borrow of something that can be duplicated: a number, `Bool`
+            // or `Char` by a copy, anything with a `clone` by calling it.
+            let referent = match self.types.kind(item).clone() {
+                TyKind::Borrowed { mutable: false, inner } => Some(inner),
+                _ => None,
+            };
+            let duplicable = referent.is_some_and(|inner| {
+                let prelude = self.decls.prelude();
+                prelude.is_numeric(self.types, inner)
+                    || prelude.is_bool(self.types, inner)
+                    || prelude.is(self.types, inner, "Char")
+                    || {
+                        let methods = self.decls.methods();
+                        methods
+                            .receiver(self.defs, self.types, inner)
+                            .is_some_and(|head| {
+                                matches!(
+                                    methods.lookup(head, "clone", Form::Value),
+                                    Found::One(_)
+                                )
+                            })
+                    }
+            });
+            return match referent {
+                Some(inner) if duplicable => {
+                    self.types.named(adapter, vec![source, GenericArg::Type(inner)])
+                }
+                _ => {
+                    let rendered = self.types.render(self.defs, item);
+                    self.diagnostics.push(wrong_item_shape(
+                        span,
+                        "owned",
+                        &rendered,
+                        "borrows of numbers, `Bool`, `Char` or a type with a `clone`",
+                    ));
+                    Ty::ERROR
+                }
+            };
+        }
         if on_a_chain && name == "followed_by" {
             // `FollowedBy[S, &U]`: the receiver chain `S` must yield `&U` too.
             let TyKind::Named { args, .. } = self.types.kind(ret).clone() else { return ret };
