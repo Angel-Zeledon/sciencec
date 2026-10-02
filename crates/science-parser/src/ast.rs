@@ -276,6 +276,9 @@ pub struct FnDecl {
     /// Which word declared it.
     pub form: FnForm,
     pub is_pub: bool,
+    /// `unsafe def` — `ffi-c-boundary.md` §3.3: calling it needs an `unsafe`
+    /// block, and its own body is *not* implicitly one.
+    pub is_unsafe: bool,
     pub name: Ident,
     /// `def largest of T(..)`: §4.4 puts the parameters after the name,
     /// introduced by `of`.

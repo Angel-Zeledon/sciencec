@@ -340,6 +340,7 @@ impl Dump for FnDecl {
         };
         let mut header = named(word, &self.name.name);
         flag(&mut header, self.is_pub, "public");
+        flag(&mut header, self.is_unsafe, "unsafe");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
             w.child_opt("receiver", self.self_param.as_ref());

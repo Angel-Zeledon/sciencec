@@ -905,7 +905,10 @@ impl<'t> Parser<'t> {
             }
             // `unsafe extern` opens a foreign block; `unsafe` alone opens a
             // block expression, which is a statement like any other.
-            TokenKind::Unsafe => !self.at_ahead(from + 1, &TokenKind::Extern),
+            TokenKind::Unsafe => {
+                !self.at_ahead(from + 1, &TokenKind::Extern)
+                    && !self.at_ahead(from + 1, &TokenKind::Function)
+            }
             // Every word a declaration can begin with. `Self` is here because
             // it names a type — `Self implements ..` is the one thing it can
             // begin at the top level — and `Reserved` because a word held for
@@ -1012,7 +1015,12 @@ impl<'t> Parser<'t> {
 
         // Dispatching with `at` rather than a `match` on `peek` keeps the
         // borrow of the token from overlapping the parse call in each arm.
-        let kind = if self.at(&TokenKind::Function) {
+        let kind = if self.at_unsafe_def() {
+            self.advance(); // `unsafe`
+            let mut decl = self.parse_fn(FnForm::Def, is_pub, start)?;
+            decl.is_unsafe = true;
+            ItemKind::Fn(decl)
+        } else if self.at(&TokenKind::Function) {
             ItemKind::Fn(self.parse_fn(FnForm::Def, is_pub, start)?)
         } else if self.at_function_word() {
             self.report_function_word();
@@ -1057,6 +1065,11 @@ impl<'t> Parser<'t> {
         };
 
         Some(Item { kind, span: start.merge(self.last_text_span()), doc: doc.map(|d| d.text) })
+    }
+
+    /// `unsafe def` — the modifier of `ffi-c-boundary.md` §3.3.
+    fn at_unsafe_def(&self) -> bool {
+        self.at(&TokenKind::Unsafe) && self.at_ahead(1, &TokenKind::Function)
     }
 
     fn reject_public(&mut self, public: Option<Span>, what: &str) {
@@ -1153,6 +1166,7 @@ impl<'t> Parser<'t> {
         Some(FnDecl {
             form,
             is_pub,
+            is_unsafe: false,
             name,
             generics,
             self_param,
@@ -5741,6 +5755,10 @@ impl<'t> Parser<'t> {
             self.report_tool_out_of_place();
             return None;
         }
+        let is_unsafe = self.at_unsafe_def();
+        if is_unsafe {
+            self.advance(); // `unsafe`
+        }
         if !self.at(&TokenKind::Function) {
             let found = describe(self.peek());
             self.error(
@@ -5753,7 +5771,9 @@ impl<'t> Parser<'t> {
             );
             return None;
         }
-        Some(Member::Method(self.parse_fn(FnForm::Def, is_pub, start)?))
+        let mut decl = self.parse_fn(FnForm::Def, is_pub, start)?;
+        decl.is_unsafe = is_unsafe;
+        Some(Member::Method(decl))
     }
 }
 
@@ -5855,6 +5875,7 @@ fn script_body(stmts: Vec<Stmt>, module: Span) -> Item {
     let decl = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: Ident::new("main", opens),
         generics: Vec::new(),
         self_param: None,

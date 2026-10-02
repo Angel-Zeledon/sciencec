@@ -1,0 +1,25 @@
+# UI test: an `unsafe def` called outside `unsafe` (SC0550).
+#
+# `ffi-c-boundary.md` §3.3: calling an `unsafe def` requires an `unsafe` block
+# at the call site, and **its own body is not implicitly one** — the recursive
+# call inside `risky` is refused as the bare call in `main` is. The wrapped
+# call in `checked` is accepted. Methods are covered the same way.
+
+unsafe def risky(n: Int) -> Int:
+    risky(n - 1)
+
+type Cell:
+    v: Int
+
+Cell has:
+    unsafe def raw(self) -> Int:
+        self.v
+
+def checked(n: Int) -> Int:
+    unsafe: risky(n)
+
+def main():
+    print(risky(1))
+    let c be Cell(v: 7)
+    print(c.raw())
+    print(checked(2))

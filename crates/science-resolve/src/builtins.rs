@@ -3900,6 +3900,7 @@ impl Declarer<'_> {
             .collect();
         hir::Fn {
             def,
+            is_unsafe: false,
             generics: generic_params,
             self_param,
             params,
@@ -4065,6 +4066,7 @@ impl Declarer<'_> {
         let ret = method.ret.as_ref().map(|ty| self.ty(ty, &scope));
         self.item(hir::ItemKind::Fn(hir::Fn {
             def,
+            is_unsafe: false,
             generics: Vec::new(),
             self_param: None,
             params,

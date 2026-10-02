@@ -600,6 +600,8 @@ pub enum ItemKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fn {
     pub def: DefId,
+    /// `unsafe def` (`ffi-c-boundary.md` §3.3).
+    pub is_unsafe: bool,
     pub generics: Vec<GenericParam>,
     pub self_param: Option<SelfParam>,
     pub params: Vec<Param>,

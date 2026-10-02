@@ -223,6 +223,7 @@ pub fn func(sp: &Sp, name: &str) -> FnBuilder {
         decl: FnDecl {
             form: FnForm::Def,
             is_pub: false,
+            is_unsafe: false,
             name,
             generics: Vec::new(),
             self_param: None,

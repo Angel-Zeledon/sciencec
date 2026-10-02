@@ -1003,7 +1003,7 @@ impl Resolver {
         self.ribs.pop();
         self.ribs.pop();
 
-        hir::Fn { def, generics, self_param, params, ret, where_clause, body, span: decl.span }
+        hir::Fn { def, is_unsafe: decl.is_unsafe, generics, self_param, params, ret, where_clause, body, span: decl.span }
     }
 
     /// An `extern` block: the types its items mention, resolved.

@@ -3544,6 +3544,9 @@ impl<'a> BodyChecker<'a> {
         if self.unsafe_depth == 0 && self.defs.get(def).kind == hir::DefKind::ExternFn {
             let name = self.defs.get(def).name.clone();
             self.diagnostics.push(foreign_call_outside_unsafe(span, &name));
+        } else if self.unsafe_depth == 0 && sig.is_unsafe {
+            let name = self.defs.get(def).name.clone();
+            self.diagnostics.push(unsafe_call_outside_unsafe(span, &name));
         }
 
         if params.len() != args.len() {
@@ -5341,6 +5344,10 @@ impl<'a> BodyChecker<'a> {
             let ids = self.argument_ids(args, supplied);
             return (ids, InferTy::Known(Ty::ERROR));
         };
+        if self.unsafe_depth == 0 && sig.is_unsafe {
+            let name = self.defs.get(candidate.method).name.clone();
+            self.diagnostics.push(unsafe_call_outside_unsafe(span, &name));
+        }
         let params: Vec<(DefId, Ty)> =
             sig.params.iter().map(|param| (param.def, param.ty)).collect();
         let ret = sig.ret;
@@ -10236,6 +10243,26 @@ fn foreign_call_outside_unsafe(span: Span, name: &str) -> Diagnostic {
     .with_label(Label::primary(span, "this call is not inside an `unsafe` block"))
     .with_note(
         "the declaration is a claim the compiler cannot check; write the call as \
+         `unsafe: call(..)`, ideally inside a safe wrapper",
+    )
+    .with_suggestion(science_diagnostics::Suggestion {
+        span: Span::new(span.file, span.start, span.start),
+        replacement: "unsafe: ".to_string(),
+        message: "mark the call `unsafe`".to_string(),
+    })
+}
+
+/// `SC0550` — a call to an `unsafe def` outside an `unsafe` block.
+/// `ffi-c-boundary.md` §3.3: the body of an `unsafe def` is not itself an
+/// `unsafe` block, so this fires inside one as well.
+fn unsafe_call_outside_unsafe(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::FOREIGN_CALL_OUTSIDE_UNSAFE,
+        format!("`{name}` is an `unsafe def` and may only be called inside `unsafe`"),
+    )
+    .with_label(Label::primary(span, "this call is not inside an `unsafe` block"))
+    .with_note(
+        "an `unsafe def` has preconditions the compiler cannot check; write the call as \
          `unsafe: call(..)`, ideally inside a safe wrapper",
     )
     .with_suggestion(science_diagnostics::Suggestion {

@@ -1,0 +1,26 @@
+error[SC0550]: `risky` is an `unsafe def` and may only be called inside `unsafe`
+ --> tests/ui/types/unsafe_def_called_outside_unsafe.science:9:5
+  |
+9 |     risky(n - 1)
+  |     ^^^^^^^^^^^^ this call is not inside an `unsafe` block
+  |
+  = note: an `unsafe def` has preconditions the compiler cannot check; write the call as `unsafe: call(..)`, ideally inside a safe wrapper
+  = help: mark the call `unsafe`: `unsafe: `
+
+error[SC0550]: `risky` is an `unsafe def` and may only be called inside `unsafe`
+  --> tests/ui/types/unsafe_def_called_outside_unsafe.science:22:11
+   |
+22 |     print(risky(1))
+   |           ^^^^^^^^ this call is not inside an `unsafe` block
+   |
+   = note: an `unsafe def` has preconditions the compiler cannot check; write the call as `unsafe: call(..)`, ideally inside a safe wrapper
+   = help: mark the call `unsafe`: `unsafe: `
+
+error[SC0550]: `raw` is an `unsafe def` and may only be called inside `unsafe`
+  --> tests/ui/types/unsafe_def_called_outside_unsafe.science:24:11
+   |
+24 |     print(c.raw())
+   |           ^^^^^^^ this call is not inside an `unsafe` block
+   |
+   = note: an `unsafe def` has preconditions the compiler cannot check; write the call as `unsafe: call(..)`, ideally inside a safe wrapper
+   = help: mark the call `unsafe`: `unsafe: `

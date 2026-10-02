@@ -195,6 +195,7 @@ fn dump_items() {
         ItemKind::Fn(FnDecl {
             form: FnForm::Def,
             is_pub: true,
+            is_unsafe: false,
             name: ident("largest", 76),
             generics: vec![type_param("T", 87, 93, vec![bound("Ord", 90)])],
             self_param: None,
@@ -393,6 +394,7 @@ fn dump_interfaces_and_implementations() {
     let next = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("next", 57),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Mutable, span: sp(62, 74) }),
@@ -410,6 +412,7 @@ fn dump_interfaces_and_implementations() {
     let count = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("count", 119),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Value, span: sp(125, 135) }),
@@ -422,6 +425,7 @@ fn dump_interfaces_and_implementations() {
     let describe = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("describe", 164),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Shared, span: sp(173, 177) }),
@@ -458,6 +462,7 @@ fn dump_interfaces_and_implementations() {
     let impl_next = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("next", 304),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Mutable, span: sp(309, 321) }),
@@ -518,6 +523,7 @@ fn dump_interfaces_and_implementations() {
     let swapped = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("swapped", 499),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Shared, span: sp(507, 511) }),
@@ -569,6 +575,7 @@ fn dump_interfaces_and_implementations() {
     let first = FnDecl {
         form: FnForm::Def,
         is_pub: false,
+        is_unsafe: false,
         name: ident("first", 614),
         generics: Vec::new(),
         self_param: Some(SelfParam { kind: SelfKind::Shared, span: sp(620, 624) }),
@@ -1513,6 +1520,7 @@ fn dump_extern_blocks() {
         ItemKind::Fn(FnDecl {
             form: FnForm::Def,
             is_pub: false,
+            is_unsafe: false,
             name: ident("call", 395),
             generics: Vec::new(),
             self_param: None,

@@ -751,3 +751,29 @@ def main():
 ";
     assert_eq!(prints("indexed_range_end", source), "12\n3\n4\n");
 }
+
+/// `unsafe def` (`ffi-c-boundary.md` section 3.3), as a free function and as a
+/// method: declared with the modifier, called inside `unsafe:`, wrapped by a
+/// safe function. The parser used to take `unsafe` only before `extern`.
+#[test]
+fn an_unsafe_def_is_declared_and_called_inside_unsafe() {
+    let source = "unsafe def risky(n: Int) -> Int:
+    n + 1
+
+type Cell:
+    v: Int
+
+Cell has:
+    unsafe def raw(self) -> Int:
+        self.v
+
+def safe(n: Int) -> Int:
+    unsafe: risky(n)
+
+def main():
+    print(safe(41))
+    let c be Cell(v: 7)
+    print(unsafe: c.raw())
+";
+    assert_eq!(prints("unsafe_def", source), "42\n7\n");
+}

@@ -135,6 +135,8 @@ pub struct Signature {
     /// [`Declarations::self_ty`] answers on.
     pub owner: Option<DefId>,
     pub has_body: bool,
+    /// `unsafe def` — a call needs an `unsafe` block (`SC0550`).
+    pub is_unsafe: bool,
     pub span: Span,
 }
 
@@ -1100,6 +1102,7 @@ impl Declarations {
                                 ret,
                                 owner: None,
                                 has_body: false,
+                                is_unsafe: false,
                                 span: function.span,
                             },
                         );
@@ -1142,6 +1145,7 @@ impl Declarations {
             ret,
             owner,
             has_body: function.body.is_some(),
+            is_unsafe: function.is_unsafe,
             span: function.span,
         }
     }
