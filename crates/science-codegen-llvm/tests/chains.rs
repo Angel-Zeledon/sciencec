@@ -1645,3 +1645,38 @@ def main():
         "dropped 1\ndropped 2\ndropped 3\ncount 2\ndropped 1\ndropped 2\ndropped 3\nfirst 1\n"
     );
 }
+
+// --- group ------------------------------------------------------------------
+
+/// **`group(by: key)` collects the items per key**, as a `Map[K, Array[Item]]`
+/// in order of first appearance and source order within a group: 1..7 by
+/// `% 3` is `1 -> [1, 4, 7]`, `2 -> [2, 5]`, `0 -> [3, 6]`. Owned `String`
+/// keys that repeat are dropped on the present path, an empty source is an
+/// empty map, and links before it filter what is grouped.
+#[test]
+fn group_collects_items_per_key() {
+    assert_eq!(
+        prints(
+            "group",
+            r#"def main():
+    let xs be [1, 2, 3, 4, 5, 6, 7]
+    let g be xs.iterate().group(by: x giving x % 3)
+    print(f"{g.length()}")
+    for entry in g:
+        print(f"{entry.key} {entry.value.length()}")
+        for v in entry.value:
+            print(v)
+    let words be ["apple", "avocado", "banana", "blueberry", "apricot"]
+    let w be words.iterate().owned().group(by: s giving f"{s.length() % 2}")
+    for entry in w:
+        print(f"{entry.key}: {entry.value.length()} {entry.value[0]}")
+    let none be Array[Int].new()
+    print(none.iterate().group(by: x giving x + 0).length())
+    let big be xs.iterate().keep(each > 4).group(by: x giving x % 2)
+    for entry in big:
+        print(f"{entry.key} {entry.value.length()}")
+"#,
+        ),
+        "3\n1 3\n1\n4\n7\n2 2\n2\n5\n0 2\n3\n6\n1: 4 apple\n0: 1 banana\n0\n1 2\n0 1\n"
+    );
+}

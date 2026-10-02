@@ -1212,6 +1212,16 @@ macro_rules! chain_links {
                 params: &[("by", Ty::Fn(&[$borrowed], &Ty::Var("K")))],
                 ret: Some(Ty::App("Map", &[Ty::Var("K"), INT])),
             },
+            // `group(by: key)`: the items themselves, collected per key into
+            // a `Map[K, Array[Item]]` in order of first appearance (source
+            // order within a group). The key rule is `tally`'s.
+            Method {
+                name: "group",
+                generics: &["K"],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[$borrowed], &Ty::Var("K")))],
+                ret: Some(Ty::App("Map", &[Ty::Var("K"), Ty::App("Array", &[$item])])),
+            },
             // `product()` is `sum()`'s twin: the item with a borrow peeled, from
             // one, held to the same numbers by the same checker half.
             Method { name: "product", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some($total) },
