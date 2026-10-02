@@ -2721,6 +2721,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 block
             }
             PatKind::Tuple(elements) => {
+                // A tuple reached through a borrow (`for (a, b) in pairs`,
+                // whose items are `&(A, B)`) is destructured in place.
+                let place = &self.auto_deref(place.clone());
                 for (index, element) in elements.iter().enumerate() {
                     let ty = self.positional_ty(place, None, index, *element);
                     let sub = place.project(Projection::TupleField { index: index as u32, ty });
@@ -6754,6 +6757,8 @@ enum Source {
     MapKeys,
     /// `Map.values()` — a borrow of each entry's value.
     MapValues,
+    /// `Range.iterate()` — filled into an array first, then walked as one.
+    Range,
     /// What follows a barrier: the buffer the barrier filled, popped from the
     /// end, each item moved out owned. See [`Builder::lower_chain_over`].
     Drain,
@@ -6932,6 +6937,7 @@ impl Builder<'_, '_> {
         let owner = self.context.defs.get(entry.parent?).name.as_str();
         match (owner, entry.name.as_str()) {
             ("Array", "iterate") => Some(Source::Array),
+            ("Range", "iterate") => Some(Source::Range),
             ("Map", "iterate") => Some(Source::MapEntries),
             ("Map", "keys") => Some(Source::MapKeys),
             ("Map", "values") => Some(Source::MapValues),
@@ -6966,6 +6972,11 @@ impl Builder<'_, '_> {
             };
             let (receiver, method, args) = (*receiver, *method, args.clone());
             if let Some(kind) = self.chain_source_kind(method) {
+                if kind == Source::Range
+                    && !matches!(self.thir.expr(receiver).kind, ExprKind::Range { .. })
+                {
+                    return None;
+                }
                 steps.reverse();
                 return Some(Chain { source: receiver, kind, steps, args: all_args, stored });
             }
@@ -7103,6 +7114,18 @@ impl Builder<'_, '_> {
                 );
             }
         }
+        if chain.kind == Source::Range {
+            let (array, block) = self.materialize_range(chain.source, block, span);
+            return self.lower_chain_over(
+                dest,
+                terminal,
+                Source::Array,
+                &array,
+                &chain.steps,
+                block,
+                span,
+            );
+        }
         let (source, block) = self.chain_source(chain.source, block, span);
         self.lower_chain_over(dest, terminal, chain.kind, &source, &chain.steps, block, span)
     }
@@ -7228,6 +7251,79 @@ impl Builder<'_, '_> {
             }
             _ => false,
         }
+    }
+
+    /// The values of a literal range `a..b` / `a..=b`, in an array temporary
+    /// that dies with the statement.
+    fn materialize_range(&mut self, range: ExprId, mut block: BlockId, span: Span) -> (Place, BlockId) {
+        let ExprKind::Range { start, end, inclusive } = self.thir.expr(range).kind else {
+            unreachable!("chain_of only reads a literal range as a source");
+        };
+        let element_ty = self.thir.ty(start);
+        let array_ty = self.array_of(element_ty);
+        let array = self.temp(array_ty, span, block);
+        block = self.emit_call(
+            Place::local(array),
+            Callee::Runtime(ARRAY_WITH_CAPACITY),
+            vec![Operand::Const(Constant::Count(0))],
+            block,
+            span,
+        );
+        let low = self.temp(element_ty, span, block);
+        block = self.expr_into(Place::local(low), start, block);
+        let high = self.temp(element_ty, span, block);
+        block = self.expr_into(Place::local(high), end, block);
+        let cursor = self.temp(element_ty, span, block);
+        self.assign(block, Place::local(cursor), Rvalue::Use(Operand::Copy(Place::local(low))), span);
+        let discard = Place::local(self.temp(Ty::UNIT, span, block));
+        let head = self.new_block();
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.terminate(block, TerminatorKind::Goto { target: head }, span);
+        let more = self.temp(self.bool_ty, span, head);
+        self.assign(
+            head,
+            Place::local(more),
+            Rvalue::Binary {
+                op: if inclusive { BinaryOp::Le } else { BinaryOp::Lt },
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(high)),
+            },
+            span,
+        );
+        self.terminate(
+            head,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: body,
+                else_block: exit,
+            },
+            span,
+        );
+        let value = self.temp(element_ty, span, body);
+        self.assign(body, Place::local(value), Rvalue::Use(Operand::Copy(Place::local(cursor))), span);
+        let (accumulator, next) = self.exclusive_ref(&Place::local(array), body, span);
+        let next = self.emit_call(
+            discard,
+            Callee::Runtime(ARRAY_PUSH),
+            vec![accumulator, Operand::Move(Place::local(value))],
+            next,
+            span,
+        );
+        let stepped = self.temp(element_ty, span, next);
+        self.assign(
+            next,
+            Place::local(stepped),
+            Rvalue::Binary {
+                op: BinaryOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Self::bits(1),
+            },
+            span,
+        );
+        self.assign(next, Place::local(cursor), Rvalue::Use(Operand::Copy(Place::local(stepped))), span);
+        self.terminate(next, TerminatorKind::Goto { target: head }, span);
+        (Place::local(array), exit)
     }
 
     /// A chain over `source`, split at its first barrier.

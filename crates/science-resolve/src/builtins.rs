@@ -2622,7 +2622,17 @@ const BLOCKS: &[Block] = &[
         generics: &["T"],
         interface: Some(("Iterate", &[])),
         assoc: &[("Item", Ty::Var("T"))],
-        methods: &[],
+        // A range is a chain source: `(1..5).iterate().map(..)`. Its items
+        // are borrows like every other source's (the copy-out rule makes
+        // that invisible for numbers); `science-mir` fills an array with the
+        // range's values and walks that.
+        methods: &[Method {
+            name: "iterate",
+            generics: &[],
+            recv: Some(SelfKind::Shared),
+            params: &[],
+            ret: Some(Ty::App("ArrayIterate", &[Ty::Var("T")])),
+        }],
     },
     // --- `Formatter has:`, `strings-formatting-and-docs.md` §3.1 ----------
     //

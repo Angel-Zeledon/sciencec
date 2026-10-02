@@ -4976,7 +4976,20 @@ impl<'t> Parser<'t> {
                 if self.at(&TokenKind::Each) {
                     self.report_each_after_for(start);
                 }
-                let pattern = self.parse_pattern();
+                let mut pattern = self.parse_pattern();
+                // `for a, b in pairs:` is `for (a, b) in pairs:`, as
+                // `let a, b be pair` is `let (a, b) be pair`.
+                if self.at(&TokenKind::Comma) {
+                    let first = pattern.span;
+                    let mut elems = vec![pattern];
+                    while self.eat(&TokenKind::Comma).is_some() {
+                        elems.push(self.parse_pattern());
+                    }
+                    pattern = Pattern {
+                        kind: PatternKind::Tuple(elems),
+                        span: first.merge(self.last_text_span()),
+                    };
+                }
                 self.expect(&TokenKind::In, "`in`");
                 let iter = self.parse_expr();
                 let body = self.parse_block();

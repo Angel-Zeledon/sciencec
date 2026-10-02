@@ -49,3 +49,27 @@ print(add_one(1))
 "#;
     assert_eq!(prints("captured_call", source), "5\n2\n");
 }
+
+#[test]
+fn a_range_is_a_chain_source() {
+    let source = r#"let ys be (1..5).iterate().map(each * 2).collect()
+print(ys.length())
+for y in ys:
+    print(y)
+print((1..=4).iterate().sum())
+let n be 3
+print((0..n).iterate().keep(each > 0).count())
+"#;
+    assert_eq!(prints("range_source", source), "4\n2\n4\n6\n8\n10\n2\n");
+}
+
+#[test]
+fn a_for_loop_destructures_a_tuple_without_parentheses() {
+    let source = r#"let pairs be [(1, 2), (3, 4)]
+for a, b in pairs:
+    print(a + b)
+for (a, b) in pairs:
+    print(a * b)
+"#;
+    assert_eq!(prints("for_tuple", source), "3\n7\n2\n12\n");
+}
