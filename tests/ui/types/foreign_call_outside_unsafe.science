@@ -1,0 +1,17 @@
+# UI test: a foreign function called outside `unsafe` (SC0550).
+#
+# `ffi-c-boundary.md` §3.1 lists "calling a function declared in an `extern`
+# block" first among the powers only an `unsafe` block grants. The block's own
+# `unsafe` marks the declaration; it does not make a call safe. The call inside
+# `unsafe:` is accepted, the bare one is not, and the fix is the prefix.
+
+unsafe extern "C" library "c":
+    def abs(value: CInt) -> CInt
+
+def checked(value: CInt) -> CInt:
+    unsafe: abs(value)
+
+def main():
+    let a be checked(-3)
+    let b be abs(-4)
+    print(a)

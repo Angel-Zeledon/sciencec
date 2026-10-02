@@ -1,0 +1,8 @@
+error[SC0550]: `abs` is a foreign function and may only be called inside `unsafe`
+  --> tests/ui/types/foreign_call_outside_unsafe.science:16:14
+   |
+16 |     let b be abs(-4)
+   |              ^^^^^^^ this call is not inside an `unsafe` block
+   |
+   = note: the declaration is a claim the compiler cannot check; write the call as `unsafe: call(..)`, ideally inside a safe wrapper
+   = help: mark the call `unsafe`: `unsafe: `

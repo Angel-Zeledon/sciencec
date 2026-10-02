@@ -574,6 +574,7 @@ pub fn check_fn(
         ret,
         diverged: false,
         breaks: Vec::new(),
+        unsafe_depth: 0,
     };
     checker.run(function, signature)
 }
@@ -816,6 +817,9 @@ enum BoundAs {
 }
 
 struct BodyChecker<'a> {
+    /// How many `unsafe` blocks enclose the expression being checked. A call
+    /// to a foreign function is `SC0550` at zero (`ffi-c-boundary.md` §3.1).
+    unsafe_depth: u32,
     defs: &'a DefTable,
     decls: &'a Declarations,
     order: &'a AtomOrder,
@@ -1423,7 +1427,10 @@ impl<'a> BodyChecker<'a> {
             // `(H5T_NATIVE_DOUBLE_g, null)`.
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
                 let id = self.body.reserve_block(block.span);
+                let in_unsafe = matches!(expr.kind, hir::ExprKind::Unsafe(_));
+                self.unsafe_depth += u32::from(in_unsafe);
                 let filled = self.block(block, Some((expected, site)));
+                self.unsafe_depth -= u32::from(in_unsafe);
                 let ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
                 self.body.fill_block(id, filled);
                 let kind = if matches!(expr.kind, hir::ExprKind::Unsafe(_)) {
@@ -2466,7 +2473,10 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::For { pattern, iter, body } => self.for_expr(pattern, iter, body, span),
             hir::ExprKind::Unsafe(block) | hir::ExprKind::Block(block) => {
                 let id = self.body.reserve_block(block.span);
+                let in_unsafe = matches!(expr.kind, hir::ExprKind::Unsafe(_));
+                self.unsafe_depth += u32::from(in_unsafe);
                 let filled = self.block(block, None);
+                self.unsafe_depth -= u32::from(in_unsafe);
                 // `open_ty`, for finding 20's reason: a block whose tail is
                 // an unsuffixed literal has `Ty::ERROR` stored on that tail
                 // until `finish` writes the default back, and a block that
@@ -3516,6 +3526,11 @@ impl<'a> BodyChecker<'a> {
         let ret = sig.ret;
         let declared = sig.generics.clone();
         let callee = self.body.push_expr(ExprKind::Item(def), Ty::ERROR, span);
+
+        if self.unsafe_depth == 0 && self.defs.get(def).kind == hir::DefKind::ExternFn {
+            let name = self.defs.get(def).name.clone();
+            self.diagnostics.push(foreign_call_outside_unsafe(span, &name));
+        }
 
         if params.len() != args.len() {
             self.diagnostics.push(wrong_argument_count(span, params.len(), args.len()));
@@ -10193,6 +10208,25 @@ fn bare_const_param(pattern: &crate::normal::NormalForm) -> Option<DefId> {
     match term.atom() {
         crate::normal::Atom::Param { def, .. } => Some(def),
     }
+}
+
+/// `SC0550` — a call to a foreign function outside an `unsafe` block.
+/// `ffi-c-boundary.md` §3.1, power 1.
+fn foreign_call_outside_unsafe(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::FOREIGN_CALL_OUTSIDE_UNSAFE,
+        format!("`{name}` is a foreign function and may only be called inside `unsafe`"),
+    )
+    .with_label(Label::primary(span, "this call is not inside an `unsafe` block"))
+    .with_note(
+        "the declaration is a claim the compiler cannot check; write the call as \
+         `unsafe: call(..)`, ideally inside a safe wrapper",
+    )
+    .with_suggestion(science_diagnostics::Suggestion {
+        span: Span::new(span.file, span.start, span.start),
+        replacement: "unsafe: ".to_string(),
+        message: "mark the call `unsafe`".to_string(),
+    })
 }
 
 /// `SC0534` — a generic argument that does not satisfy the callee's bound. §8.

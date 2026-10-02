@@ -1147,6 +1147,10 @@ pub mod codes {
     /// call to it instead, `chain_total`'s way, and says what the link wanted.
     pub const WRONG_ITEM_SHAPE: Code = Code(549);
 
+    /// A call to a function declared in an `extern` block, outside an `unsafe`
+    /// block. `ffi-c-boundary.md` §3.1.
+    pub const FOREIGN_CALL_OUTSIDE_UNSAFE: Code = Code(550);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1190,6 +1194,7 @@ pub mod codes {
         NOT_SUMMABLE,
         UNHASHABLE_KEY,
         WRONG_ITEM_SHAPE,
+        FOREIGN_CALL_OUTSIDE_UNSAFE,
     ];
 
     #[cfg(test)]
