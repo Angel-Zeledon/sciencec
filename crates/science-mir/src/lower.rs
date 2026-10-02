@@ -6754,6 +6754,9 @@ enum Terminal {
     /// `maximum(by: key)` — the item with the greatest key, or `null`. The
     /// first of equal keys wins, as it does for `Minimum`.
     Maximum(ExprId),
+    /// `tally(by: key)` — a `Map` from each key to how many items had it, in
+    /// order of first appearance.
+    Tally(ExprId),
     /// The body of a written `for`, run once per item. Not a method at all:
     /// `for x in chain:` is a chain whose terminal is the loop.
     Each { pattern: PatId, body: thir::BlockId },
@@ -6778,6 +6781,7 @@ impl Terminal {
             ("find", Some(predicate)) => Terminal::Find(predicate),
             ("minimum", Some(key)) => Terminal::Minimum(key),
             ("maximum", Some(key)) => Terminal::Maximum(key),
+            ("tally", Some(key)) => Terminal::Tally(key),
             _ => return None,
         })
     }
@@ -6790,7 +6794,8 @@ impl Terminal {
             | Terminal::HasAll(predicate)
             | Terminal::Find(predicate)
             | Terminal::Minimum(predicate)
-            | Terminal::Maximum(predicate) => Some(predicate),
+            | Terminal::Maximum(predicate)
+            | Terminal::Tally(predicate) => Some(predicate),
             Terminal::Reduce { f, .. } => Some(f),
             Terminal::Collect
             | Terminal::Count
@@ -7649,6 +7654,14 @@ impl Builder<'_, '_> {
             Terminal::Last | Terminal::Minimum(_) | Terminal::Maximum(_) => {
                 let null = Operand::Const(Constant::Literal(Literal::Null));
                 self.assign(block, dest.clone(), Rvalue::Use(null), span);
+            }
+            Terminal::Tally(_) => {
+                let map_ty = self.place_ty(&dest);
+                let callee = match self.type_method(map_ty, "new", Form::Type) {
+                    Some(def) => Callee::Def { def, self_ty: Some(map_ty) },
+                    None => Callee::Unresolved(Unresolved::Chain),
+                };
+                block = self.emit_call(dest.clone(), callee, vec![], block, span);
             }
             Terminal::HasAny(_)
             | Terminal::HasAll(_)
@@ -9020,6 +9033,133 @@ impl Builder<'_, '_> {
                 self.chain_leave(taken, depth, step_block, span);
                 self.chain_leave(keep, depth, step_block, span);
             }
+            Terminal::Tally(_) => {
+                let (closure, closure_ty) = predicate.expect("a tally key was evaluated");
+                let (argument, next) =
+                    self.chain_argument(&value, closure_ty, false, current, span);
+                current = next;
+                let map_ty = self.place_ty(&dest);
+                let key_ty = match self.context.types.kind(map_ty).clone() {
+                    TyKind::Named { args, .. } => {
+                        args.first().and_then(|arg| arg.as_type()).unwrap_or(Ty::ERROR)
+                    }
+                    _ => Ty::ERROR,
+                };
+                let key = self.temp(key_ty, span, current);
+                current = self.emit_call(
+                    Place::local(key),
+                    Callee::Indirect(Operand::Copy(Place::local(closure))),
+                    vec![argument],
+                    current,
+                    span,
+                );
+                // What the key has counted so far: `get`, and zero when absent.
+                let shared_map_ty = self.context.types.borrowed(false, map_ty);
+                let shared_map = self.temp(shared_map_ty, span, current);
+                current = self.borrow_place(
+                    Place::local(shared_map),
+                    false,
+                    dest.clone(),
+                    current,
+                    span,
+                    false,
+                );
+                let shared_key_ty = self.context.types.borrowed(false, key_ty);
+                let shared_key = self.temp(shared_key_ty, span, current);
+                current = self.borrow_place(
+                    Place::local(shared_key),
+                    false,
+                    Place::local(key),
+                    current,
+                    span,
+                    false,
+                );
+                let held_ref_ty = self.context.types.borrowed(false, int_ty);
+                let slot_ty = self.context.types.nullable(held_ref_ty);
+                let slot = self.temp(slot_ty, span, current);
+                let callee = match self.type_method(map_ty, "get", Form::Value) {
+                    Some(def) => Callee::Def { def, self_ty: None },
+                    None => Callee::Unresolved(Unresolved::Chain),
+                };
+                current = self.emit_call(
+                    Place::local(slot),
+                    callee,
+                    vec![
+                        Operand::Copy(Place::local(shared_map)),
+                        Operand::Copy(Place::local(shared_key)),
+                    ],
+                    current,
+                    span,
+                );
+                let present = self.temp(self.bool_ty, span, current);
+                self.assign(
+                    current,
+                    Place::local(present),
+                    Rvalue::IsPresent(Operand::Copy(Place::local(slot))),
+                    span,
+                );
+                let (seen, fresh, join) = (self.new_block(), self.new_block(), self.new_block());
+                self.terminate(
+                    current,
+                    TerminatorKind::If {
+                        cond: Operand::Copy(Place::local(present)),
+                        then_block: seen,
+                        else_block: fresh,
+                    },
+                    span,
+                );
+                let held = self.temp(int_ty, span, seen);
+                let narrowed = self.temp(held_ref_ty, span, seen);
+                self.assign(
+                    seen,
+                    Place::local(narrowed),
+                    Rvalue::Narrow { operand: Operand::Copy(Place::local(slot)), ty: held_ref_ty },
+                    span,
+                );
+                self.assign(
+                    seen,
+                    Place::local(held),
+                    Rvalue::Use(Operand::Copy(
+                        Place::local(narrowed).project(Projection::Deref { ty: int_ty }),
+                    )),
+                    span,
+                );
+                self.terminate(seen, TerminatorKind::Goto { target: join }, span);
+                self.assign(fresh, Place::local(held), Rvalue::Use(Self::bits(0)), span);
+                self.terminate(fresh, TerminatorKind::Goto { target: join }, span);
+                current = join;
+                let stepped = self.temp(int_ty, span, current);
+                self.assign(
+                    current,
+                    Place::local(stepped),
+                    Rvalue::Binary {
+                        op: BinaryOp::Add,
+                        lhs: Operand::Copy(Place::local(held)),
+                        rhs: Self::bits(1),
+                    },
+                    span,
+                );
+                let (map_ref, next) = self.exclusive_ref(&dest, current, span);
+                current = next;
+                let displaced_ty = self.context.types.nullable(int_ty);
+                let displaced = self.temp(displaced_ty, span, current);
+                let callee = match self.type_method(map_ty, "insert", Form::Value) {
+                    Some(def) => Callee::Def { def, self_ty: None },
+                    None => Callee::Unresolved(Unresolved::Chain),
+                };
+                current = self.emit_call(
+                    Place::local(displaced),
+                    callee,
+                    vec![
+                        map_ref,
+                        Operand::Move(Place::local(key)),
+                        Operand::Copy(Place::local(stepped)),
+                    ],
+                    current,
+                    span,
+                );
+                self.chain_leave(current, depth, step_block, span);
+            }
             Terminal::Each { pattern, body } => {
                 // A written `for`: the loop's own body is the terminal, with
                 // `continue` going to the next item and `break` out of the
@@ -9109,6 +9249,7 @@ impl Builder<'_, '_> {
             | Terminal::Last
             | Terminal::Minimum(_)
             | Terminal::Maximum(_)
+            | Terminal::Tally(_)
             | Terminal::Each { .. } => {}
         }
         self.terminate(exhausted, TerminatorKind::Goto { target: done }, span);

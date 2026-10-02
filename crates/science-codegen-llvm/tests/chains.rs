@@ -1446,6 +1446,38 @@ fn batches_cut_the_chain_into_disjoint_arrays() {
     );
 }
 
+// --- tally ------------------------------------------------------------------
+
+/// **`tally(by: key)` counts items per key**, as a `Map[K, Int]` in order of
+/// first appearance: 1..7 by `% 3` is `1 -> 3, 2 -> 2, 0 -> 2`. String keys
+/// are owned (`s.clone()`), an empty source is an empty map, and links before
+/// it filter what is counted.
+#[test]
+fn tally_counts_items_per_key() {
+    assert_eq!(
+        prints(
+            "tally",
+            r#"def main():
+    let xs be [1, 2, 3, 4, 5, 6, 7]
+    let t be xs.iterate().tally(by: x giving x % 3)
+    print(f"{t.length()}")
+    for entry in t:
+        print(f"{entry.key} {entry.value}")
+    let words be ["a", "b", "a", "a"]
+    let w be words.iterate().tally(by: s giving s.clone())
+    for entry in w:
+        print(f"{entry.key} {entry.value}")
+    let none be Array[Int].new()
+    print(none.iterate().tally(by: x giving x + 0).length())
+    let big be xs.iterate().keep(each > 2).tally(by: x giving x % 2)
+    for entry in big:
+        print(f"{entry.key} {entry.value}")
+"#,
+        ),
+        "3\n1 3\n2 2\n0 2\na 3\nb 1\n0\n1 3\n0 2\n"
+    );
+}
+
 // --- owned ------------------------------------------------------------------
 
 /// **`owned()` turns a chain of borrows into a chain of copies**: bitwise for

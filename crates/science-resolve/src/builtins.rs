@@ -1200,6 +1200,18 @@ macro_rules! chain_links {
                 params: &[],
                 ret: Some(Ty::App("Unique", &[$this, $item])),
             },
+            // `tally(by: key)`: how many items had each key, a `Map[K, Int]`
+            // in order of first appearance. **The key is whatever the
+            // closure returns and must be an owned key a `Map` admits** (the
+            // `SC0548` pass checks it): `each.name` over borrowed records is a
+            // borrowed `String` and is refused, `each.name.clone()` is not.
+            Method {
+                name: "tally",
+                generics: &["K"],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[$borrowed], &Ty::Var("K")))],
+                ret: Some(Ty::App("Map", &[Ty::Var("K"), INT])),
+            },
             // `product()` is `sum()`'s twin: the item with a borrow peeled, from
             // one, held to the same numbers by the same checker half.
             Method { name: "product", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some($total) },
@@ -3411,7 +3423,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "partition_results",
     "partition",
     "group",
-    "tally",
 ];
 
 /// `intrinsics-math-physics.md` §4.3's float names beyond `stdlib-core.md`

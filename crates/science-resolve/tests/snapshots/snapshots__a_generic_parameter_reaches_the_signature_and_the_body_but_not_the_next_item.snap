@@ -2,24 +2,24 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![largest, stray]))"
 ---
-Module `main` #3170 @8..49
-  Fn `largest` #3171 @8..39
+Module `main` #3266 @8..49
+  Fn `largest` #3267 @8..39
     generics
-      TypeParam `T` #3173 @4..5
+      TypeParam `T` #3269 @4..5
         bounds
           Bound -> `Ord` #79 @0..3
     params
-      Param `items` #3174 @16..27
+      Param `items` #3270 @16..27
         type: Path -> `Array` #18 @16..21
           generics
-            Path -> `T` #3173 @6..7
+            Path -> `T` #3269 @6..7
     ret: Borrowed @28..31
-      Path -> `T` #3173 @28..29
+      Path -> `T` #3269 @28..29
     body: Block @32..39
-      tail: Path -> `items` #3174 @32..37
-  Fn `stray` #3172 @40..49
+      tail: Path -> `items` #3270 @32..37
+  Fn `stray` #3268 @40..49
     params
-      Param `x` #3175 @46..49
+      Param `x` #3271 @46..49
         type: Path -> <error> @46..47
     body: (none)
 --- diagnostics ---
