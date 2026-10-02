@@ -132,26 +132,19 @@ def main(value: I64?):
     check(source).assert_clean();
 }
 
-/// §3.4 decides that *"arrays and maps do not implement `Display`"*, and this
-/// pins that **the decision is not enforced** — which is the finding rather
-/// than the feature.
-///
-/// `builtins.rs`' `IMPLEMENTS` table has no `Array` row at all, deliberately:
-/// `Array of T implements Clone` holds only where `T: Clone`, and a
-/// conditional implementation is not something that index can express. So the
-/// checker cannot tell *"`Array` does not implement `Display`"* from *"nobody
-/// has written `Array`'s row yet"*, and `requires_display` refuses to report
-/// the first on the evidence for the second.
-///
-/// The test asserts the silence so that whoever gives the prelude a way to
-/// state a deliberate absence finds this line and deletes it.
+/// §3.4 decides that *"arrays and maps do not implement `Display`"*, and the
+/// checker now enforces it: `requires_display` and the `print` argument check
+/// name `Array`, `Map` and `Set` outright. Before, an array hole checked clean
+/// and `print(array)` printed garbage; this test used to pin that silence
+/// (`Vec::<u16>::new()`) and said to delete it the day the decision was
+/// enforced. It asserts `SC0275` now.
 #[test]
-fn an_array_hole_is_not_reported_and_section_three_four_says_it_should_be() {
+fn an_array_hole_is_sc0275_because_section_three_four_says_so() {
     let source = "\
 def main(rows: Array[I64]):
     let line be f\"{rows}\"
 ";
-    assert_eq!(check(source).codes(), Vec::<u16>::new());
+    assert_eq!(check(source).codes(), vec![275]);
 }
 
 /// A user type with no `implements Display:` block is the same refusal, and

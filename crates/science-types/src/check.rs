@@ -2200,7 +2200,9 @@ impl<'a> BodyChecker<'a> {
         if self.types.references_error(revealed) {
             return;
         }
-        if matches!(self.types.kind(revealed), TyKind::Nullable(_)) {
+        if matches!(self.types.kind(revealed), TyKind::Nullable(_))
+            || self.is_collection(revealed)
+        {
             let rendered = self.types.render(self.defs, revealed);
             self.diagnostics.push(not_displayable(span, &rendered));
             return;
@@ -2248,10 +2250,22 @@ impl<'a> BodyChecker<'a> {
         if self.types.references_error(revealed) {
             return;
         }
-        if matches!(self.types.kind(revealed), TyKind::Nullable(_)) {
+        if matches!(self.types.kind(revealed), TyKind::Nullable(_)) || self.is_collection(revealed)
+        {
             let rendered = self.types.render(self.defs, revealed);
             self.diagnostics.push(output_argument_not_displayable(span, &rendered, name));
         }
+    }
+
+    /// `Array`, `Map` and `Set` (through any borrows): §3.4 decides these do
+    /// not implement `Display` (they implement `Inspect`). The compiler used
+    /// to let them through and the backend printed garbage.
+    fn is_collection(&self, ty: Ty) -> bool {
+        let ty = self.without_borrows(ty);
+        let TyKind::Named { def, .. } = self.types.kind(ty) else { return false };
+        ["Array", "Map", "Set"]
+            .iter()
+            .any(|name| self.decls.prelude().get(name) == Some(*def))
     }
 
     fn numeric_name(&self, var: InferVar) -> &'static str {
@@ -9991,8 +10005,9 @@ fn output_argument_not_displayable(span: Span, ty: &str, name: &str) -> Diagnost
     .with_label(Label::primary(span, format!("this is `{ty}`")))
     .with_note(format!(
         "`{name}` renders its argument through `Display`. A nullable does not implement it \
-         until it is narrowed — `if x?: {name}(x)` — the same rule an f-string hole already \
-         enforces"
+         until it is narrowed — `if x?: {name}(x)` — and an array, map or set never does \
+         (§3.4): print its `length()` or its elements, the same rule an f-string hole \
+         already enforces"
     ))
 }
 
@@ -10014,8 +10029,9 @@ fn not_displayable(span: Span, ty: &str) -> Diagnostic {
     .with_label(Label::primary(span, format!("this is `{ty}`")))
     .with_note(
         "an interpolation renders its value through `Display`. A nullable does not implement it \
-         until it is narrowed, and a value that implements nothing needs an `implements Display:` \
-         block before it can be printed",
+         until it is narrowed, an array, map or set never does (§3.4: print its `length()` or \
+         loop over its elements), and a value that implements nothing needs an \
+         `implements Display:` block before it can be printed",
     )
 }
 

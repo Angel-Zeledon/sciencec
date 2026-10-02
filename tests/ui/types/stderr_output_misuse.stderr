@@ -26,7 +26,7 @@ error[SC0275]: `I64?` cannot be printed: it does not implement `Display`
 11 |     print_error(found)
    |                 ^^^^^ this is `I64?`
    |
-   = note: `print_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: print_error(x)` — the same rule an f-string hole already enforces
+   = note: `print_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: print_error(x)` — and an array, map or set never does (§3.4): print its `length()` or its elements, the same rule an f-string hole already enforces
 
 error[SC0275]: `I64?` cannot be written: it does not implement `Display`
   --> tests/ui/types/stderr_output_misuse.science:12:17
@@ -34,4 +34,4 @@ error[SC0275]: `I64?` cannot be written: it does not implement `Display`
 12 |     write_error(found)
    |                 ^^^^^ this is `I64?`
    |
-   = note: `write_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: write_error(x)` — the same rule an f-string hole already enforces
+   = note: `write_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: write_error(x)` — and an array, map or set never does (§3.4): print its `length()` or its elements, the same rule an f-string hole already enforces

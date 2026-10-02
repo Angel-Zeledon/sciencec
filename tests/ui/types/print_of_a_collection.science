@@ -1,0 +1,8 @@
+# `strings-formatting-and-docs.md` §3.4: arrays, maps and sets do not
+# implement `Display`. `print` of one used to check clean and print garbage.
+
+def show(xs: &Array[I64], names: &Array[String]):
+    print(xs)
+    print(names)
+    print([[1.5], [2.5]])
+    print(f"{xs}")
