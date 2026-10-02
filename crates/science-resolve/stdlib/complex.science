@@ -302,7 +302,7 @@ Complex implements Neg:
         Complex(re: -self.re, im: -self.im)
 
 Complex implements Eq:
-    def eq(self, other: Complex) -> Bool:
+    def eq(self, other: &Complex) -> Bool:
         self.re is other.re and self.im is other.im
 
 # --- Display ------------------------------------------------------------------

@@ -833,6 +833,28 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             ret: Some(Ty::SelfTy),
         }],
     },
+    // --- `Eq`, `stdlib-shape-and-packages.md` Decision 4c -----------------
+    //
+    // **`def eq(self, other: &Self) -> Bool`, so that `a is b` under a bound
+    // `T: Eq` is a call.** A user type's `implements Eq:` block always wrote
+    // this method, and `check`'s comparison arm already dispatches `is` to it;
+    // what was missing was the interface declaring it, so a type parameter's
+    // bound had no method to resolve and `a is b` over two `&T` fell through
+    // to the structural `Binary` — which the backend can only build for a
+    // scalar. `other` is borrowed for `Ord.less`'s reason: a comparison reads
+    // both operands and consumes neither.
+    InterfaceDecl {
+        name: "Eq",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "eq",
+            generics: &[],
+            recv: Some(SelfKind::Shared),
+            params: &[("other", Ty::Ref(&Ty::SelfTy))],
+            ret: Some(BOOL),
+        }],
+    },
     // --- `Ord`, `stdlib-shape-and-packages.md` §4.5, AMENDMENT 1 ---------
     //
     // **Decision. `Ord`'s one method is `def less(self, other: &Self) ->

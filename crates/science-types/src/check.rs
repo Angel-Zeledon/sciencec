@@ -7204,6 +7204,14 @@ impl<'a> BodyChecker<'a> {
             let candidate = self.bound_operator(param, interface_def, method)?;
             return self.operator_call(receiver, operand, candidate, self_ty, span);
         };
+        // **`Eq` on a prelude type stays the structural comparison.** `Eq`
+        // declares `eq` now, for a type parameter's bound to resolve, and the
+        // prelude's own `implements Eq` blocks have no body to call: `a is b`
+        // over two `String`s or two `Int`s is the `Binary` the backend
+        // compares with one instruction or `science_string_eq`.
+        if interface == "Eq" && self.defs.get(head).is_builtin() {
+            return None;
+        }
         // **A user's implementation on a primitive does not take over the
         // primitive's own arithmetic.** `F64 implements Mul[Complex]` (the
         // scalar on the left, legal because `Complex` is local) puts a user

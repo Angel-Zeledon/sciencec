@@ -10189,7 +10189,8 @@ impl<'a> Lowerer<'a> {
         } else if let Some(self_ty) =
             self.builtin_less(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
-            self.lower_builtin_less(body, ctx, self_ty, args, destination, insts)?;
+            let equality = self.defs.get(def).name.as_str() == "eq";
+            self.lower_builtin_less(body, ctx, self_ty, equality, args, destination, insts)?;
         } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
@@ -11791,10 +11792,14 @@ impl<'a> Lowerer<'a> {
     /// here: it has a body and `symbol_for_call` lowers it as an ordinary call
     /// first.
     fn builtin_less(&self, def: DefId, receiver_ty: Option<Ty>) -> Option<Ty> {
-        if self.defs.get(def).name.as_str() != "less" {
-            return None;
-        }
-        if self.declaring_interface(def).as_deref() != Some("Ord") {
+        // `Eq.eq` is answered the same way, for a type parameter bounded by
+        // `Eq` instantiated at a prelude type: `a is b` over two `&T`.
+        let (name, interface) = match self.defs.get(def).name.as_str() {
+            "less" => ("less", "Ord"),
+            "eq" => ("eq", "Eq"),
+            _ => return None,
+        };
+        if self.declaring_interface(def).as_deref() != Some(interface) {
             return None;
         }
         let self_ty = self.referent(receiver_ty?);
@@ -11804,7 +11809,7 @@ impl<'a> Lowerer<'a> {
         if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
             return None;
         }
-        matches!(
+        (matches!(
             self.defs.get(*receiver).name.as_str(),
             "Int" | "I8"
                 | "I16"
@@ -11821,7 +11826,7 @@ impl<'a> Lowerer<'a> {
                 | "Float"
                 | "Char"
                 | "String"
-        )
+        ) || (name == "eq" && self.defs.get(*receiver).name.as_str() == "Bool"))
         .then_some(self_ty)
     }
 
@@ -11837,6 +11842,7 @@ impl<'a> Lowerer<'a> {
         body: &MirBody,
         ctx: &mut BodyCtx,
         self_ty: Ty,
+        equality: bool,
         args: &[mir::Operand],
         destination: &mir::Place,
         insts: &mut Vec<ExtInst>,
@@ -11850,8 +11856,13 @@ impl<'a> Lowerer<'a> {
             return Err(Unlowered::new("an `Ord.less` call lowered without its two operands"));
         };
         let dest_local = LocalId(destination.local.index() as u32);
+        let (binary, compare) = if equality {
+            (BinaryOp::Eq, CmpOp::Eq)
+        } else {
+            (BinaryOp::Lt, CmpOp::Lt)
+        };
         if self.is_string(self_ty) {
-            return self.lower_string_comparison(ctx, BinaryOp::Lt, receiver, other, dest_local, insts);
+            return self.lower_string_comparison(ctx, binary, receiver, other, dest_local, insts);
         }
         let scalar = self.scalar_of(self_ty)?;
         let layout = layout_of(self.target, &self.cg_ty(self_ty)?);
@@ -11861,7 +11872,7 @@ impl<'a> Lowerer<'a> {
         let result = ctx.value();
         insts.push(ExtInst::Above(Inst::Cmp {
             dest: result,
-            op: CmpOp::Lt,
+            op: compare,
             signed,
             lhs: left,
             rhs: right,

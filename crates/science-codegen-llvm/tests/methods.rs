@@ -287,7 +287,7 @@ type Counts:
     reads: Int
 
 Counts implements Eq:
-    def eq(self, other: Counts) -> Bool:
+    def eq(self, other: &Counts) -> Bool:
         self.reads is other.reads
 
 Counts implements Copy
@@ -1843,7 +1843,7 @@ type P:
     y: Int
 
 P implements Eq:
-    def eq(self, other: P) -> Bool:
+    def eq(self, other: &P) -> Bool:
         self.x is other.x and self.y is other.y
 
 P implements Add:

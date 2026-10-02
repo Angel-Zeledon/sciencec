@@ -177,7 +177,7 @@ Vector2 implements Neg:
         Vector2(x: -self.x, y: -self.y)
 
 Vector2 implements Eq:
-    def eq(self, other: Vector2) -> Bool:
+    def eq(self, other: &Vector2) -> Bool:
         self.x is other.x and self.y is other.y
 
 Vector2 implements Copy
@@ -226,7 +226,7 @@ Note implements Clone:
         Note(text: copy_of(self.text))
 
 Note implements Eq:
-    def eq(self, other: Note) -> Bool:
+    def eq(self, other: &Note) -> Bool:
         self.text is other.text
 
 Note implements Ord:

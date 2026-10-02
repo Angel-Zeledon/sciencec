@@ -633,7 +633,7 @@ type Vector:
     x: F64
 
 Vector implements Eq:
-    def eq(self, other: Vector) -> Bool:
+    def eq(self, other: &Vector) -> Bool:
         true
 
 type Held:
@@ -668,7 +668,7 @@ type Counts:
     reads: I64
 
 Counts implements Eq:
-    def eq(self, other: Counts) -> Bool:
+    def eq(self, other: &Counts) -> Bool:
         self.reads is other.reads
 
 Counts implements Copy

@@ -2,17 +2,17 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report_crate(vec![(\"main.science\", main), (\"text/parser.science\", parser),])"
 ---
-Module `main` #3443 @12..72
-  Fn `f` #3446 @42..72
+Module `main` #3446 @12..72
+  Fn `f` #3449 @42..72
     params
-      Param `t` #3449 @44..51
-        type: Path -> `Token` #3447 @44..49
+      Param `t` #3452 @44..51
+        type: Path -> `Token` #3450 @44..49
     body: Block @52..72
       tail: Call @52..70
-        callee: Path -> `lex` #3448 @52..67
-Module `parser` #3445 @0..11
-  Record `Token` #3447 @0..5
-  Fn `lex` #3448 @6..11
+        callee: Path -> `lex` #3451 @52..67
+Module `parser` #3448 @0..11
+  Record `Token` #3450 @0..5
+  Fn `lex` #3451 @6..11
     body: Block @10..11
 --- diagnostics ---
 SC0202 @34..41 `missing` is not defined in `text.parser`

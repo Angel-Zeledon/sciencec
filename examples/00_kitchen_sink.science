@@ -201,7 +201,7 @@ Counts implements Neg:
         Counts(reads: -self.reads, writes: -self.writes)
 
 Counts implements Eq:
-    def eq(self, other: Counts) -> Bool:
+    def eq(self, other: &Counts) -> Bool:
         self.reads is other.reads and self.writes is other.writes
 
 Counts implements Copy

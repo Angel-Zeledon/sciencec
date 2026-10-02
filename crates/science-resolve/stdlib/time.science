@@ -148,7 +148,7 @@ Duration implements Neg:
         Duration(nanos: -self.nanos)
 
 Duration implements Eq:
-    def eq(self, other: Duration) -> Bool:
+    def eq(self, other: &Duration) -> Bool:
         self.nanos is other.nanos
 
 Duration implements Ord:
@@ -261,7 +261,7 @@ Instant implements Add:
         Instant(nanos: self.nanos + span.nanoseconds())
 
 Instant implements Eq:
-    def eq(self, other: Instant) -> Bool:
+    def eq(self, other: &Instant) -> Bool:
         self.nanos is other.nanos
 
 # Earlier is less: the order of the timeline, which is the order of the

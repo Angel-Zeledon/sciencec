@@ -279,7 +279,7 @@ type Note:
     text: String
 
 Note implements Eq:
-    def eq(self, other: Note) -> Bool:
+    def eq(self, other: &Note) -> Bool:
         self.text is other.text
 
 Note implements Ord:

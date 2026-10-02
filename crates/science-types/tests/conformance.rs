@@ -532,12 +532,29 @@ Doc has:
 ///   the method and needed no `Ordering` to do it. That block is `SC0539` now,
 ///   and the next test holds it.
 ///
-/// `Eq` is what is left: `is` dispatches to an `eq` by name, read off the
-/// implementation, and the interface still declares no signature for a block
-/// to be held to.
+/// `Eq` was what was left, and is not any more: it declares `eq(self, other:
+/// &Self) -> Bool` so that `a is b` under `T: Eq` has a method to resolve
+/// (`an_eq_block_is_held_to_eq` below). `Add` is a prelude interface that
+/// still declares none, so it carries this test now.
 #[test]
 fn a_methodless_prelude_interface_admits_any_method() {
     support::check(
+        "\
+type Doc:
+    title: String
+
+Doc implements Add:
+    def whatever_this_is(self) -> Int:
+        1
+",
+    )
+    .assert_clean();
+}
+
+/// `Eq` is held to `eq` the way `Ord` is held to `less`.
+#[test]
+fn an_eq_block_is_held_to_eq() {
+    let checked = support::check(
         "\
 type Doc:
     title: String
@@ -546,8 +563,8 @@ Doc implements Eq:
     def whatever_this_is(self) -> Int:
         1
 ",
-    )
-    .assert_clean();
+    );
+    assert_eq!(checked.codes(), vec![539]);
 }
 
 /// **`Ord` is held to `less` now**, which is the measurement `conform`'s §3
