@@ -650,6 +650,7 @@ fn an_array_of_string_literals_that_is_only_iterated_runs() {
         print(name)
 ";
     assert_eq!(prints("string_literal_array", source), "x\ny\nMercury\nVenus\n");
+}
 
 /// `Array[T?]` elements are usable: `for item in items` gives `&T?`, `item?`
 /// tests it, and inside the test it is a `&T` (copied where a `T` is wanted).
