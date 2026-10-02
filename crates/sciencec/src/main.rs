@@ -225,6 +225,9 @@ fn run(args: &[OsString]) -> Outcome {
         &module_path,
         std::env::var_os("SCIENCE_PATH"),
     ));
+    if matches!(command.to_str(), Some("check" | "build" | "test" | "run")) {
+        package::mount_around(&mut session, &files);
+    }
     match command.to_str() {
         // **No file named means the package around the working directory**
         // (`crate::package`'s §"When a command is a package command"). These

@@ -377,3 +377,25 @@ fn module_path_reaches_a_directory_of_modules_from_a_script() {
     run.succeeded();
     assert_eq!(run.stdout, "4\n");
 }
+
+/// A FILE operand inside a package resolves against the package: before this,
+/// `sciencec test tests/greeting.science` built the file standalone and its
+/// `use NAME.greeting` was `SC0202`.
+#[test]
+fn a_file_operand_inside_a_package_resolves_against_the_package() {
+    let dir = workspace("file_operand");
+    sciencec_in(&dir, &["new", "filed"]).succeeded();
+    let package = dir.join("filed");
+
+    let run = sciencec_in(&package, &["test", "tests/greeting.science"]);
+    run.succeeded();
+    assert_eq!(run.stdout, "test tests/greeting.science ... ok\n");
+    sciencec_in(&package, &["check", "tests/greeting.science"]).succeeded();
+
+    // From a subdirectory too, and a file outside any package stays standalone.
+    sciencec_in(&package.join("tests"), &["test", "greeting.science"]).succeeded();
+    write(&dir, &[("loose/script.science", "def main():\n    print(\"loose\")\n")]);
+    let loose = sciencec_in(&dir.join("loose"), &["run", "script.science"]);
+    loose.succeeded();
+    assert_eq!(loose.stdout, "loose\n");
+}

@@ -140,6 +140,31 @@ pub fn load(session: &mut Session) -> Option<Loaded> {
     Some(Loaded { graph, cwd })
 }
 
+/// Mounts the package around `files` when they are inside one, so that
+/// `sciencec test tests/greeting.science` (or `check`, `build`, `run` with a
+/// file) resolves `use NAME.module` the way the package-wide form does.
+///
+/// **Silent when there is nothing to mount.** A file with no `science.toml`
+/// above it, a file outside the package its directory sits under, and a
+/// manifest that does not load are all a standalone file, exactly as before:
+/// the package commands are where a broken manifest is reported, and a script
+/// beside one must not start failing for it.
+pub fn mount_around(session: &mut Session, files: &[PathBuf]) {
+    let Some(first) = files.first() else { return };
+    let Ok(file) = std::fs::canonicalize(first) else { return };
+    let Some(root) = file.parent().and_then(graph::find_root) else { return };
+    if files.iter().any(|f| !std::fs::canonicalize(f).is_ok_and(|f| f.starts_with(&root))) {
+        return;
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
+    let near = |path: &Path| PathBuf::from(science_package::search::relative(&cwd, path));
+    let Ok(graph) = graph::load(&root, &mut |path, text| session.register(&near(path), text)) else {
+        return;
+    };
+    session.set_mounts(graph.packages.iter().map(|p| (p.manifest.name.clone(), near(&p.modules()))).collect());
+}
+
 impl Loaded {
     /// Writes `science.lock`, once the command has found something to
     /// compile.
