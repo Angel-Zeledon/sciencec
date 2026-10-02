@@ -2931,7 +2931,13 @@ impl<'a> Lowerer<'a> {
         // interns the descriptor under.
         let drop_fn = match self.direct_release(element)? {
             Some((_, Some(_))) => Some(self.intern_container_thunk(element)?),
-            Some((symbol, None)) => Some(symbol.to_string()),
+            // The descriptor names the release function, so the module has to
+            // declare it even when no drop terminator ever calls it directly —
+            // `for p in ["x", "y"]:` frees its strings only through the array.
+            Some((symbol, None)) => {
+                self.declare(symbol)?;
+                Some(symbol.to_string())
+            }
             None => self.intern_drop_glue(element, 0)?,
         };
         let cg = self.cg_ty(element)?;

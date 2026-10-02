@@ -632,3 +632,22 @@ def main():
         "5\ndrop B\n1\ndrop consumed\n17\nend\n2\ndrop e1\ndrop e2\ndrop A\ndrop held\n"
     );
 }
+
+/// An array of string literals that is only walked, never measured.
+///
+/// The array's descriptor names `science_string_free` as its element's drop
+/// glue, and the module only declared that function when some drop
+/// terminator called it directly. A program that frees its strings only
+/// through the array — `for p in ["x", "y"]:` — failed with `SC0402`, *the
+/// descriptor names drop glue the module does not define*.
+#[test]
+fn an_array_of_string_literals_that_is_only_iterated_runs() {
+    let source = "def main():
+    for p in [\"x\", \"y\"]:
+        print(p)
+    let planets be [\"Mercury\", \"Venus\"]
+    for name in planets:
+        print(name)
+";
+    assert_eq!(prints("string_literal_array", source), "x\ny\nMercury\nVenus\n");
+}
