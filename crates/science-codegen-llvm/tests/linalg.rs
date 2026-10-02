@@ -472,7 +472,7 @@ fn inverses() {
     let swap be matrix([0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0], 3, 3)
     scalar(\"perm\", residual(must(inverse(swap)), must(transpose(swap))))
     let _s, serr be inverse(matrix([1.0, 2.0, 2.0, 4.0], 2, 2))
-    scalar(\"singk\", kind_of(serr) as F64)
+    report(\"singk\", serr)
     let _r, rerr be inverse(matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3))
     scalar(\"rectk\", kind_of(rerr) as F64)
     let one, oerr be inverse(matrix([4.0], 1, 1))
@@ -488,6 +488,7 @@ fn inverses() {
     small(&out, "twice");
     small(&out, "perm");
     kind(&out, "singk", 1.0);
+    assert_eq!(text(&out, "singk_msg"), "inverse: the matrix is singular");
     kind(&out, "rectk", 0.0);
     kind(&out, "onek", -1.0);
     exactly(&out, "one", &[0.25]);

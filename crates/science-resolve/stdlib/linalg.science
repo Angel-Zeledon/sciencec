@@ -312,6 +312,11 @@ Lu has:
 # `SINGULAR`; a `b` with the wrong leading length is `SHAPE_MISMATCH`.
 # Prefer this to `inverse(a) * b`: it is faster and more accurate.
 public def solve(a: &NdArray, b: &NdArray) -> (NdArray, LinalgError?):
+    solve_as(a, b, "solve")
+
+# `solve`, with `who` naming the public function in its messages, so that
+# `inverse` reports itself and not the routine it is built on.
+def solve_as(a: &NdArray, b: &NdArray, who: &String) -> (NdArray, LinalgError?):
     let factored, err be lu(a)
     if err?:
         return (none(), err)
@@ -319,10 +324,10 @@ public def solve(a: &NdArray, b: &NdArray) -> (NdArray, LinalgError?):
     if b.dims.length() < 1 or b.dims.length() > 2 or b.dims[0] is not n:
         return (
             none(),
-            fail(SHAPE_MISMATCH, f"solve needs b to have {n} rows, not dims {dims_of(b)}")
+            fail(SHAPE_MISMATCH, f"{who} needs b to have {n} rows, not dims {dims_of(b)}")
         )
     if factored.singular:
-        return (none(), fail(SINGULAR, "solve: the matrix is singular"))
+        return (none(), fail(SINGULAR, f"{who}: the matrix is singular"))
     let mutable columns be 1
     if b.dims.length() is 2:
         columns be b.dims[1]
@@ -360,7 +365,7 @@ public def inverse(a: &NdArray) -> (NdArray, LinalgError?):
         return (none(), err)
     let n: Int be a.dims[0]
     let identity_matrix be identity(n)
-    let result, solved be solve(a, identity_matrix)
+    let result, solved be solve_as(a, identity_matrix, "inverse")
     if solved?:
         return (none(), solved)
     (result, null)
