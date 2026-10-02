@@ -712,7 +712,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 131 entry points. §2.6: *"They are the whole list."*
+/// The 146 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -949,6 +949,26 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_formatter_number", params: &[P, RtParam::F64], ret: RtRet::Void },
     RuntimeFn { symbol: "science_formatter_integer", params: &[P, N], ret: RtRet::Void },
     RuntimeFn { symbol: "science_formatter_spec", params: &[P], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
+    // **One hundred and thirty-two to one hundred and forty-six: `Display.display` on a
+    // prelude type**, `(self: &T, into: &mut Formatter)`, one per scalar width plus
+    // `Bool`, `Char`, `String`, `IoError` and `TextError`. A generic `T: Display` hole
+    // reaches the interface's `display`, which has no Science body for a prelude
+    // `Self`; `PRELUDE_METHODS` maps `(T, "display")` to these.
+    RuntimeFn { symbol: "science_display_i8", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_i16", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_i32", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_i64", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_u8", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_u16", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_u32", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_u64", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_f32", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_f64", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_bool", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_char", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_str", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_io_error", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_display_text_error", params: &[P, P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_format_spec_default", params: &[], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
     // **Eighty-eight to ninety: §2.1's format spec, applied.** A hole that
     // writes a spec is rendered through a `Formatter` initialised with it:
@@ -1442,8 +1462,8 @@ mod tests {
     /// aggregate — `replace` writes the element it moves out through a slot —
     /// so the `sret` lists did not move.
     #[test]
-    fn there_are_one_hundred_and_thirty_one_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 131, "§2.6: \"they are the whole list\"");
+    fn there_are_one_hundred_and_forty_six_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 146, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

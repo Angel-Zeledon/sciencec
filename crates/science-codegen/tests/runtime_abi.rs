@@ -474,7 +474,7 @@ fn nothing_outside_the_table_is_callable() {
     // answer `get`'s niche the way `get` does. Nothing on the tempting list
     // joined: the bounds checks are inside the operations they guard, not a
     // `science_bounds_check` a call site makes.
-    assert_eq!(RUNTIME.len(), 131);
+    assert_eq!(RUNTIME.len(), 146);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

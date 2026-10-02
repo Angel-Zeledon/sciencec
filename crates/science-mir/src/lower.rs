@@ -3649,6 +3649,18 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let ty = self.stripped(ty);
         let interface = self.context.decls.prelude().get("Display")?;
         let methods = self.context.decls.methods();
+        // **A type parameter is answered with the interface's own `display`.**
+        // Inside `def show[T](x: &T) where T: Display` there is no concrete
+        // `Self` yet, so the only callee is the declaration;
+        // `science_codegen::mono` redirects it to the instance's concrete
+        // type (a user's `display`, or `science_display_*` for a prelude type)
+        // exactly as it does for `T: Summarize`.
+        if matches!(self.context.types.kind(ty), TyKind::Param { .. }) {
+            return match methods.lookup(interface, "display", Form::Value) {
+                Found::One(candidate) => Some(candidate.method),
+                _ => None,
+            };
+        }
         let head = methods.receiver(self.context.defs, self.context.types, ty)?;
         let Found::One(candidate) = methods.lookup(head, "display", Form::Value) else {
             return None;

@@ -11632,6 +11632,29 @@ impl<'a> Lowerer<'a> {
             // a `FormatSpec` by value, the `sret` convention `science_string_new`
             // above shows this path carries.
             ("Formatter", "spec", "science_formatter_spec"),
+            // **`Display.display` on a prelude type**, which a generic
+            // `T: Display` hole reaches once monomorphisation has bound `T`
+            // to a primitive: `science-mir` calls the interface's `display`
+            // and `science-codegen` redirects it to the receiver's concrete
+            // type, which for these has no Science body. Each entry point is
+            // `(self: &T, into: &mut Formatter)`, `display`'s own shape.
+            ("Int", "display", "science_display_i64"),
+            ("I64", "display", "science_display_i64"),
+            ("I32", "display", "science_display_i32"),
+            ("I16", "display", "science_display_i16"),
+            ("I8", "display", "science_display_i8"),
+            ("U64", "display", "science_display_u64"),
+            ("U32", "display", "science_display_u32"),
+            ("U16", "display", "science_display_u16"),
+            ("U8", "display", "science_display_u8"),
+            ("Float", "display", "science_display_f64"),
+            ("F64", "display", "science_display_f64"),
+            ("F32", "display", "science_display_f32"),
+            ("Bool", "display", "science_display_bool"),
+            ("Char", "display", "science_display_char"),
+            ("String", "display", "science_display_str"),
+            ("IoError", "display", "science_display_io_error"),
+            ("TextError", "display", "science_display_text_error"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;

@@ -77,7 +77,7 @@ pub unsafe extern "C" fn science_io_error_message(error: *const ScienceIoError) 
 /// `print(err.message())` printing different text would be a defect no type
 /// could catch, and one table is what makes it impossible rather than
 /// unlikely.
-fn io_error_sentence(error: ScienceIoError) -> &'static str {
+pub(crate) fn io_error_sentence(error: ScienceIoError) -> &'static str {
     match error {
         ScienceIoError::NOT_FOUND => "not found",
         ScienceIoError::PERMISSION_DENIED => "permission denied",

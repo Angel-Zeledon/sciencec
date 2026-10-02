@@ -79,7 +79,7 @@ pub unsafe extern "C" fn science_text_error_message(error: *const ScienceTextErr
 }
 
 /// The four sentences, once, for `io.rs`'s `io_error_sentence`'s reason.
-fn text_error_sentence(error: ScienceTextError) -> &'static str {
+pub(crate) fn text_error_sentence(error: ScienceTextError) -> &'static str {
     match error {
         ScienceTextError::NOT_UTF8 => "not valid UTF-8",
         ScienceTextError::NOT_A_CHARACTER_BOUNDARY => "not a character boundary",

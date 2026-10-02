@@ -1222,3 +1222,124 @@ pub unsafe extern "C" fn science_formatter_spec(formatter: *const ScienceFormatt
     // SAFETY: the caller guarantees a live `Formatter`.
     unsafe { (*formatter).spec }
 }
+
+// --- `Display.display` on a prelude type ------------------------------------
+//
+// A generic `def show[T](x: &T) where T: Display` renders its hole through the
+// interface's `display`, and `science-codegen`'s monomorphiser redirects that
+// call to the concrete `Self`. A prelude type has no Science body to redirect
+// to, so each one gets an entry point of the same shape a user's `display` has
+// — `(self: &T, into: &mut Formatter)` — and `science-codegen-llvm`'s
+// `PRELUDE_METHODS` maps `(T, "display")` to it. Each is the `Formatter` entry
+// point for the type with the value read through the pointer, so a spec on the
+// hole is honoured exactly as it is for a concrete one.
+
+macro_rules! display_scalar {
+    ($name:ident, $ty:ty, $entry:ident, $wide:ty) => {
+        /// `Display.display` for one scalar type: read the value through
+        /// `value` and hand it to the matching `Formatter` entry point.
+        ///
+        /// # Safety
+        ///
+        /// `value` must point to a live value of the type, `formatter` to a
+        /// live [`ScienceFormatter`].
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(value: *const $ty, formatter: *mut ScienceFormatter) {
+            // SAFETY: the caller guarantees both pointers.
+            unsafe { $entry(formatter, *value as $wide) }
+        }
+    };
+}
+
+display_scalar!(science_display_i8, i8, science_formatter_integer, i64);
+display_scalar!(science_display_i16, i16, science_formatter_integer, i64);
+display_scalar!(science_display_i32, i32, science_formatter_integer, i64);
+display_scalar!(science_display_i64, i64, science_formatter_integer, i64);
+display_scalar!(science_display_u8, u8, science_formatter_unsigned, u64);
+display_scalar!(science_display_u16, u16, science_formatter_unsigned, u64);
+display_scalar!(science_display_u32, u32, science_formatter_unsigned, u64);
+display_scalar!(science_display_u64, u64, science_formatter_unsigned, u64);
+display_scalar!(science_display_f32, f32, science_formatter_number32, f32);
+display_scalar!(science_display_f64, f64, science_formatter_number, f64);
+
+/// Pad `text` under the formatter's spec and append it: what `Formatter.text`
+/// does for a value that is not already a `ScienceString`.
+///
+/// # Safety
+///
+/// `formatter` must be a live [`ScienceFormatter`] with a live sink.
+unsafe fn display_text(formatter: *mut ScienceFormatter, text: String) {
+    // SAFETY: the caller guarantees a live `Formatter`.
+    let spec = unsafe { (*formatter).spec };
+    let padded = pad(text, &spec, ScienceAlign::LEFT);
+    // SAFETY: the caller guarantees `formatter.sink` is a live `ScienceString`.
+    let mut sink = Sink(unsafe { &mut *((*formatter).sink) });
+    let _ = sink.write_str(&padded);
+}
+
+/// `Display.display` for `Bool`: `true` or `false`, padded.
+///
+/// # Safety
+///
+/// As [`science_display_i64`].
+#[no_mangle]
+pub unsafe extern "C" fn science_display_bool(value: *const bool, formatter: *mut ScienceFormatter) {
+    // SAFETY: the caller guarantees both pointers.
+    unsafe { display_text(formatter, (*value).to_string()) }
+}
+
+/// `Display.display` for `Char`: the character itself, padded.
+///
+/// # Safety
+///
+/// As [`science_display_i64`].
+#[no_mangle]
+pub unsafe extern "C" fn science_display_char(value: *const u32, formatter: *mut ScienceFormatter) {
+    // SAFETY: the caller guarantees both pointers.
+    let character = char::from_u32(unsafe { *value }).unwrap_or(char::REPLACEMENT_CHARACTER);
+    // SAFETY: as above.
+    unsafe { display_text(formatter, character.to_string()) }
+}
+
+/// `Display.display` for `String`: [`science_formatter_text`] with the
+/// arguments in `display`'s order.
+///
+/// # Safety
+///
+/// As [`science_display_i64`], with `value` a live [`ScienceString`].
+#[no_mangle]
+pub unsafe extern "C" fn science_display_str(
+    value: *const ScienceString,
+    formatter: *mut ScienceFormatter,
+) {
+    // SAFETY: the caller guarantees both pointers.
+    unsafe { science_formatter_text(formatter, value) }
+}
+
+/// `Display.display` for `IoError`: its sentence, padded.
+///
+/// # Safety
+///
+/// As [`science_display_i64`], with `value` a live `IoError`.
+#[no_mangle]
+pub unsafe extern "C" fn science_display_io_error(
+    value: *const crate::io::ScienceIoError,
+    formatter: *mut ScienceFormatter,
+) {
+    // SAFETY: the caller guarantees both pointers.
+    unsafe { display_text(formatter, crate::io::io_error_sentence(*value).to_string()) }
+}
+
+/// `Display.display` for `TextError`: its sentence, padded.
+///
+/// # Safety
+///
+/// As [`science_display_i64`], with `value` a live `TextError`.
+#[no_mangle]
+pub unsafe extern "C" fn science_display_text_error(
+    value: *const crate::text::ScienceTextError,
+    formatter: *mut ScienceFormatter,
+) {
+    // SAFETY: the caller guarantees both pointers.
+    unsafe { display_text(formatter, crate::text::text_error_sentence(*value).to_string()) }
+}

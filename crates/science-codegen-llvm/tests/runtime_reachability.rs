@@ -674,6 +674,43 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let copy be rows.clone()\n\
          \x20   print(copy.length())\n",
     ),
+    // A generic `T: Display` hole renders through the interface's `display`,
+    // which for a prelude `Self` is one of fifteen `science_display_*` entry
+    // points. One instance per type reaches them all; `tests/generic_display.rs`
+    // runs the common ones and asserts their bytes.
+    (
+        "generic_display_of_every_prelude_type",
+        "def show[T](x: &T) -> String\n\
+         \x20       where T: Display:\n\
+         \x20   f\"<{x}>\"\n\
+         \n\
+         def from_io(e: &IoError) -> String:\n\
+         \x20   show(e)\n\
+         \n\
+         def from_text(e: &TextError) -> String:\n\
+         \x20   show(e)\n\
+         \n\
+         def main():\n\
+         \x20   let a: I8 be 1\n\
+         \x20   let b: I16 be 2\n\
+         \x20   let c: I32 be 3\n\
+         \x20   let d: I64 be 4\n\
+         \x20   let e: U8 be 5\n\
+         \x20   let f: U16 be 6\n\
+         \x20   let g: U32 be 7\n\
+         \x20   let h: U64 be 8\n\
+         \x20   let i: F32 be 0.5\n\
+         \x20   let j: F64 be 1.5\n\
+         \x20   let name be \"s\"\n\
+         \x20   print(f\"{show(a)}{show(b)}{show(c)}{show(d)}{show(e)}{show(f)}{show(g)}\")\n\
+         \x20   print(f\"{show(h)}{show(i)}{show(j)}{show(true)}{show('c')}{show(name)}\")\n\
+         \x20   let text, io_err be read_file(\"missing\")\n\
+         \x20   if io_err?:\n\
+         \x20       print(from_io(io_err))\n\
+         \x20   let value, parse_err be \"x\".parse_int()\n\
+         \x20   if parse_err?:\n\
+         \x20       print(from_text(parse_err))\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over
