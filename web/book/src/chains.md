@@ -252,7 +252,31 @@ def main():
 18
 ```
 
-> **Note:** A chain's closure receives each array element as a borrow (see [Ownership and borrowing](ownership.md)), so a closure stored with `let` is for calling directly or passing to functions. Inside a chain, write the closure in place.
+A chain hands its closure each element as a borrow (see [Ownership and borrowing](ownership.md)). When the elements are numbers, a closure stored with `let`, or a function's name, can still go straight into the chain: Science copies the number out of the borrow for you.
+
+```science run
+def half(n: Int) -> Int:
+    n / 2
+
+def main():
+    let numbers be [2, 4, 6]
+    let add_one be x giving x + 1
+    for n in numbers.iterate().map(add_one).collect():
+        print(n)
+    for n in numbers.iterate().map(half).collect():
+        print(n)
+```
+
+```output
+3
+5
+7
+1
+2
+3
+```
+
+> **Note:** This works for elements that are copied (numbers, booleans). For strings and records the closure has to name the borrow, so write it in place inside the chain.
 
 ## Summary
 

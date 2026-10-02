@@ -551,6 +551,12 @@ pub struct Crate {
     /// the declaration table and the method index — name this field, which is
     /// also the record of exactly who depends on the prelude having a shape.
     pub prelude: Vec<Item>,
+    /// Spare parameter ids for a `let`-bound closure's name used as a call
+    /// argument, keyed by the name's span. The checker cannot allocate
+    /// definitions, and when the callee's arrow takes `&T` where the closure
+    /// takes `T` it needs fresh parameters to build the closure that adapts one
+    /// to the other (`add_one` becomes `x giving add_one(x)`).
+    pub closure_adapters: std::collections::HashMap<Span, Vec<DefId>>,
 }
 
 /// A file (§4.4: a file is a module).

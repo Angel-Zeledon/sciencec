@@ -370,8 +370,12 @@ impl Walker<'_> {
             ExprKind::Local(def) | ExprKind::SelfValue(def) => self.record(*def, ctx, span),
             ExprKind::Literal(_) | ExprKind::Item(_) | ExprKind::Unit | ExprKind::Error => {}
             // An indirect call's callee is a value, and so are its arguments.
+            // Calling a closure value does not consume it: it is the target of
+            // the call, and the environment stays the caller's to drop. So a
+            // closure that calls a captured closure *reads* that capture,
+            // rather than moving it out (which §8.6 cannot lower).
             ExprKind::Call { callee, args, .. } => {
-                self.expr(*callee, Ctx::Consume(*callee));
+                self.expr(*callee, Ctx::Read);
                 for arg in args {
                     self.expr(*arg, Ctx::Consume(*arg));
                 }

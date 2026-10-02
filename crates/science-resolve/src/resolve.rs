@@ -217,6 +217,11 @@ struct Resolver {
     /// which is what lets its bare name stand in for a closure of that many
     /// parameters (see `Resolver::resolve_args`).
     fn_arity: HashMap<DefId, usize>,
+    /// Parameter count of every `let f be x giving ...` local, so that passing
+    /// `f` where the callee's arrow takes `&T` for the closure's `T` can be
+    /// adapted by the checker (see `Crate::closure_adapters`).
+    closure_locals: HashMap<DefId, usize>,
+    closure_adapters: HashMap<Span, Vec<DefId>>,
     /// How many fields each record has, which decides what `Doc()` means.
     record_fields: HashMap<DefId, Vec<DefId>>,
     /// The prelude's own declarations, built once and handed to the crate
@@ -267,6 +272,8 @@ impl Resolver {
             scopes,
             variant_arity: prelude.variant_arity.into_iter().collect(),
             fn_arity: HashMap::new(),
+            closure_locals: HashMap::new(),
+            closure_adapters: HashMap::new(),
             record_fields: HashMap::new(),
             ribs: Scopes::new(),
             current_module: root,
@@ -311,7 +318,13 @@ impl Resolver {
 
         debug_assert_eq!(self.ribs.depth(), 0, "the walk left a rib open");
         (
-            Crate { defs: self.defs, root: self.root, modules, prelude: self.prelude_items },
+            Crate {
+                defs: self.defs,
+                root: self.root,
+                modules,
+                prelude: self.prelude_items,
+                closure_adapters: self.closure_adapters,
+            },
             self.diags,
         )
     }
@@ -2097,7 +2110,7 @@ impl Resolver {
                 // above its own line. With several names that rule matters
                 // more, not less: `let a, b be f(b)` must reach the outer `b`.
                 let value = self.resolve_expr(&decl.value);
-                let bindings = decl
+                let bindings: Vec<hir::LetBinding> = decl
                     .names
                     .iter()
                     .zip(types)
@@ -2118,6 +2131,13 @@ impl Resolver {
                         hir::LetBinding { def, ty, span: binding.span }
                     })
                     .collect();
+                if let ([binding], hir::ExprKind::Closure { rest, .. }) =
+                    (bindings.as_slice(), &value.kind)
+                {
+                    if !decl.mutable {
+                        self.closure_locals.insert(binding.def, 1 + rest.len());
+                    }
+                }
                 hir::StmtKind::Let(hir::Let {
                     bindings,
                     mutable: decl.mutable,
@@ -2472,6 +2492,17 @@ impl Resolver {
         let hir::ExprKind::Path { res: Res::Def(callee), generics } = &value.kind else {
             return value;
         };
+        if let Some(&arity) = self.closure_locals.get(callee) {
+            let span = value.span;
+            let spares: Vec<DefId> = (0..arity)
+                .map(|at| {
+                    let name = format!("arg{at}");
+                    self.defs.alloc(DefKind::Param, &name, span, Some(self.current_module))
+                })
+                .collect();
+            self.closure_adapters.insert(span, spares);
+            return value;
+        }
         let Some(&arity) = self.fn_arity.get(callee) else { return value };
         if arity == 0 || !generics.is_empty() {
             return value;

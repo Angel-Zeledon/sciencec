@@ -550,6 +550,7 @@ pub fn check_fn(
 
     let checker = BodyChecker {
         defs: &krate.defs,
+        adapters: &krate.closure_adapters,
         decls,
         order,
         coercions,
@@ -821,6 +822,8 @@ struct BodyChecker<'a> {
     /// to a foreign function is `SC0550` at zero (`ffi-c-boundary.md` §3.1).
     unsafe_depth: u32,
     defs: &'a DefTable,
+    /// `Crate::closure_adapters`.
+    adapters: &'a HashMap<Span, Vec<DefId>>,
     decls: &'a Declarations,
     order: &'a AtomOrder,
     coercions: Coercions,
@@ -1402,6 +1405,11 @@ impl<'a> BodyChecker<'a> {
 
     /// Checking mode: the type is known, so push it inward. §1.
     fn check(&mut self, expr: &hir::Expr, expected: Ty, site: Site) -> ExprId {
+        if site == Site::Argument {
+            if let Some(adapted) = self.adapt_closure_arg(expr, expected) {
+                return self.check(&adapted, expected, site);
+            }
+        }
         // §1b. §6.3's auto-borrow is taken **at the argument**, so a borrowed
         // parameter stops the expectation at a branch rather than pushing it
         // into the arms.
@@ -4430,6 +4438,9 @@ impl<'a> BodyChecker<'a> {
     /// `BodyChecker::closure` already makes: bind from the expectation,
     /// synthesise the body when the expected return is still a parameter.
     fn synth_against(&mut self, expr: &hir::Expr, param_ty: Ty) -> Typed {
+        if let Some(adapted) = self.adapt_closure_arg(expr, param_ty) {
+            return self.synth_against(&adapted, param_ty);
+        }
         if let hir::ExprKind::Closure { param, rest, body } = &expr.kind {
             let revealed = self.revealed(param_ty, expr.span);
             if matches!(self.types.kind(revealed), TyKind::Closure { .. }) {
@@ -8506,6 +8517,83 @@ impl<'a> BodyChecker<'a> {
             span,
         );
         Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// **A `let`-bound closure passed where the arrow takes `&T` for its `T`.**
+    ///
+    /// The chain vocabulary hands every closure the item *borrowed*
+    /// (`map(f: (&T) -> U)`), and `let add_one be x giving x + 1` is `(Int) ->
+    /// Int`. A closure literal written in place is checked against the
+    /// borrowed parameter and reads through it (the copy-out rule); a name is
+    /// not written against anything, so it is wrapped the way a function's
+    /// name is: `add_one` becomes `x giving add_one(x)`, whose call site
+    /// copies the `Copy` item out. Only when every parameter differs by
+    /// exactly that borrow. The resolver reserved the wrapper's parameters
+    /// (`Crate::closure_adapters`) because a checker cannot allocate any.
+    fn adapt_closure_arg(&mut self, expr: &hir::Expr, expected: Ty) -> Option<hir::Expr> {
+        let spares = self.adapters.get(&expr.span)?.clone();
+        let hir::ExprKind::Path { res: Res::Def(local), generics } = &expr.kind else {
+            return None;
+        };
+        if !generics.is_empty() {
+            return None;
+        }
+        let InferTy::Known(found) = self.lookup_local(*local)? else { return None };
+        let found = self.revealed(found, expr.span);
+        let want = self.revealed(expected, expr.span);
+        let TyKind::Closure { params: have, .. } = self.types.kind(found).clone() else {
+            return None;
+        };
+        let TyKind::Closure { params: wanted, .. } = self.types.kind(want).clone() else {
+            return None;
+        };
+        if have.len() != wanted.len() || have.len() != spares.len() {
+            return None;
+        }
+        let mut differs = false;
+        for (have, wanted) in have.iter().zip(&wanted) {
+            let have = self.revealed(*have, expr.span);
+            let wanted = self.revealed(*wanted, expr.span);
+            if have == wanted {
+                continue;
+            }
+            match self.types.kind(wanted).clone() {
+                TyKind::Borrowed { mutable: false, inner } => {
+                    if self.revealed(inner, expr.span) != have {
+                        return None;
+                    }
+                    differs = true;
+                }
+                _ => return None,
+            }
+        }
+        if !differs {
+            return None;
+        }
+        let span = expr.span;
+        let args = spares
+            .iter()
+            .map(|param| hir::Arg {
+                name: None,
+                value: hir::Expr {
+                    kind: hir::ExprKind::Path { res: Res::Def(*param), generics: Vec::new() },
+                    span,
+                },
+                span,
+            })
+            .collect();
+        let call = hir::Expr {
+            kind: hir::ExprKind::Call { callee: Box::new(expr.clone()), args },
+            span,
+        };
+        Some(hir::Expr {
+            kind: hir::ExprKind::Closure {
+                param: spares[0],
+                rest: spares[1..].to_vec(),
+                body: Box::new(call),
+            },
+            span,
+        })
     }
 
     /// The type an unannotated closure's parameter ended with, once its body

@@ -2891,7 +2891,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             _ => {
                 let (operand, next) = self.operand(callee, block);
                 block = next;
-                Callee::Indirect(operand)
+                // Calling a closure value does not consume it.
+                Callee::Indirect(force_copy(operand))
             }
         };
         // §10's builder again, for the one call in the language that renders

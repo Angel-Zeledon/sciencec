@@ -214,7 +214,24 @@ def main():
     print(apply_twice(n giving n * 3, 2))</code></pre>
 <pre class="output"><code>7
 18</code></pre>
-<aside class="callout-note"><p><strong>Note:</strong> A chain's closure receives each array element as a borrow (see <a href="ownership.html">Ownership and borrowing</a>), so a closure stored with <code>let</code> is for calling directly or passing to functions. Inside a chain, write the closure in place.</p></aside>
+<p>A chain hands its closure each element as a borrow (see <a href="ownership.html">Ownership and borrowing</a>). When the elements are numbers, a closure stored with <code>let</code>, or a function's name, can still go straight into the chain: Science copies the number out of the borrow for you.</p>
+<pre data-science><code>def half(n: Int) -&gt; Int:
+    n / 2
+
+def main():
+    let numbers be [2, 4, 6]
+    let add_one be x giving x + 1
+    for n in numbers.iterate().map(add_one).collect():
+        print(n)
+    for n in numbers.iterate().map(half).collect():
+        print(n)</code></pre>
+<pre class="output"><code>3
+5
+7
+1
+2
+3</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> This works for elements that are copied (numbers, booleans). For strings and records the closure has to name the borrow, so write it in place inside the chain.</p></aside>
 <h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
 <ul><li><code>array.iterate()</code> starts a chain; a final step such as <code>sum()</code>, <code>count()</code> or <code>collect()</code> ends it.</li><li><code>map</code> transforms, <code>keep</code> and <code>discard</code> filter, <code>sorted(by:)</code> orders, <code>take</code> and <code>skip</code> trim.</li><li><code>each</code> names the element when it is used once; <code>name giving expression</code> when it is used more than once.</li><li><code>maximum</code>, <code>minimum</code>, <code>find</code> and <code>first</code> may find nothing, so test them with <code>?</code>.</li><li><code>reduce(start, (acc, x) giving ...)</code> folds a stream into one value.</li><li>A closure is a value: store it with <code>let</code>, call it, or pass it to a function.</li></ul>
 <p>Next: how Science decides who owns a value and who may borrow it, in <a href="ownership.html">Ownership and borrowing</a>.</p>
