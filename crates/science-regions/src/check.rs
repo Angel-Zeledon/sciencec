@@ -323,6 +323,20 @@ fn conflicts(data: &BorrowData, access: &Access, exclusive: bool) -> bool {
     if !access.place.may_overlap(&data.place) {
         return false;
     }
+    // **Overwriting a shared reference does not touch what it pointed at.** A
+    // loan of `(*r).field` lives in the referent, not in `r`, so assigning `r`
+    // anew (the next turn of a loop that fetches its entry into the same
+    // temporary) leaves the loan's storage alone — NLL's "supporting prefix"
+    // stops at the deref of a borrow. Only a whole-local write is excused,
+    // and an owning pointer's overwrite still conflicts through the `Drop`
+    // access the old value's release makes.
+    if access.kind == AccessKind::Write
+        && access.place.projection.is_empty()
+        && data.place.local == access.place.local
+        && matches!(data.place.projection.first(), Some(Projection::Deref { .. }))
+    {
+        return false;
+    }
     // A shared loan tolerates any number of readers; an exclusive one tolerates
     // nobody. §1.
     exclusive || access.kind.is_exclusive()

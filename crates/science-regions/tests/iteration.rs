@@ -382,3 +382,24 @@ def go(make: () -> String):
 ";
     assert_eq!(reported(source), Vec::<u16>::new());
 }
+
+/// **A loop that keeps a borrow of a field of the entry it fetched, and
+/// fetches the next entry into the same temporary, is accepted.**
+///
+/// `m.values().maximum(by: ...)` is that shape: the extreme's holder keeps a
+/// loan of `(*entry).value` across turns while the next turn overwrites
+/// `entry`. The loan lives in the referent, not in the reference, so the
+/// overwrite is not an access to it (and `rows.iterate().maximum(by: ...)`,
+/// whose element is reached through an index, was always accepted). This was
+/// `SC0330`, "modified here", on the whole chain expression.
+#[test]
+fn a_map_values_chain_that_keeps_an_item_across_turns_is_accepted() {
+    let source = "\
+def top(m: &Map[String, Int]) -> Int:
+    let best be m.values().maximum(by: v giving v)
+    if best?:
+        return best
+    0
+";
+    assert_eq!(reported(source), Vec::<u16>::new(), "{:?}", codes(&check(source).regions));
+}

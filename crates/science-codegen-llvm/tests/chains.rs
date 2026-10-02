@@ -1739,3 +1739,27 @@ fn a_key_returned_through_two_borrows_is_copied_out() {
         "2\n3\n4\n5\n2 4\n"
     );
 }
+
+/// **`maximum` and `minimum` over a map's keys and values run** (they were
+/// refused by the borrow checker, which read the next turn's fetch of the
+/// entry as a write under the borrow the extreme kept).
+#[test]
+fn extremes_over_a_maps_values_and_keys_run() {
+    assert_eq!(
+        prints(
+            "map-extremes",
+            r#"def main():
+    let mutable m be Map[String, Int].new()
+    m.insert("a", 3)
+    m.insert("bbb", 7)
+    m.insert("cc", 5)
+    let hi be m.values().maximum(by: v giving v)
+    let lo be m.values().minimum(by: v giving v)
+    let longest be m.keys().maximum(by: k giving k.length())
+    if hi? and lo? and longest?:
+        print(f"{hi} {lo} {longest}")
+"#,
+        ),
+        "7 3 bbb\n"
+    );
+}
