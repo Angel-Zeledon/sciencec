@@ -569,6 +569,38 @@ fn dotted_operators_broadcast() {
     );
 }
 
+#[test]
+fn slices_are_copies() {
+    // numpy, a = arange(24).reshape(2, 3, 4): a[:, 1:3, :].shape is (2, 2, 4)
+    // and its sum is 276 - (0..4 + 12..16 sums = 6 + 54) = 216; a[1:2] is the
+    // second block (sum 12 * 23 / 2 + 12 * 6 = 210). For m = arange(6).reshape
+    // (2, 3): m[:, 1:3] = [[1 2] [4 5]], m[1] = [3 4 5], m[:, 2] = [2 5].
+    // A write to the slice does not reach the source.
+    assert_eq!(
+        prints(
+            "slices",
+            &program(
+                "    let a be shaped(0.0, 24.0, &[2, 3, 4])
+    let middle be must(a.slice(1, 1, 3))
+    print(middle.dims[0] * 100 + middle.dims[1] * 10 + middle.dims[2])
+    print(middle.sum())
+    print(must(a.slice(0, 1, 2)).sum())
+    let mutable m be shaped(0.0, 6.0, &[2, 3])
+    print(must(m.slice(1, 1, 3)))
+    print(must(m.row(1)))
+    print(must(m.column(2)))
+    let mutable part be must(m.slice(0, 0, 1))
+    part[0, 0] be 99.0
+    print(m[0, 0])
+    let _bad, err be m.slice(1, 2, 5)
+    print(err?)
+"
+            )
+        ),
+        "224\n216.0\n210.0\n[[1.0 2.0]\n [4.0 5.0]]\n[3.0 4.0 5.0]\n[2.0 5.0]\n0.0\ntrue\n"
+    );
+}
+
 /// The same loop under `leaks --atExit`, at two lengths: no leak at either, and
 /// the same number of allocations live at exit, which is what makes the live
 /// set constant and not merely small. Skipped where `/usr/bin/leaks` is not.
