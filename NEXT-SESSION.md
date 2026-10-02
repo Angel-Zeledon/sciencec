@@ -1,4 +1,4 @@
-# Traspaso — estado al 2026-10-01
+# Traspaso — estado al 2026-10-02
 
 > **Lo primero, porque cuesta horas cada vez.** Los mensajes de rechazo de este
 > compilador envejecen peor que el código que los rodea. Nadie los relee cuando
@@ -22,14 +22,14 @@ binario rehúsa con `SC0400`, y `cargo test --workspace` **sin** features
 reemplaza `target/debug/sciencec` por uno sin backend — si de golpe todos los
 ejemplos fallan, es eso.
 
-**El paralelismo ya no hace falta acotarlo por el scratch.** Esa carrera se
-cerró en `be46f94`: cada test end-to-end tiene su propio directorio. Si volvés a
-ver conjuntos de fallos *distintos* entre corridas, es una carrera nueva, no
-esta. Lo que sí conviene, en una máquina con muchos worktrees, es medir en
-serie (`-- --test-threads=1`): el daemon de verificación de macOS serializa el
-primer arranque de cada binario recién enlazado contra el presupuesto de diez
-segundos de `harness::RUN_BUDGET`, y un `killed after not exiting within 10s`
-es la cola, no tu cambio.
+**Los programas de prueba se acotan por tiempo de CPU, no de reloj.** Desde
+`2bf1ae9` el harness (`crates/sciencec/src/childwait.rs`, incluido también por
+el de `science-codegen-llvm` con `#[path]`) mata a un hijo pasados 30 s de
+**CPU propia**, con un tope de reloj de 180 s para un cuelgue que no gasta CPU.
+El presupuesto viejo de 10 s de reloj medía la cola del daemon de verificación
+de macOS (`syspolicyd`), que bajo carga tardaba de 1 a 40 s en dejar arrancar
+un binario recién enlazado que corre en 10 ms. Con el cambio, la suite entera
+dio 2955 / 0 con carga de 40–75. **Un `killed` ahora es un cuelgue de verdad.**
 
 ## El número
 
@@ -65,8 +65,8 @@ no son programas, cada uno por su propia razón y las dos buenas:
 
 **No falta ninguno.** `00_kitchen_sink` cerró en `7914ce0` y con él la Puerta A.
 
-Suite: **2395 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
-el reloj de pared más abajo).
+Suite: **2955 en verde** (2026-10-02, `cargo test --workspace --features llvm`,
+paralelismo por defecto).
 
 > **Un pin presente no prueba nada por sí solo.** Arreglar `Drop::drop` de
 > usuario agregó **11 líneas en tres `.stdout`** (`06_traits` +1,
@@ -181,11 +181,14 @@ El documento se conserva porque dos de las tres cosas que se aprendieron ahí so
   no es una tarea. Y varias features convergen en `science-codegen-llvm`: dos
   agentes editando ese archivo se pisan. La convención que ese archivo ya sigue
   y conviene mantener: agregá un campo y un builder, no cambies una firma.
-- **Medí en serie.** `harness::RUN_BUDGET` son diez segundos de **reloj de
-  pared**, y macOS serializa a nivel de máquina el primer arranque de cada
-  binario recién enlazado y sin firmar. Un mismo árbol dio *33 pasan / 17 fallan
-  en 37,8 s* bajo carga y *50 / 0 en 11,6 s* solo. Si ves
-  `[harness] killed after not exiting within 10s`, es la cola, no tu cambio.
+- **El reloj de pared mintió durante semanas.** El presupuesto viejo eran diez
+  segundos de reloj, y macOS serializa a nivel de máquina el primer arranque de
+  cada binario recién enlazado: un mismo árbol dio *33 / 17* bajo carga y
+  *50 / 0* solo. Desde `2bf1ae9` se mide CPU (ver arriba); si vuelve a aparecer
+  un fallo que cambia entre corridas, es otra cosa y hay que buscarla.
+- **Los agentes dejan corriendo lo que lanzan.** Un agente que terminó dejó un
+  `build.py --check` vivo una hora, y con tres así la carga llegó a 75. Mirá
+  `ps` antes de culpar a la máquina.
 - **Mirá el disco antes de creerle a un fallo.** 76 worktrees a ~2 GB de
   `target` cada uno llenaron un volumen de 460 GB. Un `No space left on device`
   se ve exactamente igual que un test roto: una corrida dio 13 fallos y otra
@@ -403,47 +406,68 @@ nullable estrechado ya no lo mueve ni lo libera antes; regiones de
 renderer. `IoError?` → `Error?` **no** se convierte solo, a propósito (§5.5 y
 `stdlib-core.md` §7.3: la conversión se escribe en el `return`).
 
-**Huecos del núcleo todavía abiertos:**
-1. ~~`Array.clone()` de elementos que poseen algo distinto de `String`~~ —
-   cerrado: `science_array_clone_with` recibe un thunk de clonado por elemento
-   (`String`, `Array[U]` recursivo, o el `clone` de un `implements Clone:` no
-   genérico) al lado del descriptor; `ScienceTypeInfo` no cambió. Siguen sin
-   clonarse `Box`, tuplas, `T?` y tipos genéricos con elementos propietarios;
-2. ~~`match` sobre un `(&T)?` estrechado falla en el backend~~ (cerrado:
-   `lower_match` desreferencia el nicho);
-3. (cerrado) `fail(c, "…", c.pos)` ya compila: MIR copia las lecturas de
-   campo a temporales antes de la activación. Reasignar un préstamo compartido
-   (`current be next`) ya funcionaba; reasignar un `&mut` es decisión de
-   `check.rs` (§4.7: asignar a un `&mut` escribe a través de él);
-4. (cerrado) `let a, _ be f()`, `f().0`, `members[i].value be v` y `map(half)`
-   con una función de primer nivel no genérica ya funcionan. Quedan: `t.0.1`
-   (el lexer lo lee como el flotante `0.1`), `&t` sobre una tupla de literales
-   sin sufijo, y pasar `members[i]` a un parámetro `&mut M`;
-5. ~~un closure que captura algo propio y no `Copy` no puede escapar, y los
-   entornos de closures escapados no se liberan~~ — cerrado: un closure es
-   `{ code, env, drop }`; el entorno en el heap se libera (y sus capturas
-   propias se sueltan) al soltar el closure, y una variable local propia y no
-   `Copy` que el closure solo lee se *mueve* a su entorno cuando la función
-   puede devolverlo (§8.7). Sigue siendo préstamo (y `SC0333` si escapa): una
-   captura escrita o movida dentro del cuerpo, y un lugar alcanzado a través de
-   un préstamo o un campo;
-6. ~~`2.0 * z` es un impl huérfano~~ (cerrado: un tipo local entre los
-   argumentos de la interfaz hace local el impl; `complex` y `ndarray`
-   escriben `F64 implements Mul[…]`).
+### Tercera tanda, ya en `master` y empujada (2026-10-02)
 
-No están en la especificación (decisión de diseño, no huecos): guardas en
-`match` y argumentos con nombre en funciones propias.
+**Núcleo, cerrado:** los seis huecos de la lista anterior; dos fases de préstamo;
+`t.0.1`; `v[0] be v[2]` y `m[1, 2] be m[1, 2] * 2.0` (el valor se evalúa antes
+del destino, también con `index_mutably` de un tipo propio); `bump(members[i])`;
+`&e` de un `T?` es `(&T)?` (regla de diseño propia, no del spec); `&T?` se
+estrecha con `?`; `[]` como argumento; `0..g.dims[0]`; `for p in ["x", "y"]`
+(el descriptor nombraba `science_string_free` sin declararlo); `map(add_one)`
+con un closure de `let`; `(1..5).iterate()`; `for a, b in pares:` (tuplas);
+cadenas guardadas en variable (§2.3, se inlinean en su único uso); `unsafe def`
+(§3.3 de `ffi-c-boundary.md`); `f"{x}"` con `T: Display` genérico; `a is b` con
+`T: Eq` genérico (`Eq` declara `eq(self, other: &Self)` — los ejemplos y la
+biblioteca se adaptaron); los escalares de C se imprimen.
 
-**Cadenas:** ya están `reduce`, `product`, `accumulate`, `keep_some` y
-`reverse`, y `sorted(by:)`/`reverse()` son barreras generales (lo que sigue a un
-`sort` funciona). Faltan `unique`, `tally`, `group` (emitir llamadas a `Map`
-desde MIR), `partition`/`partition_results` (necesitan registros `Parts` y
-`Outcome` en el preludio), `batches`, `windows`, `flatten`, `expand`,
-`followed_by`, `owned`, `keep_ok`, `collect_or_error`; una cadena guardada en
-variable (§2.3); `sorted(by: each)` tras otro eslabón ve `&&Int`.
+**Agujeros de corrección cerrados** (cada uno aceptaba programas inválidos):
+una cota `T: Ord` sobre un tipo que no la implementa (`SC0534`); una llamada
+`extern` fuera de `unsafe:` (`SC0550`); un registro con un campo faltante
+(`SC0551`) o repetido (`SC0552`); `print` de un `Array`/`Map`/`Set` imprimía
+basura y ahora es `SC0275` (§3.4: las colecciones no son `Display`). Y el harness
+de `science-codegen-llvm` no corría el chequeo de movimientos y préstamos que sí
+corre el driver: ahora sí, y destapó diez fixtures que solo pasaban por eso.
 
-**Biblioteca, siguiente:** `linalg` sobre `ndarray`, `text` (mayúsculas,
-graphemes), `dataframe`; en `ndarray`, vistas, `xs[i, j]`, operadores `.+`.
+**Cadenas, nuevas:** `unique`, `windows`, `batches`, `flatten`, `followed_by`,
+`owned`, `tally(by:)`, `group(by:)` (sobre `Map.get_mutably`), `partition` →
+`Parts[T]`. Un falso `SC0330` sobre `m.values().maximum(by:)` era de regiones.
+
+**Biblioteca, nueva:** `linalg` (LU, `solve`, `inverse`, Cholesky, QR, `eigh`,
+`svd`, `lstsq`, `pinv`/`pseudo_inverse`, `rank`, `cond`, `slogdet`, `norm`,
+`eig` real), `string` (mayúsculas Unicode, `wrap`, `levenshtein`, `graphemes`
+aproximado), `dataframe` (columnas tipadas con faltantes, filtro, orden,
+`aggregate`, `inner_join`, `describe`, CSV), `ndarray` con `a[i, j]` y
+`.+ .- .* ./`, `random.Key.split_each`.
+
+**Herramientas:** `sciencec FILE ARGS` corre un archivo como un script, con
+`#!/usr/bin/env sciencec`; `run` guarda el ejecutable en un caché por usuario
+(`~/Library/Caches/science/run`) con clave en todas las fuentes, el compilador
+y las banderas, así que no deja nada al lado del archivo y no reenlaza lo que
+no cambió. `./install.sh` instala `sciencec` en `~/.local/bin`. Un archivo de
+un paquete pasado como operando (`sciencec test tests/x.science`) resuelve
+contra el paquete.
+
+**La web:** `web/book/` es *The Science Book*, 28 capítulos en Markdown con
+barra lateral, anterior/siguiente y cada ejemplo compilado y corrido por
+`python3 web/book/build.py --check` (salida comparada byte por byte). Toda la
+navegación apunta ahí; `tutorial.html` redirige. **Corré `--check` antes de
+cerrar cualquier cambio que toque lo que el libro enseña.**
+
+### Lo que sigue abierto
+
+- **Decisiones del usuario:** el parser distingue `m[i, j]` (índice) de
+  `Map[K, V]` (genéricos) por la mayúscula del nombre — regla de ortografía,
+  confirmar; la regla de `&e` sobre un `T?` no está en el spec.
+- Una cadena guardada usada dos veces da `SC0400` en vez de `SC0301`;
+  `SC0331` está documentado y nunca se emite (agente en curso).
+- Un literal no fija `T` (`by_value("x")` es `SC0400`); `T: Display` con un
+  escalar de C; especificación de formato sobre un escalar de C (agente en curso).
+- `a[1..3, ..]` en `ndarray` (agente en curso); vistas de verdad necesitan un
+  préstamo dentro de un registro, que el front end todavía no chequea.
+- `Array.clone()` de `Box`, tuplas, `T?` y genéricos con elementos propietarios.
+- No están en el spec, a propósito: guardas en `match`, argumentos con nombre en
+  funciones propias, parámetros de closure con tipo, `use X as Y`,
+  desestructurar `Entry`/`Numbered` en un `for`.
 
 **Decisiones pendientes del usuario** (de un agente de planificación): si
 `agent` entra ahora (revierte la Decisión 2 de `mcp-servers.md`); si la
