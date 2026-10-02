@@ -384,6 +384,7 @@ dependencies = [
  "science-lexer",
  "science-mir",
  "science-parser",
+ "science-regions",
  "science-resolve",
  "science-rt",
  "science-types",
