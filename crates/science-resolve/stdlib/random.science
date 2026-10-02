@@ -59,6 +59,8 @@
 # - **`shuffle` needs `T: Clone`**: `Array` has no `swap`, so an exchange is
 #   two clones. A `permutation` of indices is the clone-free answer for a type
 #   that is expensive to clone.
+# - **`split_each` is `split_many` as an owning iterator**, because `for`
+#   over an `Array` borrows and a draw consumes.
 # - **`split_many`, `fold_in` and `permutation` are §7.3's; `bits` and
 #   `bits_from` are this file's**: the raw word, for code that builds its own
 #   mapping.
@@ -304,10 +306,34 @@ Key has:
             keys.push(Key(high: k0, low: k1))
         keys
 
+    # The same keys as `split_many(count)`, handed out one at a time and owned,
+    # so `for k in key.split_each(4): uniform(k)` consumes each as a draw
+    # must. (`for` over the `Array` that `split_many` returns borrows its
+    # elements, and a draw takes its key by value.)
+    public def split_each(self, count: Int) -> KeyStream:
+        KeyStream(high: self.high, low: self.low, index: 0, count: count)
+
     # A key derived from this one and `data` — a step number, a rank — at
     # counter `(data, 1)`.
     public def fold_in(self, data: U64) -> Key:
         let k0, k1 be threefry(self.high, self.low, data, 1)
+        Key(high: k0, low: k1)
+
+# `split_each`'s cursor: the parent's words, the next index and the count.
+public type KeyStream:
+    high: U64
+    low: U64
+    index: Int
+    count: Int
+
+KeyStream implements Iterate:
+    type Item is Key
+
+    def next(mutable self) -> Self.Item?:
+        if self.index >= self.count:
+            return null
+        let k0, k1 be threefry(self.high, self.low, self.index as U64, 0)
+        self.index be self.index + 1
         Key(high: k0, low: k1)
 
 # Nothing to release. See the header: this is what makes reuse `SC0301`.

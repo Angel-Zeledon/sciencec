@@ -432,6 +432,27 @@ def main():
     assert_eq!(words(&out), expected);
 }
 
+/// `split_each` hands out `split_many`'s keys, owned, so a `for` can draw
+/// from each as a draw consumes it.
+#[test]
+fn split_each_yields_owned_keys_a_draw_can_consume() {
+    use reference::*;
+    let out = prints(
+        "key_split_each",
+        "use random (Key, uniform)
+
+def main():
+    for k in Key.from_seed(7).split_each(4):
+        print(uniform(k))
+",
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 4, "{out}");
+    for (i, child) in split_many(from_seed(7), 4).into_iter().enumerate() {
+        assert_eq!(float_bits(lines[i]), unit(word(child, 0)).to_bits(), "key {i}");
+    }
+}
+
 /// `uniform`, `integer` and `normal` on keys, compared as bits.
 #[test]
 fn a_key_maps_its_words_exactly_as_the_reference_does() {
