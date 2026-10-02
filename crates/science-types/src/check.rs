@@ -2629,6 +2629,17 @@ impl<'a> BodyChecker<'a> {
             return Typed { id, ty };
         }
         let revealed = self.revealed(known, span);
+        // `&T?` -- an element of an `Array[T?]` reached by a `for` or a `&xs[i]`
+        // -- narrows to `&T`: the payload is borrowed where it sits, and a
+        // `Copy` payload reads by value wherever a `T` is expected.
+        if let TyKind::Borrowed { mutable, inner: held } = *self.types.kind(revealed) {
+            let held = self.revealed(held, span);
+            if let TyKind::Nullable(payload) = *self.types.kind(held) {
+                let narrowed = self.types.borrowed(mutable, payload);
+                let id = self.body.push_expr(ExprKind::Narrow(id), narrowed, span);
+                return Typed { id, ty: InferTy::Known(narrowed) };
+            }
+        }
         let TyKind::Nullable(inner) = *self.types.kind(revealed) else {
             return Typed { id, ty };
         };

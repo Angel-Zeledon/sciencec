@@ -1872,6 +1872,21 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, dest, Rvalue::Cast { operand: value, from, ty }, span);
                 block
             }
+            ExprKind::Present(operand) if self.borrowed_nullable_payload(*operand).is_some() => {
+                // `item?` on a `&T?`: ask the nullable behind the pointer.
+                let (place, block) = match self.as_place(*operand, block) {
+                    Some(found) => found,
+                    None => {
+                        let operand_ty = self.thir.ty(*operand);
+                        let temp = self.temp(operand_ty, span, block);
+                        let block = self.expr_into(Place::local(temp), *operand, block);
+                        (Place::local(temp), block)
+                    }
+                };
+                let place = self.auto_deref(place);
+                self.assign(block, dest, Rvalue::IsPresent(Operand::Copy(place)), span);
+                block
+            }
             ExprKind::Present(operand) => {
                 // `e?` is total and reads: it produces a `Bool` and leaves `e`
                 // where it was. `force_copy` rather than `self.read`, because
@@ -1922,6 +1937,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 block
             }
             ExprKind::Narrow(operand) => {
+                if self.borrowed_nullable_payload(*operand).is_some() {
+                    let (place, block) = self.as_place(expr, block).expect("a narrowed borrow has a place");
+                    return self.borrow_place(dest, false, place, block, span, false);
+                }
                 let (value, block) = self.operand(*operand, block);
                 self.assign(block, dest, Rvalue::Narrow { operand: value, ty }, span);
                 block
@@ -5723,7 +5742,17 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // is the same place. THIR's §3 made exactly this call and MIR keeps
             // it; seeing through a `Coerce` would not, because a coerced value
             // is a new value in a new representation.
-            ExprKind::Narrow(operand) => self.as_place(*operand, block),
+            ExprKind::Narrow(operand) => {
+                // `&T?` narrowed to `&T`: the payload, where it sits behind
+                // the pointer. The place is the payload itself; the node's own
+                // type is the borrow of it.
+                if let Some(payload) = self.borrowed_nullable_payload(*operand) {
+                    let (place, block) = self.as_place(*operand, block)?;
+                    let place = self.auto_deref(place);
+                    return Some((place.project(Projection::Payload { ty: payload }), block));
+                }
+                self.as_place(*operand, block)
+            }
             // A call's result has no storage until something gives it some —
             // every other arm here recurses to storage that already exists,
             // and a call does not. It is materialised into a temporary the
@@ -6228,6 +6257,16 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// exactly [`Self::place_ty`]'s answer for it, so reading the operand
     /// expression's type off THIR — before any place is built — is the same
     /// question asked one step earlier.
+    /// The payload type when `expr` is a shared or exclusive borrow of a
+    /// nullable -- `&T?` -- and not a nullable of a borrow.
+    fn borrowed_nullable_payload(&mut self, expr: ExprId) -> Option<Ty> {
+        let ty = self.revealed(self.thir.expr(expr).ty);
+        let TyKind::Borrowed { inner, .. } = *self.context.types.kind(ty) else { return None };
+        let inner = self.revealed(inner);
+        let TyKind::Nullable(payload) = *self.context.types.kind(inner) else { return None };
+        Some(self.revealed(payload))
+    }
+
     fn narrow_needs_materialising(&mut self, narrow: ExprId, operand: ExprId) -> bool {
         let hole_ty = self.revealed(self.thir.expr(narrow).ty);
         if matches!(self.context.types.kind(hole_ty), TyKind::Borrowed { .. }) {

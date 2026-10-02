@@ -650,4 +650,66 @@ fn an_array_of_string_literals_that_is_only_iterated_runs() {
         print(name)
 ";
     assert_eq!(prints("string_literal_array", source), "x\ny\nMercury\nVenus\n");
+
+/// `Array[T?]` elements are usable: `for item in items` gives `&T?`, `item?`
+/// tests it, and inside the test it is a `&T` (copied where a `T` is wanted).
+#[test]
+fn an_element_of_an_array_of_nullables_is_tested_and_narrowed() {
+    let source = "type Pt:
+    x: Int
+    y: Int
+
+def total(items: &Array[F64?]) -> F64:
+    let mutable s be 0.0
+    for item in items:
+        if item?:
+            s be s + item
+    s
+
+def lengths(items: &Array[String?]) -> Int:
+    let mutable n be 0
+    for item in items:
+        if item?:
+            n be n + item.length()
+    n
+
+def sum_x(items: &Array[Pt?]) -> Int:
+    let mutable n be 0
+    for item in items:
+        if item?:
+            n be n + item.x
+    n
+
+def count_present(items: &Array[F64?]) -> Int:
+    let mutable n be 0
+    for item in items:
+        if item?:
+            n be n + 1
+    n
+
+def main():
+    let xs: Array[F64?] be [1.5, null, 2.5]
+    print(total(xs))
+    print(count_present(xs))
+    let v be &xs[0]
+    if v?:
+        print(v)
+    let w be &xs[1]
+    if w?:
+        print(\"unexpected\")
+    else:
+        print(\"absent\")
+    let names: Array[String?] be [\"ab\", null, \"cde\"]
+    print(lengths(names))
+    let pts: Array[Pt?] be [Pt(x: 1, y: 2), null, Pt(x: 5, y: 6)]
+    print(sum_x(pts))
+    for item in xs:
+        if item?:
+            let held: F64 be item
+            print(held * 2.0)
+";
+    assert_eq!(
+        prints("array_of_nullables", source),
+        "4.0\n2\n1.5\nabsent\n5\n6\n3.0\n5.0\n"
+    );
 }
