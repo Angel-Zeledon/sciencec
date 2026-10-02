@@ -1151,6 +1151,12 @@ pub mod codes {
     /// block. `ffi-c-boundary.md` §3.1.
     pub const FOREIGN_CALL_OUTSIDE_UNSAFE: Code = Code(550);
 
+    /// A record literal that leaves out one or more fields. §4.4.
+    pub const MISSING_RECORD_FIELD: Code = Code(551);
+
+    /// A record literal that names the same field twice.
+    pub const DUPLICATE_RECORD_FIELD: Code = Code(552);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1195,6 +1201,8 @@ pub mod codes {
         UNHASHABLE_KEY,
         WRONG_ITEM_SHAPE,
         FOREIGN_CALL_OUTSIDE_UNSAFE,
+        MISSING_RECORD_FIELD,
+        DUPLICATE_RECORD_FIELD,
     ];
 
     #[cfg(test)]

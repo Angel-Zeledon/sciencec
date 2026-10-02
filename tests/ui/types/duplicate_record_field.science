@@ -1,0 +1,9 @@
+# UI test: a record literal that names a field twice (SC0552).
+
+type Reading:
+    channel: Int
+    value: F64
+
+def main():
+    let reading be Reading(channel: 1, value: 2.0, channel: 3)
+    print(reading.channel)

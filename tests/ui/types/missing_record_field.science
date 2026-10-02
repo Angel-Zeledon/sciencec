@@ -1,0 +1,10 @@
+# UI test: a record literal that leaves out a field (SC0551). §4.4 makes
+# construction name every field; there are no field defaults.
+
+type Reading:
+    channel: Int
+    value: F64
+
+def main():
+    let reading be Reading(channel: 1)
+    print(reading.channel)

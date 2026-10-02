@@ -295,7 +295,7 @@
 //!   message about variadic const parameters, and it is one diagnostic that
 //!   belongs with the monomorphiser's, not four lines here.
 //! - **A record literal that omits a field.** The resolver reports an unknown
-//!   field (`SC0205`); a *missing* one is nobody's yet.
+//!   field (`SC0205`); a missing one is `SC0551`, a repeated one `SC0552`.
 //!
 //! # 7. Two rules the note does not name, and where they came from
 //!
@@ -3212,6 +3212,40 @@ impl<'a> BodyChecker<'a> {
                 // nobody's yet.
                 None => {
                     self.synth(&init.value);
+                }
+            }
+        }
+        // §4.4: construction names every field. A field written twice is
+        // refused at the second mention; one never written is named at the
+        // literal. A literal that already has an unknown field (`SC0205`) is
+        // not also told what it is missing: that would be the same typo twice.
+        {
+            let mut seen: HashSet<DefId> = HashSet::new();
+            let mut all_known = true;
+            for init in fields {
+                match init.field.def_id() {
+                    Some(id) => {
+                        if !seen.insert(id) {
+                            let record_name = self.defs.get(def).name.clone();
+                            self.diagnostics.push(duplicate_record_field(
+                                init.name.span,
+                                &record_name,
+                                &init.name.name,
+                            ));
+                        }
+                    }
+                    None => all_known = false,
+                }
+            }
+            if all_known {
+                let missing: Vec<String> = declared
+                    .iter()
+                    .filter(|(id, _)| !seen.contains(id))
+                    .map(|(id, _)| self.defs.get(*id).name.to_string())
+                    .collect();
+                if !missing.is_empty() {
+                    let record_name = self.defs.get(def).name.clone();
+                    self.diagnostics.push(missing_record_fields(span, &record_name, &missing));
                 }
             }
         }
@@ -10206,6 +10240,28 @@ fn wrong_closure_arity(span: Span, expected: usize, found: usize) -> Diagnostic 
         "a closure with more than one parameter is written `(a, b) giving ...`; a single \
          parameter is `a giving ...` or `each`",
     )
+}
+
+/// `SC0551` — a record literal that leaves out a field. §4.4: construction
+/// names every field, and there are no field defaults.
+fn missing_record_fields(span: Span, record: &str, missing: &[String]) -> Diagnostic {
+    let names = missing.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ");
+    let plural = if missing.len() == 1 { "field" } else { "fields" };
+    Diagnostic::error(
+        codes::MISSING_RECORD_FIELD,
+        format!("`{record}` is built without its {plural} {names}"),
+    )
+    .with_label(Label::primary(span, format!("missing {names}")))
+    .with_note("every field of a record is given when it is built; there are no defaults")
+}
+
+/// `SC0552` — a record literal that names one field twice.
+fn duplicate_record_field(span: Span, record: &str, name: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::DUPLICATE_RECORD_FIELD,
+        format!("`{record}` is built with the field `{name}` given more than once"),
+    )
+    .with_label(Label::primary(span, "given again here"))
 }
 
 /// `SC0528` — a field the type does not have.

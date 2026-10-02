@@ -1,0 +1,7 @@
+error[SC0551]: `Reading` is built without its field `value`
+ --> tests/ui/types/missing_record_field.science:9:20
+  |
+9 |     let reading be Reading(channel: 1)
+  |                    ^^^^^^^^^^^^^^^^^^^ missing `value`
+  |
+  = note: every field of a record is given when it is built; there are no defaults

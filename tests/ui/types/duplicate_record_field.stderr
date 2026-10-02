@@ -1,0 +1,5 @@
+error[SC0552]: `Reading` is built with the field `channel` given more than once
+ --> tests/ui/types/duplicate_record_field.science:8:52
+  |
+8 |     let reading be Reading(channel: 1, value: 2.0, channel: 3)
+  |                                                    ^^^^^^^ given again here
