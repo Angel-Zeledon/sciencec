@@ -543,6 +543,32 @@ fn multi_index_reads_and_writes() {
     );
 }
 
+#[test]
+fn dotted_operators_broadcast() {
+    // numpy: a = arange(6).reshape(2, 3); row = [10, 20, 30]; col = [[1], [2]].
+    // a + row = [[10 21 32] [13 24 35]]; a - row = [[-10 -19 -28] [-7 -16 -25]];
+    // col * row = [[10 20 30] [20 40 60]]; row / col = [[10 20 30] [5 10 15]].
+    // Precedence is `+`'s and `*`'s: `a .+ row .* row` is a + (row * row).
+    assert_eq!(
+        prints(
+            "dotted",
+            &program(
+                "    let a be shaped(0.0, 6.0, &[2, 3])
+    let row be NdArray.arange(10.0, 40.0, 10.0)
+    let col be shaped(1.0, 3.0, &[2, 1])
+    print(a .+ row)
+    print(a .- row)
+    print(col .* row)
+    print(row ./ col)
+    print(col.*row)
+    print(a .+ row .* NdArray.ones(&[3]))
+"
+            )
+        ),
+        "[[10.0 21.0 32.0]\n [13.0 24.0 35.0]]\n[[-10.0 -19.0 -28.0]\n [-7.0 -16.0 -25.0]]\n[[10.0 20.0 30.0]\n [20.0 40.0 60.0]]\n[[10.0 20.0 30.0]\n [5.0 10.0 15.0]]\n[[10.0 20.0 30.0]\n [20.0 40.0 60.0]]\n[[10.0 21.0 32.0]\n [13.0 24.0 35.0]]\n"
+    );
+}
+
 /// The same loop under `leaks --atExit`, at two lengths: no leak at either, and
 /// the same number of allocations live at exit, which is what makes the live
 /// set constant and not merely small. Skipped where `/usr/bin/leaks` is not.

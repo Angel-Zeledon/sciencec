@@ -379,6 +379,21 @@ NdArray has:
     public def broadcast_div(self, other: &NdArray) -> (NdArray, Error?):
         combine(self, other, DIV, true)
 
+    # The dotted operators of `broadcasting.md` §3.1: `a .+ b` is
+    # `a.dot_add(b)`, NumPy's rule, and a mismatch is a panic naming both dims
+    # (the same stand-in for `SC0291` the same-shape operators use).
+    public def dot_add(self, other: &NdArray) -> NdArray:
+        broadcast_or_panic(self.broadcast_add(other))
+
+    public def dot_sub(self, other: &NdArray) -> NdArray:
+        broadcast_or_panic(self.broadcast_sub(other))
+
+    public def dot_mul(self, other: &NdArray) -> NdArray:
+        broadcast_or_panic(self.broadcast_mul(other))
+
+    public def dot_div(self, other: &NdArray) -> NdArray:
+        broadcast_or_panic(self.broadcast_div(other))
+
     # --- Reductions -----------------------------------------------------------
 
     # The elements added in index order; `0.0` for none.
@@ -601,6 +616,12 @@ def slot_of(array: &mut NdArray, offset: Int) -> &mut F64:
     if slot?:
         return slot
     panic("index is outside the array")
+
+def broadcast_or_panic(pair: (NdArray, Error?)) -> NdArray:
+    let value, err be pair
+    if err?:
+        panic(err.message())
+    value
 
 def pair_index(first: Int, second: Int) -> Array[Int]:
     let mutable index be Array[Int].new()

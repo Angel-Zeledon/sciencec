@@ -1420,6 +1420,12 @@ impl<'a> Lexer<'a> {
                     TokenKind::DotDot
                 }
             }
+            // `broadcasting.md` §3.6: a dot followed by an operator character
+            // is one token. `a.*b` and `a .* b` are the same program.
+            '.' if self.eat('+') => TokenKind::DotPlus,
+            '.' if self.eat('-') => TokenKind::DotMinus,
+            '.' if self.eat('*') => TokenKind::DotStar,
+            '.' if self.eat('/') => TokenKind::DotSlash,
             '.' => TokenKind::Dot,
             '@' => TokenKind::AtSign,
             // One character, one meaning. `?` is postfix in expressions

@@ -281,6 +281,10 @@ pub enum TokenKind {
     Dot,
     DotDot,   // .. — the half-open range of §4.5
     DotDotEq, // ..= — the inclusive one
+    DotPlus,  // .+ — `broadcasting.md` §3.1, one token by longest match
+    DotMinus, // .-
+    DotStar,  // .*
+    DotSlash, // ./
     Arrow,    // -> — the return type of §4.4
     FatArrow, // =>
     Underscore,

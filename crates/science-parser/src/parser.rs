@@ -4212,12 +4212,36 @@ impl<'t> Parser<'t> {
             if let Some((symbol, phrase_width)) = self.stale_comparison_phrase() {
                 self.report_comparison_phrase(symbol, phrase_width);
             }
+            // `a .+ b` and its three siblings (`broadcasting.md` §3.1): the
+            // operands are broadcast, which is a method of the receiver's type
+            // and not an operator interface, so the node is a call to
+            // `dot_add`, `dot_sub`, `dot_mul` or `dot_div`.
+            let dotted = match self.peek() {
+                TokenKind::DotPlus => Some("dot_add"),
+                TokenKind::DotMinus => Some("dot_sub"),
+                TokenKind::DotStar => Some("dot_mul"),
+                TokenKind::DotSlash => Some("dot_div"),
+                _ => None,
+            };
+            let operator_span = self.span();
             for _ in 0..width {
                 self.advance();
             }
             let next = if op == BinaryOp::Pow { prec } else { prec + 1 };
             let rhs = self.parse_binary(next);
             let span = start.merge(self.last_text_span());
+            if let Some(method) = dotted {
+                lhs = Expr {
+                    kind: ExprKind::MethodCall {
+                        receiver: Box::new(lhs),
+                        method: Ident { name: method.to_string(), span: operator_span },
+                        generics: Vec::new(),
+                        args: vec![Arg { name: None, span: rhs.span, value: rhs }],
+                    },
+                    span,
+                };
+                continue;
+            }
             lhs = Expr {
                 kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
                 span,
@@ -6180,11 +6204,11 @@ fn binary_op(kind: &TokenKind) -> Option<(BinaryOp, u8)> {
         T::Shl => (BinaryOp::Shl, 7),
         T::Shr => (BinaryOp::Shr, 7),
 
-        T::Plus => (BinaryOp::Add, 8),
-        T::Minus => (BinaryOp::Sub, 8),
+        T::Plus | T::DotPlus => (BinaryOp::Add, 8),
+        T::Minus | T::DotMinus => (BinaryOp::Sub, 8),
 
-        T::Star => (BinaryOp::Mul, 9),
-        T::Slash => (BinaryOp::Div, 9),
+        T::Star | T::DotStar => (BinaryOp::Mul, 9),
+        T::Slash | T::DotSlash => (BinaryOp::Div, 9),
         T::Percent => (BinaryOp::Rem, 9),
         T::AtSign => (BinaryOp::MatMul, 9),
 
@@ -6295,6 +6319,10 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Semi => ";",
         Dot => ".",
         DotDot => "..",
+        DotPlus => ".+",
+        DotMinus => ".-",
+        DotStar => ".*",
+        DotSlash => "./",
         DotDotEq => "..=",
         Arrow => "->",
         FatArrow => "=>",
