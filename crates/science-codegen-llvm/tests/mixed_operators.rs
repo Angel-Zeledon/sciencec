@@ -133,11 +133,13 @@ F64 implements Mul[V]:
         V(x: self * other.x)
 
 def main():
-    let v be V(x: 1.5)
+    let first be V(x: 1.5)
+    let second be V(x: 1.5)
+    let third be V(x: 1.5)
     let k: F64 be 2.0
-    print((2.0 * v).x)
-    print((k * v).x)
-    print((v * 2.0).x)
+    print((2.0 * first).x)
+    print((k * second).x)
+    print((third * 2.0).x)
     print(k * k + 1.0)
 ",
         ),

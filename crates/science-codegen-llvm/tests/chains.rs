@@ -1035,7 +1035,8 @@ fn a_maps_keys_and_values_are_chain_sources() {
     print(f\"{{shouted[0]}} {{shouted[2]}}\")
     let es be m.iterate().map(e giving e.value * 10).collect()
     print(f\"{{es[0]}} {{es[2]}}\")
-    let top be m.values().maximum(by: v giving v)
+    let vs be m.values()
+    let top be vs.maximum(by: v giving v)
     if top?:
         print(f\"top {{top}}\")
     let first_key be m.keys().first()

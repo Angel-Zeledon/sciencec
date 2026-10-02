@@ -21,3 +21,4 @@ science-parser.workspace = true
 
 [dev-dependencies]
 science-rt.workspace = true
+science-regions.workspace = true

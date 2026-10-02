@@ -230,3 +230,13 @@ let v be go(\"world\")
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The harness runs the driver's move check: a use after move is refused here
+/// as `sciencec check` refuses it (SC0301), instead of building and running.
+#[test]
+#[should_panic(expected = "borrow and move check: [(301,")]
+fn the_harness_refuses_a_use_after_move() {
+    let _ = harness::lower(
+        "type Doc:\n    title: String\n\ndef take(doc: Doc) -> Int:\n    1\n\ndef main():\n    let doc be Doc(title: \"a\")\n    take(doc)\n    print(doc.title)\n",
+    );
+}

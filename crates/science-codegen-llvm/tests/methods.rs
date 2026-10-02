@@ -1009,7 +1009,7 @@ def same(a: &String, b: &String) -> Bool:
 def main():
     let a be \"hola\"
     let b be \"hol\"
-    let mutable c be b
+    let mutable c be f\"{b}\"
     c.push_str(\"a\")
     print(same(a, c))
     print(same(a, b))

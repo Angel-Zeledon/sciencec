@@ -165,6 +165,27 @@ fn lower_checked(
                 .unwrap_or_else(|_| body.clone())
         })
         .collect();
+    // **The borrow and move check, which the driver runs and this harness did
+    // not.** `region_check` in `sciencec`'s driver hands the revealed bodies to
+    // `analyse_crate` and refuses the program on any error; a harness that
+    // skipped it ran programs the driver rejects (a use after move printed an
+    // empty message instead of `SC0301`). Same order, same inputs.
+    {
+        let graph = science_mir::CallGraph::of(&bodies);
+        let mut region_diagnostics = Diagnostics::new();
+        let mut context = science_regions::Context {
+            defs: &krate.defs,
+            decls: &decls,
+            types: &mut types,
+            aliases: &mut aliases,
+        };
+        science_regions::analyse_crate(&mut context, &bodies, &graph, &mut region_diagnostics);
+        assert!(
+            !region_diagnostics.has_errors(),
+            "the fixture must pass the borrow and move check: {:?}",
+            codes(&region_diagnostics)
+        );
+    }
     let (mono, instances) = {
         let mut walk = science_codegen::mono::Mono::new(&krate.defs, &decls, &mut types, &bodies);
         let mut set = walk.collect(science_codegen::mono::RootSet::EntryPoint);

@@ -307,9 +307,11 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let mutable xs be [10, 20, 30]\n\
          \x20   xs.push(40)\n\
          \x20   let a be xs.get(0)\n\
+         \x20   if a?:\n\
+         \x20       print(f\"{xs.length()} {xs.is_empty()} {a}\")\n\
          \x20   let b be xs.get_mutably(1)\n\
-         \x20   if a? and b?:\n\
-         \x20       print(f\"{xs.length()} {xs.is_empty()} {a} {b}\")\n",
+         \x20   if b?:\n\
+         \x20       print(f\"{b}\")\n",
     ),
     // The rest of `Array`'s Level 1 surface, `tests/arrays.rs`'s
     // `every_level_one_method_acts_on_the_elements_it_names` reduced: one call

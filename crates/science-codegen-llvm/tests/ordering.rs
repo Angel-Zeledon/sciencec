@@ -75,7 +75,7 @@ Version implements Ord:
 fn a_record_that_implements_ord_answers_all_four_operators() {
     let source = format!(
         "{VERSION}
-def order(a: Version, b: Version) -> String:
+def order(a: &Version, b: &Version) -> String:
     f\"{{a < b}} {{a > b}} {{a <= b}} {{a >= b}}\"
 
 def main():
