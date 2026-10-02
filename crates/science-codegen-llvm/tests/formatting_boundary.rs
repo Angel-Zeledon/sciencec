@@ -215,6 +215,11 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// rows.** `science_array_clone_with` is `science_array_clone` with a
 /// per-element clone thunk beside the descriptor, and it returns the same
 /// three-word header the same way.
+///
+/// **Still twenty-three — twenty-five — with one hundred and forty-six rows.**
+/// The fifteen `science_display_*` entry points a generic `T: Display` hole
+/// reaches for a prelude type each return `()`: they write into the
+/// `Formatter` they are handed.
 #[test]
 fn the_derived_sret_set_is_twenty_three_and_twenty_five_on_windows_and_has_moved_eleven_times() {
     let triple = Triple::host().expect("a supported host");
@@ -229,7 +234,7 @@ fn the_derived_sret_set_is_twenty_three_and_twenty_five_on_windows_and_has_moved
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 131, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 146, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the
