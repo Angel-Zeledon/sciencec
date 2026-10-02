@@ -702,9 +702,16 @@ impl Methods {
         if head == interface {
             return true;
         }
+        // A user type at a builtin interface: the language has no derivation,
+        // so `Doc implements Ord:` is written in the crate (every example that
+        // has one writes it) and its absence is a fact. Reporting it is the
+        // bound check doing its job rather than a false positive.
+        if !defs.get(head).is_builtin() {
+            return true;
+        }
         // A builtin interface: answerable only where the prelude enumerates
         // the implementations, which is the *unapplied* prelude types.
-        defs.get(head).is_builtin() && !is_applied(types, ty)
+        !is_applied(types, ty)
     }
 
     fn impl_block(

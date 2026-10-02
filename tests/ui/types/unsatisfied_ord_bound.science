@@ -1,0 +1,16 @@
+# UI test: a user type with no `implements Ord:` passed to `T: Ord` (SC0534).
+#
+# The bound check used to stay silent for a user type at a prelude interface,
+# on the theory that a record might derive `Ord`. The language has no
+# derivation, so the absence of `Point implements Ord:` is a fact, and
+# `largest` over an array of them was admitted.
+
+type Point:
+    x: Int
+
+def largest[T: Ord](items: &Array[T]) -> Int:
+    items.length()
+
+def main():
+    let points be [Point(x: 1), Point(x: 2)]
+    print(largest(points))

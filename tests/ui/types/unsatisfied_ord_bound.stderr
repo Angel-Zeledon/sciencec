@@ -1,0 +1,10 @@
+error[SC0534]: `Point` does not implement `Ord`
+  --> tests/ui/types/unsatisfied_ord_bound.science:16:11
+   |
+11 | def largest[T: Ord](items: &Array[T]) -> Int:
+   |                --- `T` was declared `Ord`
+...
+16 |     print(largest(points))
+   |           ^^^^^^^^^^^^^^^ `T` is `Point` here
+   |
+   = note: an implementation is a block the program writes: `Point implements Ord:`

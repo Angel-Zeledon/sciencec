@@ -344,21 +344,38 @@ def a(xs: &Array[I64]) -> I64:
 }
 
 #[test]
-fn the_cost_of_that_restraint_is_stated_as_a_test() {
-    // **A bound at a prelude interface is unchecked on a *user* type even when
-    // it is plainly unsatisfied.** `Plain` implements nothing at all and
-    // `duplicate(p)` is admitted, because *"the program contains no
-    // `Plain implements Clone:`"* is not evidence: no note has said whether a
-    // record is `Clone` by construction, by derivation or by declaration, and
-    // reporting here would answer that question by accident.
-    //
-    // This is what is left of the restraint after the prelude's own
-    // implementations landed. It closes when the language says where a user
-    // type's `Clone` comes from.
+fn a_user_type_without_a_declared_prelude_interface_is_reported() {
+    // Was `the_cost_of_that_restraint_is_stated_as_a_test`, which pinned
+    // `duplicate(p)` at a `Plain` that implements nothing as *clean* ("no note
+    // has said whether a record is `Clone` by construction, by derivation or by
+    // declaration"). The language has no derivation: every example writes
+    // `Doc implements Clone:`, `implements Ord:` and so on. The gap was a
+    // soundness hole (`largest(items)` over a type with no `Ord`), so the test
+    // now pins the diagnostic instead.
+    assert_eq!(
+        codes(
+            "\
+def duplicate[T: Clone](value: &T) -> I64:
+    1
+
+def a(p: &Plain) -> I64:
+    duplicate(p)
+"
+        ),
+        vec![534]
+    );
+}
+
+#[test]
+fn a_user_type_that_declares_a_prelude_interface_checks_clean() {
     program(
         "\
 def duplicate[T: Clone](value: &T) -> I64:
     1
+
+Plain implements Clone:
+    def clone(self) -> Plain:
+        Plain(n: 1)
 
 def a(p: &Plain) -> I64:
     duplicate(p)

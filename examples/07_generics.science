@@ -41,6 +41,12 @@ Doc implements Summarize:
         out.truncate(200)
         out
 
+# `describe` below bounds on `Clone`, and a record has no derived one: it is
+# written like any other implementation.
+Doc implements Clone:
+    def clone(self) -> Doc:
+        Doc(title: copy_of(self.title), body: copy_of(self.body))
+
 # No bound at all: the body may only move or borrow the value.
 def identity[T](value: T) -> T:
     value
