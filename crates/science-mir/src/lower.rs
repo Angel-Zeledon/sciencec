@@ -5709,6 +5709,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     fn target_is_indexed(&self, expr: ExprId) -> bool {
         match &self.thir.expr(expr).kind {
             ExprKind::Index { .. } => true,
+            // A user type's `a[i, j] be v` reaches its target through a call
+            // to `index_mutably`, the same exclusive access `Index` takes, so
+            // `m[1, 2] be m[1, 2] * 2.0` needs the same order.
+            ExprKind::MethodCall { .. } => true,
             ExprKind::Narrow(inner) => self.target_is_indexed(*inner),
             ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
                 self.target_is_indexed(*base)
