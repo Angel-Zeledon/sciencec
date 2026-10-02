@@ -149,7 +149,7 @@ fn a_misspelled_link_is_reported_and_an_untranscribed_one_is_not() {
 def uses(xs: &Array[Int]) -> Int:
     let a be xs.iterate().frist()
     let b be xs.iterate().keep(each > 1).colect()
-    let c be xs.iterate().group()
+    let c be xs.iterate().partition_results()
     let d be xs.iterate().map(each * 2).collect_or_error()
     0
 ",

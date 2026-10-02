@@ -2,28 +2,28 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![tensor, grid, f]))"
 ---
-Module `main` #3365 @14..66
-  Record `Tensor` #3366 @14..28
+Module `main` #3441 @14..66
+  Record `Tensor` #3442 @14..28
     generics
-      TypeParam `T` #3371 @0..1
-      ConstParam `SHAPE` #3372 @2..13
+      TypeParam `T` #3447 @0..1
+      ConstParam `SHAPE` #3448 @2..13
         kind: Shape @2..7
     fields
-      Field `value` #3367 @14..21
-        type: Path -> `T` #3371 @14..15
-  Record `Grid` #3368 @52..64
+      Field `value` #3443 @14..21
+        type: Path -> `T` #3447 @14..15
+  Record `Grid` #3444 @52..64
     generics
-      TypeParam `T` #3373 @29..30
-      ConstParam `ROWS` #3374 @31..39
+      TypeParam `T` #3449 @29..30
+      ConstParam `ROWS` #3450 @31..39
         kind: Int @31..34
-      ConstParam `COLS` #3375 @40..51
+      ConstParam `COLS` #3451 @40..51
         kind: (not a kind) @40..46
     fields
-      Field `value` #3369 @52..59
-        type: Path -> `T` #3373 @52..53
-  Fn `f` #3370 @65..66
+      Field `value` #3445 @52..59
+        type: Path -> `T` #3449 @52..53
+  Fn `f` #3446 @65..66
     generics
-      ConstParam `FLAG` #3376 @67..76
+      ConstParam `FLAG` #3452 @67..76
         kind: (not a kind) @67..71
     body: (none)
 --- diagnostics ---

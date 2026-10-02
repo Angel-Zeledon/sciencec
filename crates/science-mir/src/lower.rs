@@ -6800,6 +6800,9 @@ enum Terminal {
     /// `group(by: key)` — a `Map` from each key to the `Array` of the items
     /// that had it, in order of first appearance and in source order within.
     Group(ExprId),
+    /// `partition(p)` — a `Parts` record: the items `p` held for in `kept`,
+    /// the rest in `discarded`, each in source order.
+    Partition(ExprId),
     /// The body of a written `for`, run once per item. Not a method at all:
     /// `for x in chain:` is a chain whose terminal is the loop.
     Each { pattern: PatId, body: thir::BlockId },
@@ -6826,6 +6829,7 @@ impl Terminal {
             ("maximum", Some(key)) => Terminal::Maximum(key),
             ("tally", Some(key)) => Terminal::Tally(key),
             ("group", Some(key)) => Terminal::Group(key),
+            ("partition", Some(predicate)) => Terminal::Partition(predicate),
             _ => return None,
         })
     }
@@ -6840,7 +6844,8 @@ impl Terminal {
             | Terminal::Minimum(predicate)
             | Terminal::Maximum(predicate)
             | Terminal::Tally(predicate)
-            | Terminal::Group(predicate) => Some(predicate),
+            | Terminal::Group(predicate)
+            | Terminal::Partition(predicate) => Some(predicate),
             Terminal::Reduce { f, .. } => Some(f),
             Terminal::Collect
             | Terminal::Count
@@ -7866,6 +7871,33 @@ impl Builder<'_, '_> {
             Terminal::Last | Terminal::Minimum(_) | Terminal::Maximum(_) => {
                 let null = Operand::Const(Constant::Literal(Literal::Null));
                 self.assign(block, dest.clone(), Rvalue::Use(null), span);
+            }
+            // Both arrays exist before the first item, inside the record.
+            Terminal::Partition(_) => {
+                let parts_ty = self.place_ty(&dest);
+                let fields = crate::moves::record_fields(
+                    self.context.decls,
+                    self.context.types,
+                    self.context.aliases,
+                    parts_ty,
+                )
+                .expect("`Parts` is a record with two fields");
+                let TyKind::Named { def, .. } = *self.context.types.kind(parts_ty) else {
+                    unreachable!("`partition` yields a `Parts`")
+                };
+                let mut made = Vec::new();
+                for (field, ty) in &fields {
+                    let array = self.temp(*ty, span, block);
+                    block = self.emit_call(
+                        Place::local(array),
+                        Callee::Runtime(ARRAY_WITH_CAPACITY),
+                        vec![Operand::Const(Constant::Count(0))],
+                        block,
+                        span,
+                    );
+                    made.push((*field, Operand::Move(Place::local(array))));
+                }
+                self.assign(block, dest.clone(), Rvalue::Record { def, fields: made }, span);
             }
             Terminal::Tally(_) | Terminal::Group(_) => {
                 let map_ty = self.place_ty(&dest);
@@ -9490,6 +9522,51 @@ impl Builder<'_, '_> {
                 );
                 self.chain_leave(current, depth, step_block, span);
             }
+            Terminal::Partition(_) => {
+                let (closure, closure_ty) = predicate.expect("a partition predicate was evaluated");
+                let (argument, next) =
+                    self.chain_argument(&value, closure_ty, false, current, span);
+                current = next;
+                let held = self.temp(self.bool_ty, span, current);
+                current = self.emit_call(
+                    Place::local(held),
+                    Callee::Indirect(Operand::Copy(Place::local(closure))),
+                    vec![argument],
+                    current,
+                    span,
+                );
+                let (kept, discarded) = (self.new_block(), self.new_block());
+                self.terminate(
+                    current,
+                    TerminatorKind::If {
+                        cond: Operand::Copy(Place::local(held)),
+                        then_block: kept,
+                        else_block: discarded,
+                    },
+                    span,
+                );
+                let parts_ty = self.place_ty(&dest);
+                let fields = crate::moves::record_fields(
+                    self.context.decls,
+                    self.context.types,
+                    self.context.aliases,
+                    parts_ty,
+                )
+                .expect("`Parts` is a record with two fields");
+                for (branch, (field, ty)) in [kept, discarded].into_iter().zip(fields) {
+                    let side = dest.project(Projection::Field { field, ty });
+                    let (accumulator, next) = self.exclusive_ref(&side, branch, span);
+                    let discard = Place::local(self.temp(Ty::UNIT, span, next));
+                    let end = self.emit_call(
+                        discard,
+                        Callee::Runtime(ARRAY_PUSH),
+                        vec![accumulator, Operand::Move(value.clone())],
+                        next,
+                        span,
+                    );
+                    self.chain_leave(end, depth, step_block, span);
+                }
+            }
             Terminal::Each { pattern, body } => {
                 // A written `for`: the loop's own body is the terminal, with
                 // `continue` going to the next item and `break` out of the
@@ -9581,6 +9658,7 @@ impl Builder<'_, '_> {
             | Terminal::Maximum(_)
             | Terminal::Tally(_)
             | Terminal::Group(_)
+            | Terminal::Partition(_)
             | Terminal::Each { .. } => {}
         }
         self.terminate(exhausted, TerminatorKind::Goto { target: done }, span);

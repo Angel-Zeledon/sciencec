@@ -1680,3 +1680,36 @@ fn group_collects_items_per_key() {
         "3\n1 3\n1\n4\n7\n2 2\n2\n5\n0 2\n3\n6\n1: 4 apple\n0: 1 banana\n0\n1 2\n0 1\n"
     );
 }
+
+// --- partition --------------------------------------------------------------
+
+/// **`partition(p)` splits one pass into a `Parts`**: `kept` where the
+/// predicate held and `discarded` where it did not, each in source order.
+/// Owned items move into whichever side takes them, an empty source gives two
+/// empty arrays, and links before it filter what is split.
+#[test]
+fn partition_splits_items_into_kept_and_discarded() {
+    assert_eq!(
+        prints(
+            "partition",
+            r#"def main():
+    let xs be [1, 2, 3, 4, 5, 6, 7]
+    let parts be xs.iterate().partition(x giving x % 2 is 0)
+    print(f"{parts.kept.length()} {parts.discarded.length()}")
+    for v in parts.kept:
+        print(v)
+    for v in parts.discarded:
+        print(v)
+    let words be ["apple", "avocado", "banana"]
+    let p2 be words.iterate().owned().partition(s giving s.length() > 5)
+    print(f"{p2.kept[0]} {p2.discarded[0]}")
+    let none be Array[Int].new()
+    let p3 be none.iterate().partition(x giving x > 0)
+    print(p3.kept.length() + p3.discarded.length())
+    let p4 be xs.iterate().keep(each > 3).partition(each > 5)
+    print(f"{p4.kept.length()} {p4.discarded.length()}")
+"#,
+        ),
+        "3 4\n2\n4\n6\n1\n3\n5\n7\navocado apple\n0\n2 2\n"
+    );
+}

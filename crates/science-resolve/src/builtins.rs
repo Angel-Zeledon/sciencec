@@ -1212,6 +1212,15 @@ macro_rules! chain_links {
                 params: &[("by", Ty::Fn(&[$borrowed], &Ty::Var("K")))],
                 ret: Some(Ty::App("Map", &[Ty::Var("K"), INT])),
             },
+            // `partition(p)`: one pass, two arrays — `kept` where `p` held and
+            // `discarded` where it did not (§1.3's `Parts`).
+            Method {
+                name: "partition",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::App("Parts", &[$item])),
+            },
             // `group(by: key)`: the items themselves, collected per key into
             // a `Map[K, Array[Item]]` in order of first appearance (source
             // order within a group). The key rule is `tally`'s.
@@ -3442,8 +3451,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     // Terminals.
     "collect_or_error",
     "partition_results",
-    "partition",
-    "group",
 ];
 
 /// `intrinsics-math-physics.md` §4.3's float names beyond `stdlib-core.md`
@@ -4252,6 +4259,50 @@ impl Declarer<'_> {
         }));
     }
 
+    /// `Parts[T]`, at the `DefId` `build` allocated as `DefKind::Record`:
+    /// `{ kept: Array[T], discarded: Array[T] }` — §1.3's
+    ///
+    /// ```text
+    /// type Parts of T:               # what partition(p) returns
+    ///     kept: Array of T
+    ///     discarded: Array of T
+    /// ```
+    ///
+    /// Built by `science-mir`'s fused loop, as `Numbered` is.
+    fn parts(&mut self, def: DefId) {
+        let item = self.defs.alloc(DefKind::TypeParam, "T", BUILTIN_SPAN, Some(def));
+        let mut generics = HashMap::new();
+        generics.insert("T", item);
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
+        let array = Ty::App("Array", &[Ty::Var("T")]);
+        let kept_ty = self.ty(&array, &scope);
+        let discarded_ty = self.ty(&array, &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "kept", BUILTIN_SPAN, Some(def)),
+                ty: kept_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "discarded", BUILTIN_SPAN, Some(def)),
+                ty: discarded_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: vec![hir::GenericParam {
+                def: item,
+                kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+                span: BUILTIN_SPAN,
+            }],
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
+
     /// `Numbered[T]`, at the `DefId` `build` allocated as `DefKind::Record`:
     /// `{ index: Int, item: T }` — `collections-and-chains.md` §1.3
     /// transcribed:
@@ -4414,6 +4465,8 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     let numbered_def = declare(defs, DefKind::Record, "Numbered", &mut prelude);
     // `Pair[A, B]`, what `zip()` yields, for the same reason.
     let pair_def = declare(defs, DefKind::Record, "Pair", &mut prelude);
+    // `Parts[T]`, what `partition(p)` returns (§1.3): `kept` and `discarded`.
+    let parts_def = declare(defs, DefKind::Record, "Parts", &mut prelude);
     // The second spelling of a primitive that has two. No `alloc`: the whole
     // point is that `Int` and `I64` are one `DefId` and therefore one `Ty`,
     // which is what makes them unify. Pushing a name is all a second spelling
@@ -4527,6 +4580,7 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     declarer.entry(entry_def);
     declarer.numbered(numbered_def);
     declarer.pair(pair_def);
+    declarer.parts(parts_def);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);
     }
