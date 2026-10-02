@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Coming from Rust &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="If you know Rust, Science will feel familiar: ownership, borrowing, generics and interfaces all work the way you expect. What changes is the spelling, and a few places where the design is simpler. This page maps one to the other.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,115 @@
 <main>
 <p class="crumb">Going further</p>
 <h1>Coming from Rust</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>If you know Rust, Science will feel familiar: ownership, borrowing, generics and interfaces all work the way you expect. What changes is the spelling, and a few places where the design is simpler. This page maps one to the other.</p>
+<h2 id="side-by-side">Side by side<a class="anchor" href="#side-by-side" aria-hidden="true">#</a></h2>
+<div class="scroller"><table><thead><tr><th>Rust</th><th>Science</th></tr></thead><tbody><tr><td><code>fn f(x: i32) -&gt; i32</code></td><td><code>def f(x: Int) -&gt; Int</code></td></tr><tr><td><code>let x = 5;</code></td><td><code>let x be 5</code></td></tr><tr><td><code>let mut x = 5;</code></td><td><code>let mutable x be 5</code></td></tr><tr><td><code>x = 6;</code></td><td><code>x be 6</code></td></tr><tr><td><code>struct Doc { ... }</code></td><td><code>type Doc:</code></td></tr><tr><td><code>enum Format { ... }</code></td><td><code>choice Format:</code></td></tr><tr><td><code>impl Doc { ... }</code></td><td><code>Doc has:</code></td></tr><tr><td><code>impl Summarize for Doc { ... }</code></td><td><code>Doc implements Summarize:</code></td></tr><tr><td><code>trait Summarize { ... }</code></td><td><code>interface Summarize:</code></td></tr><tr><td><code>&amp;self</code> / <code>&amp;mut self</code></td><td><code>self</code> / <code>mutable self</code></td></tr><tr><td><code>dyn Shape</code></td><td><code>any Shape</code></td></tr><tr><td><code>a == b</code> / <code>a != b</code></td><td><code>a is b</code> / <code>a is not b</code></td></tr><tr><td><code>!flag</code></td><td><code>not flag</code></td></tr><tr><td><code>while cond { ... }</code></td><td><code>loop:</code> and <code>break</code></td></tr><tr><td><code>for i in 0..n { ... }</code></td><td><code>for i in 0..n:</code></td></tr><tr><td><code>Option&lt;T&gt;</code></td><td><code>T?</code></td></tr><tr><td><code>Result&lt;T, E&gt;</code></td><td><code>(T, E?)</code></td></tr><tr><td><code>pub fn</code></td><td><code>public def</code></td></tr><tr><td><code>use std::fs;</code></td><td><code>use fs</code></td></tr><tr><td><code>println!(&quot;{x}&quot;)</code></td><td><code>print(f&quot;{x}&quot;)</code></td></tr><tr><td><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code></td><td><code>Array[T]</code>, <code>Map[K, V]</code></td></tr></tbody></table></div>
+<p>Blocks are indentation, not braces, and statements end at the end of the line, not at a semicolon. Generics use square brackets: <code>Array[Doc]</code>, <code>Map[String, Int]</code>.</p>
+<h2 id="types-and-methods-are-written-apart">Types and methods are written apart<a class="anchor" href="#types-and-methods-are-written-apart" aria-hidden="true">#</a></h2>
+<p>A Rust <code>struct</code> and its <code>impl</code> block become a <code>type</code> and a <code>has</code> block. The type comes first and the methods follow:</p>
+<pre data-science><code>type Doc:
+    title: String
+    hits: Int
+
+Doc has:
+    def new(title: String) -&gt; Doc:
+        Doc(title: title, hits: 0)
+
+    def popular(self) -&gt; Bool:
+        self.hits &gt;= 10
+
+def main():
+    let doc be Doc.new(&quot;Regions&quot;)
+    print(doc.popular())</code></pre>
+<pre class="output"><code>false</code></pre>
+<p>Fields are given by name when you build a value: <code>Doc(title: title, hits: 0)</code>. A method that reads the value takes <code>self</code>, which stands for Rust's <code>&amp;self</code>. One that changes it takes <code>mutable self</code>, for <code>&amp;mut self</code>. To take ownership, write <code>self: Self</code>.</p>
+<h2 id="impl-trait-for-type-reads-the-other-way"><code>impl Trait for Type</code> reads the other way<a class="anchor" href="#impl-trait-for-type-reads-the-other-way" aria-hidden="true">#</a></h2>
+<p>An interface is Rust's trait. When you implement one, the type comes first:</p>
+<pre data-science><code>interface Summarize:
+    def summarize(self) -&gt; String
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -&gt; String:
+        f&quot;doc: {self.title}&quot;
+
+def main():
+    let doc be Doc(title: &quot;Regions&quot;)
+    print(doc.summarize())</code></pre>
+<pre class="output"><code>doc: Regions</code></pre>
+<p>Read it aloud: "Doc implements Summarize". An interface can have default methods, and bounds on a generic go after <code>where</code>, as in Rust. <code>dyn Trait</code> is <code>any Interface</code>. <a href="interfaces.html">Interfaces</a> and <a href="generics.html">Generics</a> have the details.</p>
+<h2 id="option-and-result-are-not-types"><code>Option</code> and <code>Result</code> are not types<a class="anchor" href="#option-and-result-are-not-types" aria-hidden="true">#</a></h2>
+<p>Rust wraps a missing value in <code>Option&lt;T&gt;</code>. Science writes <code>T?</code> and uses <code>null</code> for the absent case. You test with <code>?</code> and, inside the <code>if</code>, the value is already unwrapped:</p>
+<pre data-science><code>def main():
+    let scores be [3, 9, 4]
+    let first be scores.get(0)
+    if first?:
+        print(first)
+    let none be scores.get(9)
+    if not none?:
+        print(&quot;empty&quot;)</code></pre>
+<pre class="output"><code>3
+empty</code></pre>
+<p>There is no <code>Some</code> or <code>None</code> to write, and no <code>unwrap</code>.</p>
+<p>Failure works the same way, with a pair instead of a <code>Result</code>. The value and the error come back side by side, and <code>?</code> tests the error:</p>
+<pre data-science><code>def half(n: Int) -&gt; (Int, Error?):
+    (n / 2, null)
+
+def main():
+    let value, err be half(10)
+    if err?:
+        print(&quot;failed&quot;)
+    else:
+        print(value)</code></pre>
+<pre class="output"><code>5</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> <code>?</code> in Science is not Rust's propagation operator. It never returns from the function. It only answers "is there an error?" as a <code>Bool</code>. If you want to pass an error on, you write the <code>if</code> and the <code>return</code> yourself.</p></aside>
+<p>The error type is usually <code>Error?</code>, the interface, or a concrete type such as <code>IoError?</code>. <a href="errors.html">Missing values and errors</a> explains when to use which.</p>
+<h2 id="as-a-test-return-as-the-exit"><code>?</code> as a test, <code>return</code> as the exit<a class="anchor" href="#as-a-test-return-as-the-exit" aria-hidden="true">#</a></h2>
+<p>Here is the shape you will write where Rust would write <code>let x = f()?;</code>:</p>
+<pre data-science><code>def parse_pair(a: &amp;String, b: &amp;String) -&gt; (Int, Error?):
+    let x, err be a.parse_int()
+    if err?:
+        return (0, err)
+    let y, err2 be b.parse_int()
+    if err2?:
+        return (0, err2)
+    (x + y, null)
+
+def main():
+    let sum, err be parse_pair(&quot;4&quot;, &quot;5&quot;)
+    if err?:
+        print(&quot;bad input&quot;)
+    else:
+        print(sum)</code></pre>
+<pre class="output"><code>9</code></pre>
+<p>It is longer than <code>?</code> in Rust, and every exit is visible on the page.</p>
+<h2 id="borrowing-is-automatic-at-call-sites">Borrowing is automatic at call sites<a class="anchor" href="#borrowing-is-automatic-at-call-sites" aria-hidden="true">#</a></h2>
+<p>Ownership and borrowing work as you know them: a value has one owner, and a reference cannot outlive it. The difference is that you do not write the <code>&amp;</code> when you call. A parameter declared <code>&amp;T</code> is borrowed for you:</p>
+<pre data-science><code>def total(items: &amp;Array[Int]) -&gt; Int:
+    let mutable sum be 0
+    for item in items:
+        sum be sum + item
+    sum
+
+def main():
+    let scores be [3, 9, 4]
+    print(total(scores))
+    print(scores.length())</code></pre>
+<pre class="output"><code>16
+3</code></pre>
+<p><code>scores</code> is still usable after the call, because <code>total</code> only borrowed it. You write <code>&amp;</code> where a borrow is not a call, such as <code>let view be &amp;doc</code>. A mutable borrow is <code>&amp;mut T</code>.</p>
+<h2 id="other-spellings-that-surprise-rust-readers">Other spellings that surprise Rust readers<a class="anchor" href="#other-spellings-that-surprise-rust-readers" aria-hidden="true">#</a></h2>
+<ul><li>Calls always have parentheses. <code>text.length()</code> is a call; <code>x.dims</code> is a field.</li><li>There is no <code>;</code>, no <code>{}</code>, no lifetimes to name, and no macros: <code>print</code> and <code>assert</code> are ordinary-looking calls.</li><li><code>a is b</code> replaces <code>==</code>, and <code>not</code> replaces <code>!</code>.</li><li><code>String</code> has no <code>clone</code>. Write <code>f&quot;{text}&quot;</code> to get an owned copy of a borrowed string.</li><li>The last expression of a block is its value, as in Rust, but there is no trailing-semicolon trick: nothing needs one.</li><li><code>loop:</code> exists and <code>while</code> does not. Put the test inside the loop with <code>break</code>.</li></ul>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>fn</code>, <code>struct</code>, <code>enum</code>, <code>impl</code>, <code>trait</code>, <code>dyn</code> become <code>def</code>, <code>type</code>, <code>choice</code>, <code>has</code> / <code>implements</code>, <code>interface</code>, <code>any</code>.</li><li><code>impl Trait for Type</code> becomes <code>Type implements Trait</code>: the order reverses.</li><li><code>Option&lt;T&gt;</code> is <code>T?</code>; <code>Result&lt;T, E&gt;</code> is a pair <code>(T, E?)</code>.</li><li><code>?</code> tests for an error and never returns.</li><li>Borrowing is written in parameter types, not at call sites.</li><li><code>==</code> is <code>is</code>, <code>!</code> is <code>not</code>, and <code>while</code> is <code>loop:</code> with <code>break</code>.</li></ul>
+<p>Next: the list of <a href="keywords.html">keywords</a>.</p>
 <nav class="pager"><a class="prev" href="from-python.html"><span>Previous</span>Coming from Python</a><a class="next" href="keywords.html"><span>Next</span>Keywords and reserved words</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#side-by-side">Side by side</a></li><li><a href="#types-and-methods-are-written-apart">Types and methods are written apart</a></li><li><a href="#impl-trait-for-type-reads-the-other-way"><code>impl Trait for Type</code> reads the other way</a></li><li><a href="#option-and-result-are-not-types"><code>Option</code> and <code>Result</code> are not types</a></li><li><a href="#as-a-test-return-as-the-exit"><code>?</code> as a test, <code>return</code> as the exit</a></li><li><a href="#borrowing-is-automatic-at-call-sites">Borrowing is automatic at call sites</a></li><li><a href="#other-spellings-that-surprise-rust-readers">Other spellings that surprise Rust readers</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

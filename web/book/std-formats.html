@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Data formats &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Data comes in text formats: tables of values, nested records, encoded bytes. This chapter covers the modules that read and write them, and one that helps with ordinary text.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,230 @@
 <main>
 <p class="crumb">The library</p>
 <h1>Data formats</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Data comes in text formats: tables of values, nested records, encoded bytes. This chapter covers the modules that read and write them, and one that helps with ordinary text.</p>
+<h2 id="csv-tables">CSV: tables<a class="anchor" href="#csv-tables" aria-hidden="true">#</a></h2>
+<p>A CSV file is rows of values separated by commas, usually with a header row naming the columns. The <code>csv</code> module reads one into a <code>Table</code>. You give it the text and an <code>Options</code> value that says how the text is laid out:</p>
+<pre data-science><code>use csv (Table, Options)
+
+def main():
+    let text be &quot;name,score,age\nAda,9.5,36\nGrace,8.0,45\n&quot;
+    let table, err be Table.parse(text, Options.new())
+    if err?:
+        print(err.message())
+        return
+    print(table.row_count())
+    print(table.column_count())
+    let name, name_err be table.get(1, &quot;name&quot;)
+    if not name_err?:
+        print(name)</code></pre>
+<pre class="output"><code>2
+3
+Grace</code></pre>
+<p><code>Options.new()</code> means a comma between values and a header row on the first line. The header row is not counted in <code>row_count()</code>. <code>table.get(row, column_name)</code> reads one cell. Rows are numbered from 0.</p>
+<p>A whole column can come out as text, floats or integers. The conversion fails with an error if a cell is not a number:</p>
+<pre data-science><code>use csv (Table, Options)
+
+def main():
+    let text be &quot;name,score,age\nAda,9.5,36\nGrace,8.0,45\n&quot;
+    let table, err be Table.parse(text, Options.new())
+    if err?:
+        return
+    let scores, score_err be table.floats(&quot;score&quot;)
+    if not score_err?:
+        for score in scores:
+            print(score)
+    let ages, age_err be table.ints(&quot;age&quot;)
+    if not age_err?:
+        let mutable total be 0
+        for age in ages:
+            total be total + age
+        print(total)</code></pre>
+<pre class="output"><code>9.5
+8.0
+81</code></pre>
+<p>Real files are rarely perfect. The reader checks that every row has as many values as the header, and reports the line of the first row that does not:</p>
+<pre data-science><code>use csv (Table, Options)
+
+def main():
+    let table, err be Table.parse(&quot;a,b\n1\n&quot;, Options.new())
+    if err?:
+        print(err.message())</code></pre>
+<pre class="output"><code>line 2: expected 2 fields, found 1</code></pre>
+<p>Other layouts are set on the options. <code>Options.new().delimiter(&quot;;&quot;)</code> splits on semicolons, <code>header(false)</code> says there is no header row, and <code>flexible()</code> allows rows of different lengths.</p>
+<p>To read a file instead of a string, use <code>Table.read(path, options)</code>. To write a table, build a <code>Writer</code> and give it records. It adds the quotes a value needs:</p>
+<pre data-science><code>use csv (Table, Options, Writer)
+
+def main():
+    let mutable writer be Writer.new(Options.new())
+    writer.write_record(&amp;[&quot;id&quot;, &quot;note&quot;])
+    writer.write_record(&amp;[&quot;1&quot;, &quot;plain&quot;])
+    writer.write_record(&amp;[&quot;2&quot;, &quot;has, comma&quot;])
+    write(writer.text())
+
+    let saved be writer.save(&quot;out.csv&quot;)
+    if saved?:
+        print(&quot;could not save&quot;)
+        return
+    let table, err be Table.read(&quot;out.csv&quot;, Options.new())
+    if not err?:
+        print(table.row_count())</code></pre>
+<pre class="output"><code>id,note
+1,plain
+2,&quot;has, comma&quot;
+2</code></pre>
+<h2 id="json-nested-data">JSON: nested data<a class="anchor" href="#json-nested-data" aria-hidden="true">#</a></h2>
+<p>JSON describes values that nest: objects, lists, strings, numbers, booleans and null. The <code>json</code> module parses text into a <code>Json</code> value, and turns one back into text:</p>
+<pre data-science><code>use json (parse, stringify)
+
+def main():
+    let text be &quot;{\&quot;name\&quot;: \&quot;Ada\&quot;, \&quot;age\&quot;: 36, \&quot;tags\&quot;: [\&quot;math\&quot;, \&quot;code\&quot;]}&quot;
+    let doc, err be parse(text)
+    if err?:
+        print(err.message())
+        return
+    print(stringify(doc))</code></pre>
+<pre class="output"><code>{&quot;name&quot;:&quot;Ada&quot;,&quot;age&quot;:36,&quot;tags&quot;:[&quot;math&quot;,&quot;code&quot;]}</code></pre>
+<p><code>stringify</code> writes compact text. <code>pretty(doc, 2)</code> indents by two spaces a level:</p>
+<pre data-science><code>use json (parse, pretty)
+
+def main():
+    let doc, err be parse(&quot;{\&quot;name\&quot;: \&quot;Ada\&quot;, \&quot;tags\&quot;: [\&quot;math\&quot;, \&quot;code\&quot;]}&quot;)
+    if err?:
+        return
+    print(pretty(doc, 2))</code></pre>
+<pre class="output"><code>{
+  &quot;name&quot;: &quot;Ada&quot;,
+  &quot;tags&quot;: [
+    &quot;math&quot;,
+    &quot;code&quot;
+  ]
+}</code></pre>
+<p>To look inside a value, use <code>get(key)</code> for an object, <code>at(index)</code> for a list, or <code>pointer(&quot;/tags/1&quot;)</code> to follow a whole path. Each returns a value that may be missing. Then convert it with <code>as_text()</code>, <code>as_int()</code>, <code>as_f64()</code> or <code>as_bool()</code>, which are also optional because the value may be of a different kind:</p>
+<pre data-science><code>use json (parse)
+
+def main():
+    let doc, err be parse(&quot;{\&quot;name\&quot;: \&quot;Ada\&quot;, \&quot;age\&quot;: 36, \&quot;tags\&quot;: [\&quot;math\&quot;, \&quot;code\&quot;]}&quot;)
+    if err?:
+        return
+    let name be doc.get(&quot;name&quot;)
+    if name?:
+        let text be name.as_text()
+        if text?:
+            print(text)
+    let age be doc.get(&quot;age&quot;)
+    if age?:
+        let years be age.as_int()
+        if years?:
+            print(years + 1)
+    let tag be doc.pointer(&quot;/tags/1&quot;)
+    if tag?:
+        let text be tag.as_text()
+        if text?:
+            print(text)
+    print(doc.contains_key(&quot;email&quot;))</code></pre>
+<pre class="output"><code>Ada
+37
+code
+false</code></pre>
+<p>A parse error says where the problem is:</p>
+<pre data-science><code>use json (parse)
+
+def main():
+    let doc, err be parse(&quot;{\&quot;a\&quot;: }&quot;)
+    if err?:
+        print(err.message())</code></pre>
+<pre class="output"><code>unexpected character at line 1, column 7</code></pre>
+<p>To build a value, start from <code>object()</code> or <code>list()</code> and add to it. The variants of <code>Json</code> are <code>Json.Text</code>, <code>Json.Number</code>, <code>Json.Boolean</code> and <code>Json.Null</code>:</p>
+<pre data-science><code>use json (Json, object, list, stringify)
+
+def main():
+    let mutable out be object()
+    out.set(&quot;title&quot;, Json.Text(&quot;Regions&quot;))
+    out.set(&quot;hits&quot;, Json.Number(3.0))
+    let mutable items be list()
+    items.push(Json.Boolean(true))
+    items.push(Json.Null)
+    out.set(&quot;items&quot;, items)
+    print(stringify(out))</code></pre>
+<pre class="output"><code>{&quot;title&quot;:&quot;Regions&quot;,&quot;hits&quot;:3,&quot;items&quot;:[true,null]}</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> Every JSON number is an <code>F64</code>, so integers larger than 2^53 lose precision. An object keeps its members in the order they were written.</p></aside>
+<h2 id="encoding-bytes-and-text">Encoding: bytes and text<a class="anchor" href="#encoding-bytes-and-text" aria-hidden="true">#</a></h2>
+<p>The <code>encoding</code> module turns bytes into text forms and back. Base64 and hex are the common ones for sending binary data through text. <code>utf8_encode</code> gives the bytes of a string, and <code>utf8_decode</code> reads them back, checking that they are valid:</p>
+<pre data-science><code>use encoding (utf8_encode, utf8_decode, base64_encode, base64_decode, hex_encode)
+
+def main():
+    let bytes be utf8_encode(&quot;Hi!&quot;)
+    print(bytes.length())
+    let encoded be base64_encode(bytes)
+    print(encoded)
+    print(hex_encode(bytes))
+
+    let back, err be base64_decode(encoded)
+    if not err?:
+        let text, text_err be utf8_decode(back)
+        if not text_err?:
+            print(text)</code></pre>
+<pre class="output"><code>3
+SGkh
+486921
+Hi!</code></pre>
+<p>Decoding is strict, so bad input is an error and not a guess:</p>
+<pre data-science><code>use encoding (hex_decode)
+
+def main():
+    let bytes, err be hex_decode(&quot;486&quot;)
+    if err?:
+        print(&quot;not valid hex&quot;)</code></pre>
+<pre class="output"><code>not valid hex</code></pre>
+<p><code>hex_decode</code> and <code>base64_decode</code> also have <code>hex_encode_upper</code> and <code>base64_url_encode</code> partners for the variants you meet on the web. <code>code_points(text)</code> lists the Unicode code points of a string, and <code>utf16_encode</code> and <code>utf16_decode</code> handle UTF-16.</p>
+<h2 id="the-string-module">The string module<a class="anchor" href="#the-string-module" aria-hidden="true">#</a></h2>
+<p>A <code>String</code> has the methods you saw in <a href="strings.html">Strings and formatting</a>. The <code>string</code> module adds more, as plain functions that take the string as their first argument:</p>
+<pre data-science><code>use string (to_upper, to_lower, title_case, pad_start, pad_end, center, repeat)
+
+def main():
+    print(to_upper(&quot;hello&quot;))
+    print(to_lower(&quot;ÉCOLE&quot;))
+    print(title_case(&quot;the science book&quot;))
+    print(pad_start(&quot;7&quot;, 3, &quot;0&quot;))
+    print(pad_end(&quot;ab&quot;, 5, &quot;.&quot;))
+    print(center(&quot;hi&quot;, 6, &quot;*&quot;))
+    print(repeat(&quot;ab&quot;, 3))</code></pre>
+<pre class="output"><code>HELLO
+école
+The Science Book
+007
+ab...
+**hi**
+ababab</code></pre>
+<p>Some are about the shape of text. <code>wrap</code> breaks text into lines of a given width, and <code>chars_count</code> counts characters where <code>length()</code> counts bytes:</p>
+<pre data-science><code>use string (wrap, chars_count, split_whitespace, levenshtein, equals_ignore_case)
+
+def main():
+    for line in wrap(&quot;the quick brown fox jumps over the lazy dog&quot;, 15):
+        print(line)
+    print(chars_count(&quot;héllo&quot;))
+    print(&quot;héllo&quot;.length())
+    print(split_whitespace(&quot;  a   b c &quot;).length())
+    print(levenshtein(&quot;kitten&quot;, &quot;sitting&quot;))
+    print(equals_ignore_case(&quot;Science&quot;, &quot;SCIENCE&quot;))</code></pre>
+<pre class="output"><code>the quick brown
+fox jumps over
+the lazy dog
+5
+6
+3
+3
+true</code></pre>
+<p><code>levenshtein</code> is the edit distance: how many single-letter changes turn one word into the other. It is useful for suggesting a correction when someone mistypes a name.</p>
+<aside class="callout-note"><p><strong>Note:</strong> Case changes cover Latin, Greek and Cyrillic letters one for one. <code>ß</code> stays as it is.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>use csv</code> reads and writes tables; check the error from <code>Table.parse</code> and from each column conversion.</li><li><code>use json</code> parses text into a <code>Json</code> value, reads it with <code>get</code>, <code>at</code> and <code>pointer</code>, and writes it with <code>stringify</code> or <code>pretty</code>.</li><li><code>use encoding</code> converts between bytes and base64, hex or UTF-8, and decoding reports bad input.</li><li><code>use string</code> adds case, padding, wrapping and distance functions that take the string as the first argument.</li></ul>
+<p>For the full list of what is available, see the <a href="std.html">tour of the standard library</a>.</p>
 <nav class="pager"><a class="prev" href="std-numeric.html"><span>Previous</span>Numbers and arrays</a><a class="next" href="ffi.html"><span>Next</span>Calling C</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#csv-tables">CSV: tables</a></li><li><a href="#json-nested-data">JSON: nested data</a></li><li><a href="#encoding-bytes-and-text">Encoding: bytes and text</a></li><li><a href="#the-string-module">The string module</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

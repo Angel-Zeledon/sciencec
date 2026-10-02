@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Variables &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A variable gives a name to a value, so you can use the value again later. This chapter covers how to create one, how to change one, and how long a name lasts.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,86 @@
 <main>
 <p class="crumb">The basics</p>
 <h1>Variables</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A variable gives a name to a value, so you can use the value again later. This chapter covers how to create one, how to change one, and how long a name lasts.</p>
+<h2 id="naming-a-value">Naming a value<a class="anchor" href="#naming-a-value" aria-hidden="true">#</a></h2>
+<p><code>let</code> creates a variable. The name comes first, then <code>be</code>, then the value:</p>
+<pre data-science><code>let language be &quot;Science&quot;
+let year be 2026
+print(language)
+print(year)</code></pre>
+<pre class="output"><code>Science
+2026</code></pre>
+<p>Read <code>let language be &quot;Science&quot;</code> as "let <code>language</code> be <code>&quot;Science&quot;</code>". There is no <code>=</code> in Science; <code>be</code> takes its place.</p>
+<p>You never write the type. The compiler works it out from the value: <code>&quot;Science&quot;</code> is a <code>String</code> and <code>2026</code> is an <code>Int</code>. The chapter on <a href="basic-types.html">numbers, text and truth</a> lists the types.</p>
+<h2 id="writing-the-type-yourself">Writing the type yourself<a class="anchor" href="#writing-the-type-yourself" aria-hidden="true">#</a></h2>
+<p>If you want the type on the page, put it after the name with a colon:</p>
+<pre data-science><code>let count: Int be 10
+let ratio: F64 be 0.75
+print(count)
+print(ratio)</code></pre>
+<pre class="output"><code>10
+0.75</code></pre>
+<p>This is useful when you want a different type from the one the compiler would pick. Without the annotation, <code>10</code> is an <code>Int</code>; with <code>let small: I8 be 10</code> it is a one-byte integer.</p>
+<h2 id="variables-do-not-change-by-default">Variables do not change by default<a class="anchor" href="#variables-do-not-change-by-default" aria-hidden="true">#</a></h2>
+<p>A variable made with <code>let</code> keeps its value. Trying to give it a new one is a mistake:</p>
+<pre data-science class="refused"><code>let score be 1
+score be 2</code></pre>
+<pre class="err"><code>error[SC0304]: `score` is not mutable
+  = note: declare it `let mutable score`</code></pre>
+<p>This is on purpose. When you read code and see a plain <code>let</code>, you know that name means the same thing everywhere below it.</p>
+<h2 id="variables-that-change">Variables that change<a class="anchor" href="#variables-that-change" aria-hidden="true">#</a></h2>
+<p>When a value really does need to change, say so with <code>mutable</code>:</p>
+<pre data-science><code>let mutable score be 1
+print(score)
+score be 2
+print(score)
+score be score + 10
+print(score)</code></pre>
+<pre class="output"><code>1
+2
+12</code></pre>
+<p>The first line creates the variable. After that, <code>score be 2</code> gives it a new value. It is the same word, <code>be</code>, because it means the same thing: "this name now means this value". Only the first use has <code>let</code>, because only the first use creates the name.</p>
+<p>A changed value must still have the same type. A <code>String</code> variable cannot suddenly hold a number.</p>
+<h2 id="names-that-start-fresh">Names that start fresh<a class="anchor" href="#names-that-start-fresh" aria-hidden="true">#</a></h2>
+<p>You can use <code>let</code> again with a name you already have. This makes a <em>new</em> variable that hides the old one:</p>
+<pre data-science><code>let value be &quot;42&quot;
+let value be 42
+print(value + 1)</code></pre>
+<pre class="output"><code>43</code></pre>
+<p>The first <code>value</code> is a <code>String</code> and the second is an <code>Int</code>. This is called <strong>shadowing</strong>. It is handy when you convert a value and have no more use for the old form. Unlike <code>mutable</code>, shadowing can change the type.</p>
+<h2 id="where-a-name-lives">Where a name lives<a class="anchor" href="#where-a-name-lives" aria-hidden="true">#</a></h2>
+<p>A variable exists from its <code>let</code> to the end of the block it is in. A block is an indented body: the inside of an <code>if</code>, a loop or a function.</p>
+<pre data-science><code>let level be 1
+if true:
+    let level be 2
+    print(level)
+print(level)</code></pre>
+<pre class="output"><code>2
+1</code></pre>
+<p>Inside the <code>if</code> the new <code>level</code> shadows the outer one. When the block ends, the new <code>level</code> is gone and the outer one is visible again.</p>
+<p>A name created inside a block cannot be used after it:</p>
+<pre data-science class="refused"><code>if true:
+    let inner be 5
+print(inner)</code></pre>
+<pre class="err"><code>error[SC0200]: cannot find `inner` in this scope</code></pre>
+<h2 id="constants">Constants<a class="anchor" href="#constants" aria-hidden="true">#</a></h2>
+<p>A value that never changes and is known before the program runs can be a <code>const</code>. It sits at the top of a file, outside any function:</p>
+<pre data-science><code>const SPEED_OF_LIGHT be 299_792_458
+
+def main():
+    print(SPEED_OF_LIGHT)</code></pre>
+<pre class="output"><code>299792458</code></pre>
+<p>By convention constant names are written in capitals. Underscores inside a number, like <code>299_792_458</code>, are ignored; they are there for your eyes.</p>
+<h2 id="choosing-names">Choosing names<a class="anchor" href="#choosing-names" aria-hidden="true">#</a></h2>
+<p>Names are written in <code>snake_case</code>: lowercase words joined by underscores, as in <code>max_speed</code>. A few words are taken by the language itself, such as <code>type</code>, <code>loop</code> and <code>model</code>; if you pick one, the compiler tells you. The full list is in <a href="keywords.html">Keywords and reserved words</a>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>let name be value</code> creates a variable; the type is inferred.</li><li><code>let name: Type be value</code> writes the type out.</li><li>A plain <code>let</code> cannot be changed. <code>let mutable</code> can, and you change it with <code>name be new_value</code>.</li><li>A second <code>let</code> with the same name shadows the first and may change the type.</li><li>A variable lasts until the end of its block.</li><li><code>const NAME be value</code> at the top of a file defines a constant.</li></ul>
+<p>Next: <a href="basic-types.html">numbers, text and truth</a>.</p>
 <nav class="pager"><a class="prev" href="first-project.html"><span>Previous</span>Your first project</a><a class="next" href="basic-types.html"><span>Next</span>Numbers, text and truth</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#naming-a-value">Naming a value</a></li><li><a href="#writing-the-type-yourself">Writing the type yourself</a></li><li><a href="#variables-do-not-change-by-default">Variables do not change by default</a></li><li><a href="#variables-that-change">Variables that change</a></li><li><a href="#names-that-start-fresh">Names that start fresh</a></li><li><a href="#where-a-name-lives">Where a name lives</a></li><li><a href="#constants">Constants</a></li><li><a href="#choosing-names">Choosing names</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

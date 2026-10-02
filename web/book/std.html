@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>A tour of the standard library &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Science comes with a library. Some of it is always there; the rest you ask for by name. This chapter shows the difference and lists everything on offer.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,61 @@
 <main>
 <p class="crumb">The library</p>
 <h1>A tour of the standard library</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Science comes with a library. Some of it is always there; the rest you ask for by name. This chapter shows the difference and lists everything on offer.</p>
+<h2 id="the-prelude-always-there">The prelude: always there<a class="anchor" href="#the-prelude-always-there" aria-hidden="true">#</a></h2>
+<p>You have been using the prelude since the first page. These need no <code>use</code>:</p>
+<ul><li>Types: <code>String</code>, <code>Array</code>, <code>Map</code>, <code>Set</code>, <code>Box</code> and <code>Range</code>.</li><li>Interfaces: <code>Eq</code>, <code>Ord</code>, <code>Copy</code>, <code>Clone</code>, <code>Drop</code>, <code>Iterate</code>, <code>From</code>, <code>Display</code>, <code>Error</code>, and the operator interfaces such as <code>Add</code> and <code>Mul</code>.</li><li>Functions: <code>print</code>, <code>write</code>, <code>print_error</code>, <code>write_error</code>, <code>flush</code>, <code>panic</code>, <code>read_file</code> and <code>write_file</code>.</li><li>Math methods on numbers, like <code>x.sqrt()</code>.</li></ul>
+<pre data-science><code>def main():
+    let words be [&quot;one&quot;, &quot;two&quot;]
+    print(words.length())
+    print(2.0.sqrt())</code></pre>
+<pre class="output"><code>2
+1.4142135623730951</code></pre>
+<h2 id="modules-ask-with-use">Modules: ask with <code>use</code><a class="anchor" href="#modules-ask-with-use" aria-hidden="true">#</a></h2>
+<p>Everything else lives in a module. A <code>use</code> line at the top of a file names the module and the things you want from it:</p>
+<pre data-science><code>use complex (Complex)
+use path (Path)
+
+def main():
+    print(Complex.new(3.0, 4.0).modulus())
+    print(Path.from(&quot;results&quot;).join(&quot;run.csv&quot;).text())</code></pre>
+<pre class="output"><code>5.0
+results/run.csv</code></pre>
+<p>A module is ordinary Science code that ships with the compiler. Using one adds nothing to your program except the parts you name.</p>
+<aside class="callout-note"><p><strong>Note:</strong> If your project has a file with the same name as a bundled module, such as <code>io.science</code>, your file is used instead.</p></aside>
+<h2 id="every-bundled-module">Every bundled module<a class="anchor" href="#every-bundled-module" aria-hidden="true">#</a></h2>
+<div class="scroller"><table><thead><tr><th>Module</th><th>What it is for</th><th>Chapter</th></tr></thead><tbody><tr><td><code>io</code></td><td>Files, buffered reading and writing, standard input</td><td><a href="std-io.html">Files and the system</a></td></tr><tr><td><code>fs</code></td><td>Creating, listing, renaming and removing files and directories</td><td><a href="std-io.html">Files and the system</a></td></tr><tr><td><code>path</code></td><td><code>Path</code>: taking file locations apart and joining them</td><td><a href="std-io.html">Files and the system</a></td></tr><tr><td><code>os</code></td><td>Command-line arguments and environment variables</td><td><a href="std-io.html">Files and the system</a></td></tr><tr><td><code>time</code></td><td><code>Duration</code>, <code>Monotonic</code>, <code>Instant</code>, <code>now</code>, <code>sleep</code>, RFC 3339 text</td><td><a href="std-io.html">Files and the system</a></td></tr><tr><td><code>complex</code></td><td><code>Complex</code> numbers</td><td><a href="std-numeric.html">Numbers and arrays</a></td></tr><tr><td><code>random</code></td><td>Reproducible <code>Key</code>s and quick <code>Stream</code>s</td><td><a href="std-numeric.html">Numbers and arrays</a></td></tr><tr><td><code>stats</code></td><td>Mean, variance, median, quantiles, correlation</td><td><a href="std-numeric.html">Numbers and arrays</a></td></tr><tr><td><code>ndarray</code></td><td><code>NdArray</code>: grids of numbers</td><td><a href="std-numeric.html">Numbers and arrays</a></td></tr><tr><td><code>linalg</code></td><td>Solving, inverting and decomposing matrices</td><td><a href="std-numeric.html">Numbers and arrays</a></td></tr><tr><td><code>csv</code></td><td>Reading and writing tables</td><td><a href="std-formats.html">Data formats</a></td></tr><tr><td><code>json</code></td><td>Parsing, reading and writing JSON</td><td><a href="std-formats.html">Data formats</a></td></tr><tr><td><code>encoding</code></td><td>Base64, hex, UTF-8 and UTF-16</td><td><a href="std-formats.html">Data formats</a></td></tr><tr><td><code>string</code></td><td>Case, padding, wrapping and edit distance</td><td><a href="std-formats.html">Data formats</a></td></tr><tr><td><code>collections</code></td><td><code>Deque</code>: a queue open at both ends</td><td>below</td></tr></tbody></table></div>
+<h2 id="a-queue-open-at-both-ends">A queue open at both ends<a class="anchor" href="#a-queue-open-at-both-ends" aria-hidden="true">#</a></h2>
+<p><code>collections</code> is the one module without a chapter of its own. A <code>Deque</code> adds and removes items at either end quickly:</p>
+<pre data-science><code>use collections (Deque)
+
+def main():
+    let mutable queue be Deque[Int].new()
+    queue.push_back(2)
+    queue.push_back(3)
+    queue.push_front(1)
+    print(queue.length())
+    let first be queue.pop_front()
+    if first?:
+        print(first)
+    let last be queue.pop_back()
+    if last?:
+        print(last)
+    print(queue.length())</code></pre>
+<pre class="output"><code>3
+1
+3
+1</code></pre>
+<p><code>pop_front</code> and <code>pop_back</code> give a value that may be missing, since the queue could be empty. <code>first</code>, <code>last</code> and <code>get(index)</code> look without removing.</p>
+<h2 id="reading-a-module-s-own-notes">Reading a module's own notes<a class="anchor" href="#reading-a-module-s-own-notes" aria-hidden="true">#</a></h2>
+<p>Each module begins with a comment that says what it decided and what it leaves out. If you want to know exactly how a function behaves, that comment is the place to look.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>The prelude needs no <code>use</code>: strings, arrays, maps, printing, simple file reading and number methods.</li><li>Everything else is a module: <code>use name (Thing, other_thing)</code>.</li><li>Files and the system are in <a href="std-io.html">Files and the system</a>, numbers in <a href="std-numeric.html">Numbers and arrays</a>, text formats in <a href="std-formats.html">Data formats</a>.</li></ul>
 <nav class="pager"><a class="prev" href="testing.html"><span>Previous</span>Testing</a><a class="next" href="std-io.html"><span>Next</span>Files and the system</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#the-prelude-always-there">The prelude: always there</a></li><li><a href="#modules-ask-with-use">Modules: ask with <code>use</code></a></li><li><a href="#every-bundled-module">Every bundled module</a></li><li><a href="#a-queue-open-at-both-ends">A queue open at both ends</a></li><li><a href="#reading-a-module-s-own-notes">Reading a module's own notes</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

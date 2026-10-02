@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Strings and formatting &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Programs spend a lot of time building, searching and printing text. This chapter covers formatted strings first, since you will use them constantly, and then the methods that work on a String.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,150 @@
 <main>
 <p class="crumb">The basics</p>
 <h1>Strings and formatting</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Programs spend a lot of time building, searching and printing text. This chapter covers formatted strings first, since you will use them constantly, and then the methods that work on a <code>String</code>.</p>
+<h2 id="putting-values-into-text">Putting values into text<a class="anchor" href="#putting-values-into-text" aria-hidden="true">#</a></h2>
+<p>A string with an <code>f</code> in front is a <strong>formatted string</strong>. Anything inside <code>{…}</code> is evaluated and written into the text:</p>
+<pre data-science><code>let name be &quot;Ada&quot;
+let year be 1815
+print(f&quot;{name} was born in {year}&quot;)
+print(f&quot;next year: {year + 1}&quot;)</code></pre>
+<pre class="output"><code>Ada was born in 1815
+next year: 1816</code></pre>
+<p>Any expression works inside the braces, including calls like <code>{name.length()}</code>. To print a brace itself, double it:</p>
+<pre data-science><code>print(f&quot;a set is written {{1, 2, 3}}&quot;)</code></pre>
+<pre class="output"><code>a set is written {1, 2, 3}</code></pre>
+<h2 id="controlling-the-layout">Controlling the layout<a class="anchor" href="#controlling-the-layout" aria-hidden="true">#</a></h2>
+<p>After the expression, a colon and a <strong>format spec</strong> say how to show it. The most common one is the number of decimal places:</p>
+<pre data-science><code>let pi be 3.14159265
+print(f&quot;{pi}&quot;)
+print(f&quot;{pi:.2f}&quot;)
+print(f&quot;{pi:.4f}&quot;)</code></pre>
+<pre class="output"><code>3.14159265
+3.14
+3.1416</code></pre>
+<p><code>.2f</code> means "two digits after the point". The number is rounded, not cut off.</p>
+<p>A number after the colon is a minimum <strong>width</strong>. <code>&gt;</code> aligns to the right, <code>&lt;</code> to the left and <code>^</code> to the center:</p>
+<pre data-science><code>let n be 42
+print(f&quot;[{n:&gt;6}]&quot;)
+print(f&quot;[{n:&lt;6}]&quot;)
+print(f&quot;[{n:^6}]&quot;)</code></pre>
+<pre class="output"><code>[    42]
+[42    ]
+[  42  ]</code></pre>
+<p>Put a character in front of the alignment to use it as the padding, or a <code>0</code> to pad numbers with zeros:</p>
+<pre data-science><code>let n be 42
+print(f&quot;[{n:*&gt;6}]&quot;)
+print(f&quot;[{n:06}]&quot;)
+print(f&quot;[{&quot;hi&quot;:-^8}]&quot;)</code></pre>
+<pre class="output"><code>[****42]
+[000042]
+[---hi---]</code></pre>
+<p>Alignment works for text as well, which is how you make a table:</p>
+<pre data-science><code>let names be [&quot;Ada&quot;, &quot;Grace&quot;, &quot;Alan&quot;]
+let scores be [95.5, 88.25, 91.0]
+
+for i in 0..3:
+    let name be names.get(i)
+    let score be scores.get(i)
+    if name? and score?:
+        print(f&quot;{name:&lt;8}{score:&gt;8.2f}&quot;)</code></pre>
+<pre class="output"><code>Ada        95.50
+Grace      88.25
+Alan       91.00</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> <code>Array.get</code> returns a missing value when the index is out of range, which is why the example checks both with <code>?</code> first. <a href="errors.html">Missing values and errors</a> explains it.</p></aside>
+<p>A few more specs: <code>,</code> adds thousands separators, <code>x</code> and <code>b</code> show an integer in hexadecimal and binary, and <code>e</code> uses scientific notation.</p>
+<pre data-science><code>print(f&quot;{1234567:,}&quot;)
+print(f&quot;{255:x}&quot;)
+print(f&quot;{10:b}&quot;)
+print(f&quot;{12345.678:e}&quot;)</code></pre>
+<pre class="output"><code>1,234,567
+ff
+1010
+1.234568e+04</code></pre>
+<h2 id="length-and-emptiness">Length and emptiness<a class="anchor" href="#length-and-emptiness" aria-hidden="true">#</a></h2>
+<p><code>.length()</code> is the size of a string in <strong>bytes</strong>, and <code>.is_empty()</code> tells you whether there is anything in it:</p>
+<pre data-science><code>let word be &quot;hello&quot;
+print(word.length())
+print(word.is_empty())
+print(&quot;&quot;.is_empty())</code></pre>
+<pre class="output"><code>5
+false
+true</code></pre>
+<p>For plain English letters a byte is a letter. A letter such as <code>é</code> takes two bytes, so <code>&quot;héy&quot;.length()</code> is <code>4</code>.</p>
+<h2 id="searching">Searching<a class="anchor" href="#searching" aria-hidden="true">#</a></h2>
+<p><code>contains</code>, <code>starts_with</code> and <code>ends_with</code> answer yes or no:</p>
+<pre data-science><code>let file be &quot;report-2026.csv&quot;
+print(file.contains(&quot;2026&quot;))
+print(file.starts_with(&quot;report&quot;))
+print(file.ends_with(&quot;.txt&quot;))</code></pre>
+<pre class="output"><code>true
+true
+false</code></pre>
+<p><code>find</code> says where something starts. The answer might not exist, so it comes back as a value you test with <code>?</code>:</p>
+<pre data-science><code>let file be &quot;report-2026.csv&quot;
+let dot be file.find(&quot;.&quot;)
+if dot?:
+    print(f&quot;the dot is at byte {dot}&quot;)</code></pre>
+<pre class="output"><code>the dot is at byte 11</code></pre>
+<h2 id="changing-text">Changing text<a class="anchor" href="#changing-text" aria-hidden="true">#</a></h2>
+<p>Strings are not modified by these methods; each returns a new string. <code>trim</code> removes spaces and line breaks at both ends, and <code>replace</code> swaps one piece of text for another:</p>
+<pre data-science><code>let raw be &quot;   padded   &quot;
+print(f&quot;[{raw.trim()}]&quot;)
+print(&quot;a-b-c&quot;.replace(&quot;-&quot;, &quot;+&quot;))</code></pre>
+<pre class="output"><code>[padded]
+a+b+c</code></pre>
+<p>To build a string up in place, make it <code>mutable</code> and add to it with <code>push_str</code>:</p>
+<pre data-science><code>let mutable text be &quot;Hello&quot;
+text.push_str(&quot;, &quot;)
+text.push_str(&quot;world&quot;)
+print(text)</code></pre>
+<pre class="output"><code>Hello, world</code></pre>
+<p>You can also join two strings with <code>+</code>: <code>&quot;ab&quot; + &quot;cd&quot;</code> is <code>&quot;abcd&quot;</code>.</p>
+<h2 id="splitting-into-pieces">Splitting into pieces<a class="anchor" href="#splitting-into-pieces" aria-hidden="true">#</a></h2>
+<p><code>split</code> cuts a string at every separator. Walk through the pieces with <code>for</code>:</p>
+<pre data-science><code>let line be &quot;red,green,blue&quot;
+for color in line.split(&quot;,&quot;):
+    print(color)</code></pre>
+<pre class="output"><code>red
+green
+blue</code></pre>
+<p><code>lines</code> does the same for line breaks, which is handy for text that came from a file:</p>
+<pre data-science><code>let poem be &quot;one\ntwo\nthree&quot;
+for line in poem.lines():
+    print(line)</code></pre>
+<pre class="output"><code>one
+two
+three</code></pre>
+<p><code>\n</code> inside a string is a line break, and <code>\t</code> is a tab.</p>
+<h2 id="going-character-by-character">Going character by character<a class="anchor" href="#going-character-by-character" aria-hidden="true">#</a></h2>
+<p><code>chars</code> walks through the characters. Unlike <code>length</code>, it counts letters:</p>
+<pre data-science><code>let mutable vowels be 0
+for c in &quot;education&quot;.chars():
+    if c is &#x27;a&#x27; or c is &#x27;e&#x27; or c is &#x27;i&#x27; or c is &#x27;o&#x27; or c is &#x27;u&#x27;:
+        vowels be vowels + 1
+print(vowels)</code></pre>
+<pre class="output"><code>5</code></pre>
+<h2 id="turning-text-into-numbers">Turning text into numbers<a class="anchor" href="#turning-text-into-numbers" aria-hidden="true">#</a></h2>
+<p>Text such as <code>&quot;42&quot;</code> is not a number until you convert it. <code>parse_int</code> and <code>parse_float</code> do that. Because the text might not be a number at all, each returns the result together with an error, which you check with <code>?</code>:</p>
+<pre data-science><code>let value, err be &quot;42&quot;.parse_int()
+if err?:
+    print(&quot;not a number&quot;)
+else:
+    print(value + 1)
+
+let _bad, err2 be &quot;forty&quot;.parse_int()
+print(err2?)</code></pre>
+<pre class="output"><code>43
+true</code></pre>
+<p><code>err?</code> is <code>true</code> when something went wrong. A name that starts with <code>_</code>, like <code>_bad</code>, says you are deliberately ignoring that value. <a href="errors.html">Missing values and errors</a> explains this pattern in full.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>f&quot;…{expr}…&quot;</code> puts values into text; <code>{{</code> and <code>}}</code> write literal braces.</li><li><code>{x:.2f}</code> fixes the decimals; <code>{x:&gt;8}</code>, <code>{x:&lt;8}</code> and <code>{x:^8}</code> align; <code>{x:08}</code> pads with zeros; <code>{x:,}</code> adds separators.</li><li><code>length</code>, <code>is_empty</code>, <code>contains</code>, <code>starts_with</code>, <code>ends_with</code> and <code>find</code> inspect a string.</li><li><code>trim</code> and <code>replace</code> return new strings; <code>push_str</code> appends to a <code>mutable</code> one.</li><li><code>split</code>, <code>lines</code> and <code>chars</code> give you the pieces to loop over.</li><li><code>parse_int</code> and <code>parse_float</code> convert text to numbers and report failure.</li></ul>
+<p>Next: <a href="types.html">Types</a>, where you define your own.</p>
 <nav class="pager"><a class="prev" href="control-flow.html"><span>Previous</span>Control flow</a><a class="next" href="types.html"><span>Next</span>Types</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#putting-values-into-text">Putting values into text</a></li><li><a href="#controlling-the-layout">Controlling the layout</a></li><li><a href="#length-and-emptiness">Length and emptiness</a></li><li><a href="#searching">Searching</a></li><li><a href="#changing-text">Changing text</a></li><li><a href="#splitting-into-pieces">Splitting into pieces</a></li><li><a href="#going-character-by-character">Going character by character</a></li><li><a href="#turning-text-into-numbers">Turning text into numbers</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

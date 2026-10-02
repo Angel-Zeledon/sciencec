@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Packages &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A package is a folder with a science.toml file. It is the unit you build, test and share. Your first project created one; this chapter explains the parts.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,82 @@
 <main>
 <p class="crumb">Growing a program</p>
 <h1>Packages</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A <strong>package</strong> is a folder with a <code>science.toml</code> file. It is the unit you build, test and share. <a href="first-project.html">Your first project</a> created one; this chapter explains the parts.</p>
+<h2 id="the-layout">The layout<a class="anchor" href="#the-layout" aria-hidden="true">#</a></h2>
+<pre class="shell"><code>sciencec new stats</code></pre>
+<pre><code>stats/
+  science.toml        the package&#x27;s description
+  science.lock        written by sciencec; do not edit
+  src/
+    main.science      the entry point
+    greeting.science  another module
+  tests/
+    greeting.science  one program per test
+  target/             build output</code></pre>
+<p>(<code>science.lock</code> and <code>target/</code> appear after the first build.) Everything you write for the program itself goes under <code>src/</code>. Every file there is a <a href="modules.html">module</a>, and <code>main.science</code> is where the program starts.</p>
+<h2 id="science-toml">science.toml<a class="anchor" href="#science-toml" aria-hidden="true">#</a></h2>
+<pre><code>[package]
+name     = &quot;stats&quot;
+version  = &quot;0.1.0&quot;
+language = &quot;0.1&quot;
+
+[dependencies]</code></pre>
+<p><code>name</code> is also the name other code uses to refer to the package. <code>version</code> is yours to choose. <code>language</code> is the version of Science the package is written for.</p>
+<h2 id="commands">Commands<a class="anchor" href="#commands" aria-hidden="true">#</a></h2>
+<p>Run these inside the package folder. None of them takes a file name:</p>
+<div class="scroller"><table><thead><tr><th>Command</th><th>What it does</th></tr></thead><tbody><tr><td><code>sciencec check</code></td><td>Finds errors without building</td></tr><tr><td><code>sciencec build</code></td><td>Builds the program into <code>target/</code></td></tr><tr><td><code>sciencec run</code></td><td>Builds, then runs it</td></tr><tr><td><code>sciencec test</code></td><td>Builds and runs each file in <code>tests/</code></td></tr></tbody></table></div>
+<p>Arguments for your program go after <code>--</code>:</p>
+<pre class="shell"><code>sciencec run -- first &quot;two words&quot;</code></pre>
+<p>Inside the program, <code>args()</code> from the bundled <code>os</code> module returns them.</p>
+<h2 id="using-your-own-modules">Using your own modules<a class="anchor" href="#using-your-own-modules" aria-hidden="true">#</a></h2>
+<p>Inside a package, a module's path starts with the package name. If <code>src/greeting.science</code> has a <code>public def greeting()</code>, any file in the package reads it with:</p>
+<pre data-science><code>use stats.greeting (greeting)</code></pre>
+<p>This differs from a single-file program, where a path starts at the directory. In a package it always starts at the package name.</p>
+<h2 id="depending-on-another-package">Depending on another package<a class="anchor" href="#depending-on-another-package" aria-hidden="true">#</a></h2>
+<p>To use code from a second package, list it under <code>[dependencies]</code> with the folder it lives in. Suppose <code>mathx</code> sits beside <code>stats</code>:</p>
+<pre><code>mathx/
+  science.toml
+  src/
+    mod.science
+    stats.science
+stats/
+  science.toml
+  src/
+    main.science</code></pre>
+<p><code>mathx/src/mod.science</code> is the package's own top-level module:</p>
+<pre data-science><code>public def double(n: Int) -&gt; Int:
+    n * 2</code></pre>
+<p>and <code>mathx/src/stats.science</code> is a second module in it:</p>
+<pre data-science><code>public def mean(values: &amp;Array[F64]) -&gt; F64:
+    let mutable total be 0.0
+    for v in values:
+        total be total + v
+    total / values.length() as F64</code></pre>
+<p>Tell <code>stats</code> where to find it:</p>
+<pre><code>[dependencies]
+mathx = { path = &quot;../mathx&quot; }</code></pre>
+<p>Now <code>stats</code> can use the package by name. <code>mod.science</code> is reached by the bare package name, and the other files by <code>package.module</code>:</p>
+<pre data-science><code>use mathx (double)
+use mathx.stats (mean)
+
+def main():
+    print(double(21))
+    print(mean([1.0, 2.0, 6.0]))</code></pre>
+<pre class="shell"><code>sciencec run</code></pre>
+<pre class="output"><code>42
+3.0</code></pre>
+<p>A dependency's non-<code>public</code> items stay private, exactly as between modules.</p>
+<aside class="callout-note"><p><strong>Note:</strong> Dependencies are found by <code>path</code> only. Downloading packages by version is not available yet.</p></aside>
+<h2 id="the-lock-file">The lock file<a class="anchor" href="#the-lock-file" aria-hidden="true">#</a></h2>
+<p>The first build writes <code>science.lock</code>, a record of the packages that went into the build. Commit it with your code, and leave editing to <code>sciencec</code>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>A package is a folder with <code>science.toml</code>, code in <code>src/</code>, and tests in <code>tests/</code>.</li><li><code>sciencec new</code>, <code>check</code>, <code>build</code>, <code>run</code> and <code>test</code> are the everyday commands.</li><li>Inside a package, <code>use</code> paths start with the package name.</li><li><code>[dependencies]</code> lists other packages as <code>name = { path = &quot;../folder&quot; }</code>.</li></ul>
+<p>Next: <a href="testing.html">Testing</a>.</p>
 <nav class="pager"><a class="prev" href="modules.html"><span>Previous</span>Modules</a><a class="next" href="testing.html"><span>Next</span>Testing</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#the-layout">The layout</a></li><li><a href="#science-toml">science.toml</a></li><li><a href="#commands">Commands</a></li><li><a href="#using-your-own-modules">Using your own modules</a></li><li><a href="#depending-on-another-package">Depending on another package</a></li><li><a href="#the-lock-file">The lock file</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

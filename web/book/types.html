@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Types &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A type groups several values under one name. Use it whenever a few numbers or strings belong together, such as a measurement, a sample or a point.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,161 @@
 <main>
 <p class="crumb">Structuring data</p>
 <h1>Types</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A type groups several values under one name. Use it whenever a few numbers or strings belong together, such as a measurement, a sample or a point.</p>
+<h2 id="declaring-a-type">Declaring a type<a class="anchor" href="#declaring-a-type" aria-hidden="true">#</a></h2>
+<p>A <code>type</code> lists its <strong>fields</strong>, one per line, each with a name and a type:</p>
+<pre data-science><code>type Reading:
+    channel: Int
+    counts: Int</code></pre>
+<p>This declares a new type called <code>Reading</code> with two fields. Nothing is created yet; you have only described what a <code>Reading</code> looks like.</p>
+<h2 id="creating-a-value">Creating a value<a class="anchor" href="#creating-a-value" aria-hidden="true">#</a></h2>
+<p>To make a <code>Reading</code>, write its name and give every field a value by name:</p>
+<pre data-science><code>type Reading:
+    channel: Int
+    counts: Int
+
+def main():
+    let r be Reading(channel: 1, counts: 4900)
+    print(r.channel)
+    print(r.counts)</code></pre>
+<pre class="output"><code>1
+4900</code></pre>
+<p>The names are required, so a call never leaves you guessing which number is which. They can come in any order:</p>
+<pre data-science><code>type Reading:
+    channel: Int
+    counts: Int
+
+def main():
+    let r be Reading(counts: 120, channel: 2)
+    print(f&quot;channel {r.channel} saw {r.counts} counts&quot;)</code></pre>
+<pre class="output"><code>channel 2 saw 120 counts</code></pre>
+<p>A field name that the type does not have is an error, so a typo is caught before the program runs.</p>
+<h2 id="reading-and-changing-fields">Reading and changing fields<a class="anchor" href="#reading-and-changing-fields" aria-hidden="true">#</a></h2>
+<p><code>value.field</code> reads a field. To change one, the value has to be declared <code>let mutable</code>, and you assign with <code>be</code> like any other name:</p>
+<pre data-science><code>type Reading:
+    channel: Int
+    counts: Int
+
+def main():
+    let mutable r be Reading(channel: 1, counts: 0)
+    r.counts be r.counts + 5
+    r.counts be r.counts + 5
+    print(r.counts)</code></pre>
+<pre class="output"><code>10</code></pre>
+<p>A value that is not <code>mutable</code> cannot be changed:</p>
+<pre data-science class="refused"><code>type Reading:
+    channel: Int
+    counts: Int
+
+def main():
+    let r be Reading(channel: 1, counts: 0)
+    r.counts be 5
+    print(r.counts)</code></pre>
+<p>The compiler says <code>r</code> is not mutable and suggests <code>let mutable r</code>.</p>
+<h2 id="types-inside-types">Types inside types<a class="anchor" href="#types-inside-types" aria-hidden="true">#</a></h2>
+<p>A field can have any type, including another type you wrote:</p>
+<pre data-science><code>type Point:
+    x: F64
+    y: F64
+
+type Segment:
+    start: Point
+    end: Point
+
+def main():
+    let s be Segment(start: Point(x: 0.0, y: 0.0), end: Point(x: 3.0, y: 4.0))
+    print(s.end.x)
+    print(s.end.y)</code></pre>
+<pre class="output"><code>3.0
+4.0</code></pre>
+<p>Read the dots left to right: the <code>end</code> of <code>s</code>, then its <code>x</code>.</p>
+<h2 id="methods">Methods<a class="anchor" href="#methods" aria-hidden="true">#</a></h2>
+<p>A function that belongs to a type is a <strong>method</strong>. Write them in a block that starts with the type's name and <code>has:</code>:</p>
+<pre data-science><code>type Point:
+    x: F64
+    y: F64
+
+Point has:
+    def norm_squared(self) -&gt; F64:
+        self.x * self.x + self.y * self.y
+
+def main():
+    let p be Point(x: 3.0, y: 4.0)
+    print(p.norm_squared())</code></pre>
+<pre class="output"><code>25.0</code></pre>
+<p>The first parameter, <code>self</code>, is the value the method was called on. You do not pass it when you call: <code>p.norm_squared()</code> hands <code>p</code> to the method as <code>self</code>. Inside the method you reach the fields through <code>self</code>.</p>
+<p>Methods take ordinary parameters after <code>self</code>:</p>
+<pre data-science><code>type Point:
+    x: F64
+    y: F64
+
+Point has:
+    def distance(self, other: &amp;Point) -&gt; F64:
+        let dx be self.x - other.x
+        let dy be self.y - other.y
+        (dx * dx + dy * dy).sqrt()
+
+def main():
+    let a be Point(x: 0.0, y: 0.0)
+    let b be Point(x: 3.0, y: 4.0)
+    print(a.distance(b))</code></pre>
+<pre class="output"><code>5.0</code></pre>
+<p>The <code>&amp;</code> in <code>other: &amp;Point</code> means the method only looks at <code>other</code> and does not take it. <a href="ownership.html">Ownership and borrowing</a> explains that properly; for now, it is enough to know that you write plain <code>b</code> at the call.</p>
+<h2 id="methods-that-change-the-value">Methods that change the value<a class="anchor" href="#methods-that-change-the-value" aria-hidden="true">#</a></h2>
+<p>A method that modifies its value says <code>mutable self</code>, and can then only be called on a <code>let mutable</code> value:</p>
+<pre data-science><code>type Counter:
+    total: Int
+
+Counter has:
+    def add(mutable self, n: Int):
+        self.total be self.total + n
+
+def main():
+    let mutable c be Counter(total: 0)
+    c.add(3)
+    c.add(4)
+    print(c.total)</code></pre>
+<pre class="output"><code>7</code></pre>
+<p>A plain <code>self</code> reads; <code>mutable self</code> writes. The method has no <code>-&gt; Type</code> because it returns nothing.</p>
+<h2 id="associated-functions">Associated functions<a class="anchor" href="#associated-functions" aria-hidden="true">#</a></h2>
+<p>A function in a <code>has:</code> block with no <code>self</code> is called on the type itself, not on a value. The usual one is <code>new</code>, which builds a value with a sensible starting state:</p>
+<pre data-science><code>type Counter:
+    total: Int
+
+Counter has:
+    def new() -&gt; Counter:
+        Counter(total: 0)
+
+    def add(mutable self, n: Int):
+        self.total be self.total + n
+
+def main():
+    let mutable c be Counter.new()
+    c.add(10)
+    print(c.total)</code></pre>
+<pre class="output"><code>10</code></pre>
+<p><code>new</code> is only a name that everyone uses; the language gives it no special meaning. You can have any number of such functions, for example <code>Counter.starting_at(5)</code>.</p>
+<h2 id="types-with-parameters">Types with parameters<a class="anchor" href="#types-with-parameters" aria-hidden="true">#</a></h2>
+<p>A type can leave one of its field types open, to be chosen each time it is used. The open part goes in square brackets:</p>
+<pre data-science><code>type Pair[A, B]:
+    first: A
+    second: B
+
+def main():
+    let p be Pair(first: 1, second: &quot;one&quot;)
+    print(p.first)
+    print(p.second)</code></pre>
+<pre class="output"><code>1
+one</code></pre>
+<p>Here <code>A</code> became <code>Int</code> and <code>B</code> became <code>String</code>, worked out from the values you gave. You can also say it yourself: <code>Pair[Int, Int](first: 1, second: 2)</code>. <a href="generics.html">Generics</a> goes further.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>type Name:</code> followed by indented <code>field: Type</code> lines declares a type.</li><li>Build a value with <code>Name(field: value, ...)</code>: fields by name, in any order.</li><li><code>value.field</code> reads a field; assigning to one needs <code>let mutable</code>.</li><li><code>Name has:</code> holds methods. <code>self</code> reads the value, <code>mutable self</code> changes it.</li><li>A function without <code>self</code> is called on the type: <code>Counter.new()</code>.</li><li><code>Pair[A, B]</code> declares a type with open parts.</li></ul>
+<p>Next: types whose value is one of several shapes, in <a href="choices.html">Choices and match</a>.</p>
 <nav class="pager"><a class="prev" href="strings.html"><span>Previous</span>Strings and formatting</a><a class="next" href="choices.html"><span>Next</span>Choices and match</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#declaring-a-type">Declaring a type</a></li><li><a href="#creating-a-value">Creating a value</a></li><li><a href="#reading-and-changing-fields">Reading and changing fields</a></li><li><a href="#types-inside-types">Types inside types</a></li><li><a href="#methods">Methods</a></li><li><a href="#methods-that-change-the-value">Methods that change the value</a></li><li><a href="#associated-functions">Associated functions</a></li><li><a href="#types-with-parameters">Types with parameters</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

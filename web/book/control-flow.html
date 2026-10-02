@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Control flow &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="So far every line of a program has run once, in order. Control flow lets a program choose between lines, or repeat them.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,133 @@
 <main>
 <p class="crumb">The basics</p>
 <h1>Control flow</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>So far every line of a program has run once, in order. Control flow lets a program choose between lines, or repeat them.</p>
+<h2 id="making-a-choice-with-if">Making a choice with <code>if</code><a class="anchor" href="#making-a-choice-with-if" aria-hidden="true">#</a></h2>
+<p><code>if</code> runs its body only when the condition is <code>true</code>:</p>
+<pre data-science><code>let temperature be 31
+
+if temperature &gt; 30:
+    print(&quot;hot&quot;)</code></pre>
+<pre class="output"><code>hot</code></pre>
+<p>The condition ends with a colon, and the body is indented underneath it. There are no parentheses around the condition and no braces around the body.</p>
+<h2 id="else-and-else-if"><code>else</code> and <code>else if</code><a class="anchor" href="#else-and-else-if" aria-hidden="true">#</a></h2>
+<p>Add <code>else</code> for the other case, and <code>else if</code> for more conditions. The first one that is true wins:</p>
+<pre data-science><code>let temperature be 18
+
+if temperature &gt; 30:
+    print(&quot;hot&quot;)
+else if temperature &gt; 15:
+    print(&quot;mild&quot;)
+else:
+    print(&quot;cold&quot;)</code></pre>
+<pre class="output"><code>mild</code></pre>
+<h2 id="if-as-a-value"><code>if</code> as a value<a class="anchor" href="#if-as-a-value" aria-hidden="true">#</a></h2>
+<p>An <code>if</code> can produce a value, so you can use it on the right of <code>be</code>. When a branch is short, write it on the same line:</p>
+<pre data-science><code>let age be 20
+let label be if age &gt;= 18: &quot;adult&quot; else: &quot;minor&quot;
+print(label)</code></pre>
+<pre class="output"><code>adult</code></pre>
+<p>Both branches must give the same type, and the <code>else</code> is required.</p>
+<h2 id="counting-with-for">Counting with <code>for</code><a class="anchor" href="#counting-with-for" aria-hidden="true">#</a></h2>
+<p><code>for</code> repeats its body once for each value in a range. <code>0..3</code> means 0, 1 and 2: it stops one short of the end.</p>
+<pre data-science><code>for i in 0..3:
+    print(i)</code></pre>
+<pre class="output"><code>0
+1
+2</code></pre>
+<p>Put <code>=</code> after the dots to include the last number:</p>
+<pre data-science><code>for i in 1..=3:
+    print(i)</code></pre>
+<pre class="output"><code>1
+2
+3</code></pre>
+<p>If the range is empty, as in <code>5..2</code>, the body never runs.</p>
+<h2 id="walking-through-an-array">Walking through an array<a class="anchor" href="#walking-through-an-array" aria-hidden="true">#</a></h2>
+<p><code>for</code> also goes through the items of an array, one at a time:</p>
+<pre data-science><code>let planets be [&quot;Mercury&quot;, &quot;Venus&quot;, &quot;Earth&quot;]
+print(f&quot;{planets.length()} planets:&quot;)
+
+for planet in planets:
+    print(planet)</code></pre>
+<pre class="output"><code>3 planets:
+Mercury
+Venus
+Earth</code></pre>
+<p>Square brackets make an array. <a href="collections.html">Arrays, maps and sets</a> covers what you can do with one.</p>
+<p>A loop is a good place to build up a result. Here a mutable variable collects a sum:</p>
+<pre data-science><code>let numbers be [3, 9, 4]
+let mutable total be 0
+
+for n in numbers:
+    total be total + n
+
+print(total)</code></pre>
+<pre class="output"><code>16</code></pre>
+<p>If you do not need the value, name it <code>_</code>:</p>
+<pre data-science><code>for _ in 0..3:
+    write(&quot;ha&quot;)
+print(&quot;&quot;)</code></pre>
+<pre class="output"><code>hahaha</code></pre>
+<p><code>write</code> prints without a newline at the end.</p>
+<h2 id="repeating-until-you-stop-loop">Repeating until you stop: <code>loop</code><a class="anchor" href="#repeating-until-you-stop-loop" aria-hidden="true">#</a></h2>
+<p><code>loop:</code> runs its body forever, until a <code>break</code>. Use it when you do not know in advance how many times to go round:</p>
+<pre data-science><code>let mutable n be 1
+
+loop:
+    if n &gt; 100:
+        break
+    print(n)
+    n be n * 3</code></pre>
+<pre class="output"><code>1
+3
+9
+27
+81</code></pre>
+<p>There is no <code>while</code> in Science. The condition goes inside the loop, as an <code>if</code> followed by <code>break</code>.</p>
+<h2 id="skipping-with-continue">Skipping with <code>continue</code><a class="anchor" href="#skipping-with-continue" aria-hidden="true">#</a></h2>
+<p><code>continue</code> jumps to the next round without finishing the current one:</p>
+<pre data-science><code>for i in 1..=6:
+    if i % 2 is 0:
+        continue
+    print(i)</code></pre>
+<pre class="output"><code>1
+3
+5</code></pre>
+<p><code>break</code> and <code>continue</code> work the same way in <code>for</code> and in <code>loop</code>. They apply to the innermost loop they are inside.</p>
+<h2 id="choosing-between-many-values-with-match">Choosing between many values with <code>match</code><a class="anchor" href="#choosing-between-many-values-with-match" aria-hidden="true">#</a></h2>
+<p>When you compare one value against several possibilities, <code>match</code> is tidier than a ladder of <code>else if</code>:</p>
+<pre data-science><code>def name_of(day: Int) -&gt; String:
+    match day:
+        1: &quot;Monday&quot;
+        2: &quot;Tuesday&quot;
+        3: &quot;Wednesday&quot;
+        other: f&quot;day {other}&quot;
+
+def main():
+    print(name_of(1))
+    print(name_of(3))
+    print(name_of(6))</code></pre>
+<pre class="output"><code>Monday
+Wednesday
+day 6</code></pre>
+<p>Each line is a pattern, a colon, and what to do. They are tried from top to bottom. The last line, <code>other</code>, matches anything and gives it a name. If you do not need the value, write <code>_</code> instead. A <code>match</code> must cover every possibility, which is why that last line is needed for numbers.</p>
+<p>Strings work the same way:</p>
+<pre data-science><code>let answer be &quot;yes&quot;
+
+match answer:
+    &quot;yes&quot;: print(&quot;go ahead&quot;)
+    &quot;no&quot;: print(&quot;stop&quot;)
+    _: print(&quot;please answer yes or no&quot;)</code></pre>
+<pre class="output"><code>go ahead</code></pre>
+<p><code>match</code> can do much more with the kinds of types you will define yourself; see <a href="choices.html">Choices and match</a>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>if</code>, <code>else if</code> and <code>else</code> choose between blocks. <code>if</code> can also be a value.</li><li><code>for i in 0..n:</code> counts from 0 to <code>n - 1</code>; <code>0..=n</code> includes <code>n</code>.</li><li><code>for item in array:</code> visits each item.</li><li><code>loop:</code> repeats until <code>break</code>; <code>continue</code> skips to the next round.</li><li>There is no <code>while</code>: put the condition inside a <code>loop</code>.</li><li><code>match</code> compares a value against patterns and must cover every case.</li></ul>
+<p>Next: <a href="strings.html">strings and formatting</a>.</p>
 <nav class="pager"><a class="prev" href="functions.html"><span>Previous</span>Functions</a><a class="next" href="strings.html"><span>Next</span>Strings and formatting</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#making-a-choice-with-if">Making a choice with <code>if</code></a></li><li><a href="#else-and-else-if"><code>else</code> and <code>else if</code></a></li><li><a href="#if-as-a-value"><code>if</code> as a value</a></li><li><a href="#counting-with-for">Counting with <code>for</code></a></li><li><a href="#walking-through-an-array">Walking through an array</a></li><li><a href="#repeating-until-you-stop-loop">Repeating until you stop: <code>loop</code></a></li><li><a href="#skipping-with-continue">Skipping with <code>continue</code></a></li><li><a href="#choosing-between-many-values-with-match">Choosing between many values with <code>match</code></a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

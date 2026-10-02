@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Numbers, text and truth &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Every value has a type, which says what kind of thing it is and what you can do with it. This chapter covers the types you will use most: numbers, text and true/false values.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,133 @@
 <main>
 <p class="crumb">The basics</p>
 <h1>Numbers, text and truth</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Every value has a type, which says what kind of thing it is and what you can do with it. This chapter covers the types you will use most: numbers, text and true/false values.</p>
+<h2 id="whole-numbers">Whole numbers<a class="anchor" href="#whole-numbers" aria-hidden="true">#</a></h2>
+<p>A whole number without a decimal point is an <code>Int</code>:</p>
+<pre data-science><code>let apples be 3
+let oranges be 4
+print(apples + oranges)
+print(apples * oranges)
+print(oranges - apples)</code></pre>
+<pre class="output"><code>7
+12
+1</code></pre>
+<p><code>Int</code> is a 64-bit signed integer. You can write large numbers with underscores to make them readable, and use <code>0x</code>, <code>0b</code> or <code>0o</code> for hexadecimal, binary or octal:</p>
+<pre data-science><code>print(1_000_000)
+print(0xff)
+print(0b1010)</code></pre>
+<pre class="output"><code>1000000
+255
+10</code></pre>
+<h2 id="division-and-remainder">Division and remainder<a class="anchor" href="#division-and-remainder" aria-hidden="true">#</a></h2>
+<p>Dividing two integers gives an integer, with the fraction dropped. <code>%</code> gives what is left over:</p>
+<pre data-science><code>print(17 / 5)
+print(17 % 5)
+print(-17 / 5)
+print(2 ** 10)</code></pre>
+<pre class="output"><code>3
+2
+-3
+1024</code></pre>
+<p><code>**</code> raises a number to a power. The usual order applies: <code>**</code> first, then <code>*</code>, <code>/</code> and <code>%</code>, then <code>+</code> and <code>-</code>. Use parentheses when you want another order.</p>
+<pre data-science><code>print(1 + 2 * 3)
+print((1 + 2) * 3)</code></pre>
+<pre class="output"><code>7
+9</code></pre>
+<h2 id="other-sizes-of-integer">Other sizes of integer<a class="anchor" href="#other-sizes-of-integer" aria-hidden="true">#</a></h2>
+<p>When the size matters, there are integers of fixed width. <code>I8</code>, <code>I16</code>, <code>I32</code> and <code>I64</code> are signed; <code>U8</code>, <code>U16</code>, <code>U32</code> and <code>U64</code> are unsigned. A suffix on a literal picks the type:</p>
+<pre data-science><code>let byte be 255u8
+let small be 42i32
+print(byte)
+print(small * 2)</code></pre>
+<pre class="output"><code>255
+84</code></pre>
+<p>You can also write the type after the name: <code>let level: U8 be 3</code>. Most of the time <code>Int</code> is the right choice.</p>
+<h2 id="decimal-numbers">Decimal numbers<a class="anchor" href="#decimal-numbers" aria-hidden="true">#</a></h2>
+<p>A number with a decimal point is an <code>F64</code>, a 64-bit floating-point number. <code>F32</code> is the smaller version.</p>
+<pre data-science><code>let radius be 2.0
+let area be 3.14159 * radius * radius
+print(area)
+print(7.0 / 2.0)
+print(1.5e3)</code></pre>
+<pre class="output"><code>12.56636
+3.5
+1500.0</code></pre>
+<p>A float always prints with a decimal point, so <code>1500.0</code> and <code>1500</code> are visibly different values. <a href="strings.html">Strings and formatting</a> shows how to control the number of digits.</p>
+<h2 id="numbers-do-not-mix-on-their-own">Numbers do not mix on their own<a class="anchor" href="#numbers-do-not-mix-on-their-own" aria-hidden="true">#</a></h2>
+<p>Science never converts between number types silently. Adding an <code>Int</code> to an <code>F64</code> is an error:</p>
+<pre data-science class="refused"><code>let whole: Int be 3
+let part: F64 be 0.5
+print(whole + part)</code></pre>
+<pre class="err"><code>error[SC0525]: expected `I64`, found `F64`</code></pre>
+<h2 id="converting-with-as">Converting with <code>as</code><a class="anchor" href="#converting-with-as" aria-hidden="true">#</a></h2>
+<p>Say what you want with <code>as</code>:</p>
+<pre data-science><code>let whole: Int be 3
+let part: F64 be 0.5
+print(whole as F64 + part)
+
+let measured be 7.9
+print(measured as Int)
+
+let big: Int be 300
+print(big as U8)</code></pre>
+<pre class="output"><code>3.5
+7
+44</code></pre>
+<p>Turning a float into an integer drops the fraction; it does not round. And converting to a smaller integer keeps only the low bits, so <code>300</code> becomes <code>44</code> in a <code>U8</code>, which holds 0 to 255.</p>
+<h2 id="true-and-false">True and false<a class="anchor" href="#true-and-false" aria-hidden="true">#</a></h2>
+<p><code>Bool</code> has two values, <code>true</code> and <code>false</code>. Comparisons produce them:</p>
+<pre data-science><code>let age be 20
+print(age &gt;= 18)
+print(age &lt; 18)
+print(age is 20)
+print(age is not 20)</code></pre>
+<pre class="output"><code>true
+false
+true
+false</code></pre>
+<p>Equality is spelled with words: <code>is</code> and <code>is not</code>. The ordering comparisons use symbols: <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>. There is no <code>==</code> or <code>!=</code>.</p>
+<h2 id="combining-conditions">Combining conditions<a class="anchor" href="#combining-conditions" aria-hidden="true">#</a></h2>
+<p><code>and</code>, <code>or</code> and <code>not</code> work on <code>Bool</code>s:</p>
+<pre data-science><code>let age be 20
+let has_ticket be true
+
+print(age &gt;= 18 and has_ticket)
+print(age &lt; 12 or age &gt; 65)
+print(not has_ticket)</code></pre>
+<pre class="output"><code>true
+false
+false</code></pre>
+<p><code>and</code> is evaluated before <code>or</code>, and <code>not</code> before both. Comparisons bind tighter than any of them, so <code>age &gt;= 18 and has_ticket</code> needs no parentheses.</p>
+<p>A condition must be a <code>Bool</code>. Unlike in some languages, a number is never treated as true or false, so <code>if count:</code> is an error; write <code>if count &gt; 0:</code> instead.</p>
+<h2 id="text">Text<a class="anchor" href="#text" aria-hidden="true">#</a></h2>
+<p>Text in double quotes is a <code>String</code>:</p>
+<pre data-science><code>let first be &quot;Ada&quot;
+let last be &quot;Lovelace&quot;
+print(first + &quot; &quot; + last)
+print(first.length())
+print(first is &quot;Ada&quot;)</code></pre>
+<pre class="output"><code>Ada Lovelace
+3
+true</code></pre>
+<p><code>+</code> joins two strings, <code>.length()</code> counts the bytes, and <code>is</code> compares the contents. Strings can be compared in order too: <code>&quot;apple&quot; &lt; &quot;banana&quot;</code> is <code>true</code>. There is much more to say about strings, and <a href="strings.html">Strings and formatting</a> says it.</p>
+<h2 id="a-single-character">A single character<a class="anchor" href="#a-single-character" aria-hidden="true">#</a></h2>
+<p>A <code>Char</code> is one character, written in single quotes:</p>
+<pre data-science><code>let letter be &#x27;x&#x27;
+print(letter)
+print(letter is &#x27;x&#x27;)</code></pre>
+<pre class="output"><code>x
+true</code></pre>
+<h2 id="nothing">Nothing<a class="anchor" href="#nothing" aria-hidden="true">#</a></h2>
+<p>Some functions do not produce a value at all. Their result is the <em>unit</em> type, written <code>()</code>. You will meet it in <a href="functions.html">Functions</a>; for now it is enough to know that <code>print</code> is one of them.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>Int</code> is the usual whole number; <code>I8</code> to <code>I64</code> and <code>U8</code> to <code>U64</code> are the sized ones. A suffix such as <code>255u8</code> picks one.</li><li><code>F64</code> is the usual decimal number; <code>F32</code> is the smaller one.</li><li>Integer division drops the fraction; <code>%</code> is the remainder; <code>**</code> is a power.</li><li>Number types never mix on their own. Convert with <code>as</code>.</li><li><code>Bool</code> is <code>true</code> or <code>false</code>. Compare with <code>is</code>, <code>is not</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, and combine with <code>and</code>, <code>or</code>, <code>not</code>.</li><li><code>String</code> is text and <code>Char</code> is one character.</li></ul>
+<p>Next: <a href="functions.html">functions</a>.</p>
 <nav class="pager"><a class="prev" href="variables.html"><span>Previous</span>Variables</a><a class="next" href="functions.html"><span>Next</span>Functions</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#whole-numbers">Whole numbers</a></li><li><a href="#division-and-remainder">Division and remainder</a></li><li><a href="#other-sizes-of-integer">Other sizes of integer</a></li><li><a href="#decimal-numbers">Decimal numbers</a></li><li><a href="#numbers-do-not-mix-on-their-own">Numbers do not mix on their own</a></li><li><a href="#converting-with-as">Converting with <code>as</code></a></li><li><a href="#true-and-false">True and false</a></li><li><a href="#combining-conditions">Combining conditions</a></li><li><a href="#text">Text</a></li><li><a href="#a-single-character">A single character</a></li><li><a href="#nothing">Nothing</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

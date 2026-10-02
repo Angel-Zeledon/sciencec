@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Files and the system &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Programs talk to the outside world: they print, read and write files, look at their command line, and watch the clock. This chapter covers each of those. The first few functions are always available; the rest are modules you bring in with use.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,190 @@
 <main>
 <p class="crumb">The library</p>
 <h1>Files and the system</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Programs talk to the outside world: they print, read and write files, look at their command line, and watch the clock. This chapter covers each of those. The first few functions are always available; the rest are modules you bring in with <code>use</code>.</p>
+<h2 id="printing">Printing<a class="anchor" href="#printing" aria-hidden="true">#</a></h2>
+<p><code>print</code> writes a value and a newline. <code>write</code> writes without the newline, so you can build a line in pieces:</p>
+<pre data-science><code>def main():
+    write(&quot;one &quot;)
+    write(&quot;two &quot;)
+    print(&quot;three&quot;)</code></pre>
+<pre class="output"><code>one two three</code></pre>
+<p>Anything that can be shown as text can be printed: numbers, strings, booleans. For messages that are not part of your program's result, such as warnings, use <code>print_error</code>. It writes to standard error, so it does not mix with output that another program might read:</p>
+<pre data-science><code>def main():
+    print_error(&quot;this goes to standard error&quot;)
+    print(&quot;this goes to standard output&quot;)</code></pre>
+<pre class="output"><code>this goes to standard output</code></pre>
+<p><code>write_error</code> is the same without the newline.</p>
+<h2 id="reading-and-writing-a-whole-file">Reading and writing a whole file<a class="anchor" href="#reading-and-writing-a-whole-file" aria-hidden="true">#</a></h2>
+<p><code>write_file</code> stores a string in a file, and <code>read_file</code> brings it back. Both can fail, so both report an error beside the result, the way <a href="errors.html">Missing values and errors</a> describes:</p>
+<pre data-science><code>def main():
+    let write_err be write_file(&quot;greeting.txt&quot;, &quot;hello\nworld\n&quot;)
+    if write_err?:
+        print(&quot;could not write&quot;)
+
+    let text, read_err be read_file(&quot;greeting.txt&quot;)
+    if read_err?:
+        print(&quot;could not read&quot;)
+    else:
+        print(text.length())
+        for line in text.lines():
+            print(line)</code></pre>
+<pre class="output"><code>12
+hello
+world</code></pre>
+<p><code>write_file</code> has no value to give back, so it returns only the error. <code>read_file</code> returns the text and an error. Check the error before you use the text.</p>
+<p>The error can tell you what went wrong:</p>
+<pre data-science><code>def main():
+    let text, err be read_file(&quot;no_such_file.txt&quot;)
+    if err?:
+        print(err.message())</code></pre>
+<pre class="output"><code>not found</code></pre>
+<p>The same function reports <code>permission denied</code>, <code>already exists</code>, <code>invalid data</code> and <code>input/output error</code> for the other cases.</p>
+<h2 id="files-a-piece-at-a-time">Files, a piece at a time<a class="anchor" href="#files-a-piece-at-a-time" aria-hidden="true">#</a></h2>
+<p><code>read_file</code> loads everything at once. For a big file, or when you want to write as you go, use the <code>io</code> module. <code>File.create</code> opens a file for writing and <code>File.open</code> opens one for reading. Wrap a file in a <code>BufferedWriter</code> to collect small writes and send them in larger pieces:</p>
+<pre data-science><code>use io (File, BufferedWriter)
+
+def main():
+    let file, err be File.create(&quot;notes.txt&quot;)
+    if err?:
+        print(&quot;could not create&quot;)
+        return
+    let mutable out be BufferedWriter.new(file, 4096)
+    out.write(&amp;&quot;first line\n&quot;.bytes())
+    out.write(&amp;&quot;second line\n&quot;.bytes())
+    let flush_err be out.flush()
+    if flush_err?:
+        print(&quot;could not flush&quot;)
+
+    let reader, open_err be File.open(&quot;notes.txt&quot;)
+    if open_err?:
+        print(&quot;could not open&quot;)
+        return
+    for line in reader.lines():
+        print(line)</code></pre>
+<pre class="output"><code>first line
+second line</code></pre>
+<p><code>write</code> takes bytes, and <code>&quot;text&quot;.bytes()</code> turns a string into them. <code>BufferedWriter.new(file, 4096)</code> holds up to 4096 bytes before it hands them to the file. <code>flush()</code> sends whatever is waiting right now and tells you if that failed; a writer that goes out of scope flushes too, but it has no way to tell you about a failure, so call <code>flush()</code> when the data matters.</p>
+<p><code>reader.lines()</code> gives one line at a time without loading the whole file. The newline at the end of each line is removed.</p>
+<p>To read lines typed at the keyboard, use <code>Stdin.new().lines()</code> in the same way.</p>
+<h2 id="directories">Directories<a class="anchor" href="#directories" aria-hidden="true">#</a></h2>
+<p>The <code>fs</code> module works with directories and removes things. It is a separate module so that a program that deletes files says so at the top of the file:</p>
+<pre data-science><code>use fs (create_directory, list_directory, remove_file, remove_directory, rename)</code></pre>
+<p>Each of these returns an error, or a value and an error. <code>create_directory</code>, <code>remove_file</code>, <code>remove_directory</code> and <code>rename</code> return only the error. <code>list_directory</code> returns the names inside a folder, sorted, so the order is the same on every machine.</p>
+<h2 id="paths">Paths<a class="anchor" href="#paths" aria-hidden="true">#</a></h2>
+<p>A <code>Path</code> is a file location that knows how to be taken apart. It is safer than joining strings with <code>/</code> by hand:</p>
+<pre data-science><code>use fs (create_directory, list_directory, remove_file, remove_directory)
+use path (Path)
+
+def main():
+    let made be create_directory(&quot;scratch_dir&quot;)
+    if made?:
+        print(&quot;mkdir failed&quot;)
+    let file be Path.from(&quot;scratch_dir&quot;).join(&quot;data.csv&quot;)
+    print(file.text())
+    let ext be file.extension()
+    if ext?:
+        print(ext)
+    let stem be file.stem()
+    if stem?:
+        print(stem)
+    print(file.exists())
+
+    let wrote be write_file(file.text(), &quot;a,b\n&quot;)
+    if wrote?:
+        print(&quot;write failed&quot;)
+    let names, listed be list_directory(&quot;scratch_dir&quot;)
+    if listed?:
+        print(&quot;list failed&quot;)
+    for name in names:
+        print(name)
+    print(file.exists())
+    let size, sized be file.size()
+    if sized?:
+        print(&quot;size failed&quot;)
+    print(size)
+    print(file.with_extension(&quot;json&quot;).text())
+
+    let gone be remove_file(file.text())
+    if gone?:
+        print(&quot;remove failed&quot;)
+    let removed be remove_directory(&quot;scratch_dir&quot;)
+    if removed?:
+        print(&quot;rmdir failed&quot;)
+    print(file.exists())</code></pre>
+<pre class="output"><code>scratch_dir/data.csv
+csv
+data
+false
+data.csv
+true
+4
+scratch_dir/data.json
+false</code></pre>
+<p><code>extension()</code> and <code>stem()</code> give a string that may be missing, so you test them with <code>?</code> first. Other methods are <code>name()</code>, <code>parent()</code>, <code>is_absolute()</code>, <code>is_directory()</code> and <code>absolute()</code>.</p>
+<aside class="callout-note"><p><strong>Note:</strong> The file functions take a <code>String</code>, so pass <code>file.text()</code> where a path is needed.</p></aside>
+<h2 id="the-command-line-and-environment">The command line and environment<a class="anchor" href="#the-command-line-and-environment" aria-hidden="true">#</a></h2>
+<p>The <code>os</code> module gives a program its arguments and its environment variables. <code>args()</code> is an array of strings. The first item is the program's own name, and the rest are what the user typed after it. <code>env(name)</code> gives a variable's value, or <code>null</code> when it is not set:</p>
+<pre data-science><code>use os (args, env)
+
+def main():
+    let arguments be args()
+    print(arguments.length() &gt;= 1)
+    let value be env(&quot;SCIENCE_NO_SUCH_VARIABLE&quot;)
+    if not value?:
+        print(&quot;not set&quot;)</code></pre>
+<pre class="output"><code>true
+not set</code></pre>
+<h2 id="time">Time<a class="anchor" href="#time" aria-hidden="true">#</a></h2>
+<p>The <code>time</code> module measures and formats time. A <code>Duration</code> is a length of time:</p>
+<pre data-science><code>use time (Duration)
+
+def main():
+    let span be Duration.from_milliseconds(1500)
+    print(span)
+    print(span.seconds())
+    print(span.milliseconds())
+    print(span + Duration.from_seconds(1))
+    print(span &lt; Duration.from_seconds(2))</code></pre>
+<pre class="output"><code>1.5s
+1.5
+1500
+2.5s
+true</code></pre>
+<p>Durations add and compare with the usual operators. To time how long something takes, take a <code>Monotonic</code> reading before and ask how much has passed. <code>sleep</code> pauses the program:</p>
+<pre data-science><code>use time (Duration, Monotonic, sleep)
+
+def main():
+    let start be Monotonic.now()
+    sleep(Duration.from_milliseconds(5))
+    print(start.elapsed() &gt;= Duration.from_milliseconds(5))</code></pre>
+<pre class="output"><code>true</code></pre>
+<p>A <code>Monotonic</code> clock never goes backwards, which makes it the right tool for measuring. For a date and time, use <code>Instant</code>, a point on the calendar counted from 1 January 1970 UTC. <code>now()</code> reads the clock, <code>Instant.from_unix_seconds</code> builds one, and <code>format_rfc3339</code> and <code>parse_rfc3339</code> convert to and from text:</p>
+<pre data-science><code>use time (Duration, Instant, format_rfc3339, parse_rfc3339)
+
+def main():
+    let epoch be Instant.from_unix_seconds(0)
+    print(epoch)
+    let tomorrow be epoch + Duration.from_seconds(86400)
+    print(format_rfc3339(tomorrow))
+
+    let parsed, err be parse_rfc3339(&quot;2026-09-16T12:30:00Z&quot;)
+    if err?:
+        print(err.message())
+    else:
+        print(parsed.unix_seconds())</code></pre>
+<pre class="output"><code>1970-01-01T00:00:00Z
+1970-01-02T00:00:00Z
+1789561800</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> Times are always UTC. There is no local time zone support yet.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>print</code>, <code>write</code>, <code>print_error</code> and <code>write_error</code> are always available.</li><li><code>read_file</code> and <code>write_file</code> move a whole file; check the error each returns.</li><li><code>use io</code> gives <code>File</code>, <code>BufferedWriter</code> and line-by-line reading.</li><li><code>use fs</code> and <code>use path</code> work with directories and file locations.</li><li><code>use os</code> gives <code>args()</code> and <code>env(name)</code>.</li><li><code>use time</code> gives <code>Duration</code>, <code>Monotonic</code> for measuring, and <code>Instant</code> for dates.</li></ul>
+<p>Next: <a href="std-numeric.html">Numbers and arrays</a>.</p>
 <nav class="pager"><a class="prev" href="std.html"><span>Previous</span>A tour of the standard library</a><a class="next" href="std-numeric.html"><span>Next</span>Numbers and arrays</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#printing">Printing</a></li><li><a href="#reading-and-writing-a-whole-file">Reading and writing a whole file</a></li><li><a href="#files-a-piece-at-a-time">Files, a piece at a time</a></li><li><a href="#directories">Directories</a></li><li><a href="#paths">Paths</a></li><li><a href="#the-command-line-and-environment">The command line and environment</a></li><li><a href="#time">Time</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

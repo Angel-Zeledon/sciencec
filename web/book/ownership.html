@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ownership and borrowing &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Science manages memory without a garbage collector and without you freeing anything by hand. It does that with one idea: every value has exactly one owner. This chapter shows what that means in practice and the few rules that follow.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,115 @@
 <main>
 <p class="crumb">Core ideas</p>
 <h1>Ownership and borrowing</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Science manages memory without a garbage collector and without you freeing anything by hand. It does that with one idea: <strong>every value has exactly one owner</strong>. This chapter shows what that means in practice and the few rules that follow.</p>
+<p>Think of a lab notebook. Only one person holds it at a time. They can hand it over, and then they no longer have it. They can also let a colleague <em>read</em> it for a while, or let one colleague <em>write</em> in it, but never both at once, or the pages would not agree. Ownership, shared borrows and exclusive borrows are those three situations.</p>
+<h2 id="numbers-are-simply-copied">Numbers are simply copied<a class="anchor" href="#numbers-are-simply-copied" aria-hidden="true">#</a></h2>
+<p>Small plain values such as <code>Int</code>, <code>F64</code> and <code>Bool</code> are copied whenever you use them, so nothing special happens:</p>
+<pre data-science><code>def main():
+    let a be 5
+    let b be a
+    print(a + b)</code></pre>
+<pre class="output"><code>10</code></pre>
+<p>Both <code>a</code> and <code>b</code> hold a 5. The rest of this chapter is about values that are bigger than that: text, arrays, and your own types.</p>
+<h2 id="passing-a-value-hands-it-over">Passing a value hands it over<a class="anchor" href="#passing-a-value-hands-it-over" aria-hidden="true">#</a></h2>
+<p>When you pass such a value to a function, the function becomes its owner. The caller no longer has it:</p>
+<pre data-science class="refused"><code>type Sample:
+    label: String
+    hits: Int
+
+def consume(s: Sample) -&gt; Int:
+    s.hits
+
+def main():
+    let a be Sample(label: &quot;a&quot;, hits: 1)
+    print(consume(a))
+    print(a.hits)</code></pre>
+<p>The compiler reports <code>use of a moved value</code>: <code>a</code> was moved into <code>consume</code>, so the last line has nothing to read. Assigning to another name does the same, so after <code>let u be t</code> for a <code>String</code>, <code>t</code> is empty.</p>
+<p>Handing over is right when the function really takes the value for good. Otherwise, lend it.</p>
+<h2 id="lending-a-value-t">Lending a value: &amp;T<a class="anchor" href="#lending-a-value-t" aria-hidden="true">#</a></h2>
+<p>A parameter written <code>&amp;T</code> only borrows the value. The caller keeps ownership, and you do not write anything special at the call:</p>
+<pre data-science><code>type Sample:
+    label: String
+    hits: Int
+
+def peek(s: &amp;Sample) -&gt; Int:
+    s.hits
+
+def main():
+    let a be Sample(label: &quot;a&quot;, hits: 1)
+    print(peek(a))
+    print(peek(a))
+    print(a.hits)</code></pre>
+<pre class="output"><code>1
+1
+1</code></pre>
+<p><code>a</code> is still there after both calls. Any number of readers may borrow the same value at the same time. Inside the function you use the borrow as if it were the value: <code>s.hits</code> just works.</p>
+<p>The <code>&amp;</code> is for the signature. If you want a borrow stored in a name, write <code>&amp;</code> there too: <code>let view be &amp;a</code>.</p>
+<h2 id="lending-for-writing-mut-t">Lending for writing: &amp;mut T<a class="anchor" href="#lending-for-writing-mut-t" aria-hidden="true">#</a></h2>
+<p>A function that must change the value takes <code>&amp;mut T</code>. The value has to be <code>let mutable</code> in the caller:</p>
+<pre data-science><code>type Sample:
+    label: String
+    hits: Int
+
+def bump(s: &amp;mut Sample):
+    s.hits be s.hits + 1
+
+def main():
+    let mutable a be Sample(label: &quot;a&quot;, hits: 1)
+    bump(a)
+    bump(a)
+    print(a.hits)</code></pre>
+<pre class="output"><code>3</code></pre>
+<p>Again nothing special at the call. The word <code>mutable</code> in <code>let mutable a</code> is your permission for it to change.</p>
+<h2 id="readers-or-one-writer-never-both">Readers or one writer, never both<a class="anchor" href="#readers-or-one-writer-never-both" aria-hidden="true">#</a></h2>
+<p>While someone is reading a value, nobody may write to it, and while someone is writing, nobody else may read. The compiler checks this:</p>
+<pre data-science class="refused"><code>type Sample:
+    label: String
+    hits: Int
+
+def bump(s: &amp;mut Sample):
+    s.hits be s.hits + 1
+
+def main():
+    let mutable a be Sample(label: &quot;a&quot;, hits: 1)
+    let view be &amp;a
+    bump(a)
+    print(view.hits)</code></pre>
+<p>The error says <code>a</code> is borrowed shared and then borrowed exclusively while the first borrow is still needed. A borrow lasts only until its last use, so the fix is to read <code>view.hits</code> before calling <code>bump</code>, or not to keep <code>view</code> at all.</p>
+<p>This rule is what makes surprises such as a value changing under a function that is reading it impossible.</p>
+<h2 id="tidying-up-automatically">Tidying up automatically<a class="anchor" href="#tidying-up-automatically" aria-hidden="true">#</a></h2>
+<p>When the owner of a value goes out of scope, the value is released. For most types you never see this. If a type implements <code>Drop</code>, its <code>drop</code> method runs at that moment, which is useful for closing a file or logging:</p>
+<pre data-science><code>type Sample:
+    label: String
+
+Sample implements Drop:
+    def drop(mutable self):
+        print(f&quot;dropping {self.label}&quot;)
+
+def consume(s: Sample):
+    print(f&quot;using {s.label}&quot;)
+
+def main():
+    let a be Sample(label: &quot;a&quot;)
+    let b be Sample(label: &quot;b&quot;)
+    consume(b)
+    print(&quot;end of main&quot;)</code></pre>
+<pre class="output"><code>using b
+dropping b
+end of main
+dropping a</code></pre>
+<p><code>b</code> was handed to <code>consume</code>, whose parameter goes away when it finishes, so <code>b</code> is dropped there. <code>a</code> is still owned by <code>main</code>, so it is dropped when <code>main</code> ends. You wrote no cleanup call; the single owner makes the moment obvious.</p>
+<h2 id="which-should-i-use">Which should I use?<a class="anchor" href="#which-should-i-use" aria-hidden="true">#</a></h2>
+<ul><li>Only look at it: <code>&amp;T</code>.</li><li>Change it in place: <code>&amp;mut T</code>.</li><li>The function keeps it, stores it or returns it: plain <code>T</code>.</li></ul>
+<p>When in doubt, start with <code>&amp;T</code>; the compiler will tell you if you need more.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>Every value has one owner. Passing a value to a function moves it; the old name is empty afterwards.</li><li>Numbers, booleans and other small plain values are copied instead.</li><li><code>&amp;T</code> lends read access, and any number of those may exist together. <code>&amp;mut T</code> lends write access, and excludes everyone else.</li><li>Calls borrow automatically; you only write <code>&amp;</code> in signatures and when binding a borrow to a name.</li><li>A borrow lasts until its last use.</li><li>A value is released when its owner goes out of scope; <code>Drop</code> lets a type run code then.</li></ul>
+<p>Next: values that may be absent, and operations that may fail, in <a href="errors.html">Missing values and errors</a>.</p>
 <nav class="pager"><a class="prev" href="chains.html"><span>Previous</span>Chains and closures</a><a class="next" href="errors.html"><span>Next</span>Missing values and errors</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#numbers-are-simply-copied">Numbers are simply copied</a></li><li><a href="#passing-a-value-hands-it-over">Passing a value hands it over</a></li><li><a href="#lending-a-value-t">Lending a value: &amp;T</a></li><li><a href="#lending-for-writing-mut-t">Lending for writing: &amp;mut T</a></li><li><a href="#readers-or-one-writer-never-both">Readers or one writer, never both</a></li><li><a href="#tidying-up-automatically">Tidying up automatically</a></li><li><a href="#which-should-i-use">Which should I use?</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

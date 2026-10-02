@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Calling C &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Much of the world&#x27;s numerical code is written in C: math libraries, BLAS, HDF5. Science can call it directly, with no glue code.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,87 @@
 <main>
 <p class="crumb">Going further</p>
 <h1>Calling C</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Much of the world's numerical code is written in C: math libraries, BLAS, HDF5. Science can call it directly, with no glue code.</p>
+<p>The compiler cannot see inside C, so it cannot check what a C function really does. Science makes that visible: you declare the function, and you call it inside an <code>unsafe</code> block, which says "I am vouching for this call".</p>
+<h2 id="declaring-a-c-function">Declaring a C function<a class="anchor" href="#declaring-a-c-function" aria-hidden="true">#</a></h2>
+<p>An <code>unsafe extern &quot;C&quot;</code> block names a library and lists the functions you want from it:</p>
+<pre data-science><code>unsafe extern &quot;C&quot; library &quot;m&quot;:
+    def cos(x: CDouble) -&gt; CDouble
+
+def main():
+    unsafe:
+        let c be cos(0.0 as CDouble)
+        print(c as F64)</code></pre>
+<pre class="output"><code>1.0</code></pre>
+<ul><li><code>&quot;C&quot;</code> is the calling convention.</li><li><code>library &quot;m&quot;</code> is the library to link, here the C math library (<code>-lm</code>).</li><li>Each <code>def</code> is a signature only. There is no body, because the code lives in the library.</li><li><code>unsafe:</code> opens a block in which foreign calls are made. Keep it as small as the call.</li></ul>
+<h2 id="c-types">C types<a class="anchor" href="#c-types" aria-hidden="true">#</a></h2>
+<p>C's integers and floats have sizes that depend on the platform, so Science has its own names for them: <code>CInt</code>, <code>CLong</code>, <code>CDouble</code>, <code>CSizeT</code> and the like. Convert with <code>as</code>:</p>
+<pre data-science><code>unsafe extern &quot;C&quot; library &quot;c&quot;:
+    def labs(x: CLong) -&gt; CLong
+
+def main():
+    unsafe:
+        let n be labs(-12 as CLong)
+        print(n as Int)</code></pre>
+<pre class="output"><code>12</code></pre>
+<p>Convert back to <code>Int</code> or <code>F64</code> with <code>as</code> before you do anything else with the result.</p>
+<h2 id="wrap-it-in-a-safe-function">Wrap it in a safe function<a class="anchor" href="#wrap-it-in-a-safe-function" aria-hidden="true">#</a></h2>
+<p>Callers should not have to think about <code>unsafe</code>. Put the foreign call in an ordinary function with ordinary types, and have everyone else call that:</p>
+<pre data-science><code>unsafe extern &quot;C&quot; library &quot;m&quot;:
+    def sqrt(x: CDouble) -&gt; CDouble
+    def pow(base: CDouble, exponent: CDouble) -&gt; CDouble
+
+def root(x: F64) -&gt; F64:
+    unsafe:
+        sqrt(x as CDouble) as F64
+
+def power(base: F64, exponent: F64) -&gt; F64:
+    unsafe:
+        pow(base as CDouble, exponent as CDouble) as F64
+
+def main():
+    print(root(2.25))
+    print(power(2.0, 10.0))</code></pre>
+<pre class="output"><code>1.5
+1024.0</code></pre>
+<p>No C type appears in the signatures of <code>root</code> and <code>power</code>. This is the pattern to follow: the <code>unsafe</code> code is short, sits in one place, and is where you check the arguments are sensible before handing them to C.</p>
+<h2 id="passing-arrays">Passing arrays<a class="anchor" href="#passing-arrays" aria-hidden="true">#</a></h2>
+<p>C functions that take a pointer and a length are declared with <code>ffi.Span[T]</code> (read only) or <code>ffi.MutableSpan[T]</code> (read and write). An array gives you one with <code>.span()</code> or <code>.span_mutably()</code>:</p>
+<pre data-science><code>unsafe extern &quot;C&quot; library &quot;c&quot;:
+    def memset(target: ffi.MutableSpan[U8], byte: CInt, count: CSizeT)
+
+def clear(buf: &amp;mut Array[U8]):
+    unsafe:
+        memset(buf.span_mutably(), 0 as CInt, buf.length() as CSizeT)
+
+def main():
+    let mutable buf: Array[U8] be [1 as U8, 2 as U8, 3 as U8]
+    clear(buf)
+    for b in buf:
+        print(b)</code></pre>
+<pre class="output"><code>0
+0
+0</code></pre>
+<p>Only the pointer reaches C. The length stays on the Science side, which is why the call also passes <code>buf.length()</code> as the count. A function that takes a <code>Span</code> can only read the memory, so the compiler will not let a read-only borrow be passed where a <code>MutableSpan</code> is wanted.</p>
+<h2 id="finding-libraries">Finding libraries<a class="anchor" href="#finding-libraries" aria-hidden="true">#</a></h2>
+<p>By default the block links <code>library &quot;name&quot;</code> the usual way. Two options change that:</p>
+<pre data-science><code># ask pkg-config for the right flags on this machine
+unsafe extern &quot;C&quot; library &quot;openblas&quot; via pkg-config &quot;openblas&quot;:
+    def cblas_ddot(n: CInt, x: ffi.Span[F64], incx: CInt, y: ffi.Span[F64], incy: CInt) -&gt; CDouble
+
+# link statically
+unsafe extern &quot;C&quot; library &quot;mylib&quot; kind static:
+    def my_function(x: CInt) -&gt; CInt</code></pre>
+<p><code>via pkg-config</code> is how you get BLAS right across machines, since the library's name and flags differ between them. A block can also say <code>when available</code> to make the library optional, loaded the first time it is used.</p>
+<p>Besides <code>def</code>, a block can declare constants (<code>const NAME be 101 as CInt</code>), type aliases for C typedefs (<code>type BlasInt is I32</code>), exported globals (<code>static</code>) and opaque unions. <code>examples/20_extern.science</code> in the Science repository shows every form.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>unsafe extern &quot;C&quot; library &quot;name&quot;:</code> declares C functions as signatures.</li><li>Use the <code>C</code> types (<code>CInt</code>, <code>CDouble</code>, <code>CSizeT</code>, ...) and convert with <code>as</code>.</li><li>Make foreign calls inside <code>unsafe:</code>, and keep the block small.</li><li>Hide the foreign call behind an ordinary function with ordinary types.</li><li><code>ffi.Span[T]</code> and <code>ffi.MutableSpan[T]</code> pass arrays; get them with <code>.span()</code> and <code>.span_mutably()</code>.</li></ul>
+<p>Back to <a href="packages.html">packages</a>, or on to <a href="keywords.html">keywords</a>.</p>
 <nav class="pager"><a class="prev" href="std-formats.html"><span>Previous</span>Data formats</a><a class="next" href="from-python.html"><span>Next</span>Coming from Python</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#declaring-a-c-function">Declaring a C function</a></li><li><a href="#c-types">C types</a></li><li><a href="#wrap-it-in-a-safe-function">Wrap it in a safe function</a></li><li><a href="#passing-arrays">Passing arrays</a></li><li><a href="#finding-libraries">Finding libraries</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

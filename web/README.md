@@ -5,7 +5,11 @@ Static HTML. No build step, no package manager, no `node_modules`.
 ```
 web/
   index.html         the landing page
-  tutorial.html      learn the language from nothing, in order
+  book/              The Science Book: learn the language, chapter by chapter
+    SUMMARY.md       the chapter list; the sidebar and prev/next come from it
+    src/*.md         one Markdown file per chapter
+    build.py         src/*.md -> book/*.html; --check runs every example
+  tutorial.html      a redirect to the book, which replaced it
   guide.html         six features, one chapter each, in prose
   reference.html     the language reference
   syntax.html        the inventory of everything that can be written
@@ -35,6 +39,22 @@ condition written above, and it was done with a script rather than by hand —
 which is the tell. The next page should not be added until the nav is generated
 from one list. This paragraph is here so that the decision is not quietly
 relitigated by whoever adds the seventh page.
+
+## The book
+
+`book/` is generated, and it is the one part of the site that is. Edit
+`book/src/*.md`, then run
+
+```sh
+python3 web/book/build.py --check
+```
+
+which rebuilds every page and puts every Science example through
+`sciencec`: a ```` ```science ```` fence must check clean, a ```` ```science run ````
+fence is run and must print exactly the ```` ```output ```` fence that follows
+it, and a ```` ```science fails ```` fence must be refused. Commit the
+generated `book/*.html` with the source, so the site stays a directory of
+files with nothing to build at deploy time.
 
 ## Running it
 

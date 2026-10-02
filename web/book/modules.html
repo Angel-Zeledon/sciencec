@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Modules &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A module is a .science file. When a program outgrows one file, you move code into other files and bring it back with use.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,97 @@
 <main>
 <p class="crumb">Growing a program</p>
 <h1>Modules</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A <strong>module</strong> is a <code>.science</code> file. When a program outgrows one file, you move code into other files and bring it back with <code>use</code>.</p>
+<h2 id="your-first-module">Your first module<a class="anchor" href="#your-first-module" aria-hidden="true">#</a></h2>
+<p>Next to <code>main.science</code>, make a file called <code>geometry.science</code>:</p>
+<pre data-science><code>public type Point:
+    x: F64
+    y: F64
+
+public def distance(a: &amp;Point, b: &amp;Point) -&gt; F64:
+    let dx be a.x - b.x
+    let dy be a.y - b.y
+    helper(dx * dx + dy * dy)
+
+def helper(v: F64) -&gt; F64:
+    v.sqrt()</code></pre>
+<p>The file name is the module name. Now <code>main.science</code> can use it:</p>
+<pre data-science><code>use geometry (Point, distance)
+
+def main():
+    let a be Point(x: 0.0, y: 0.0)
+    let b be Point(x: 3.0, y: 4.0)
+    print(distance(a, b))</code></pre>
+<pre class="shell"><code>sciencec run main.science</code></pre>
+<pre class="output"><code>5.0</code></pre>
+<p><code>use geometry (Point, distance)</code> means: from the module <code>geometry</code>, bring in the names <code>Point</code> and <code>distance</code>. Both files sit in the same directory, and that directory is the root every <code>use</code> path starts from.</p>
+<h2 id="what-public-does">What <code>public</code> does<a class="anchor" href="#what-public-does" aria-hidden="true">#</a></h2>
+<p>Nothing in a module is visible to other files unless it is marked <code>public</code>. In <code>geometry.science</code>, <code>Point</code> and <code>distance</code> are public and <code>helper</code> is not, so it is an implementation detail that <code>main</code> cannot reach:</p>
+<pre class="shell"><code>sciencec check bad.science</code></pre>
+<pre class="err"><code>error[SC0222]: a function `geometry.helper` is private to module `geometry`
+  --&gt; bad.science:1:15
+   |
+ 1 | use geometry (helper)
+   |               ^^^^^^ not visible from module `bad`</code></pre>
+<p><code>public</code> goes in front of the declaration, and works on <code>def</code>, <code>type</code>, <code>choice</code> and <code>interface</code>. Methods inside a <code>has:</code> block are marked one by one:</p>
+<pre data-science><code>public type Circle:
+    radius: F64
+
+Circle has:
+    public def new(radius: F64) -&gt; Circle:
+        Circle(radius: radius)
+
+    public def area(self) -&gt; F64:
+        3.0 * self.radius * self.radius
+
+    def secret(self) -&gt; F64:
+        self.radius</code></pre>
+<h2 id="choosing-names">Choosing names<a class="anchor" href="#choosing-names" aria-hidden="true">#</a></h2>
+<p>You can list as many names as you like, and break a long list over several lines:</p>
+<pre data-science><code>use geometry (
+    Point,
+    distance,
+)</code></pre>
+<p>Or import the module itself, and write its name in front each time:</p>
+<pre data-science><code>use geometry
+
+def main():
+    let origin be geometry.Point(x: 0.0, y: 0.0)
+    print(geometry.distance(origin, origin))</code></pre>
+<p>Listing names keeps call sites short. Importing the whole module keeps it obvious where each name came from.</p>
+<h2 id="folders">Folders<a class="anchor" href="#folders" aria-hidden="true">#</a></h2>
+<p>A folder groups modules. The path in <code>use</code> follows the folders, separated by dots. With this layout:</p>
+<pre><code>main.science
+geometry.science
+shapes/
+  circle.science</code></pre>
+<p>a file in <code>shapes/</code> is reached as <code>shapes.circle</code>:</p>
+<pre data-science><code>use shapes.circle (Circle)
+
+def main():
+    let c be Circle.new(2.0)
+    print(c.area())</code></pre>
+<pre class="output"><code>12.0</code></pre>
+<p>A folder can also have a <code>mod.science</code> file. It is the module for the folder itself, so <code>use shapes (count)</code> reads from <code>shapes/mod.science</code>.</p>
+<h2 id="the-standard-library-s-modules">The standard library's modules<a class="anchor" href="#the-standard-library-s-modules" aria-hidden="true">#</a></h2>
+<p>Some modules ship with the compiler. You reach them with the same <code>use</code>:</p>
+<pre data-science><code>use complex (Complex)
+use path (Path)
+
+def main():
+    print(Complex.new(3.0, 4.0).modulus())
+    print(Path.from(&quot;results&quot;).join(&quot;run.csv&quot;).text())</code></pre>
+<pre class="output"><code>5.0
+results/run.csv</code></pre>
+<p>The bundled modules are <code>io</code>, <code>fs</code>, <code>path</code>, <code>os</code>, <code>time</code>, <code>complex</code>, <code>random</code> and <code>collections</code>. <a href="std.html">A tour of the standard library</a> covers them. Anything in the prelude, such as <code>String</code>, <code>Array</code> and <code>print</code>, needs no <code>use</code> at all.</p>
+<aside class="callout-note"><p><strong>Note:</strong> If you make a file called <code>path.science</code> beside your main file, it replaces the bundled <code>path</code> module. Pick other names for your own modules.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>Each <code>.science</code> file is a module, named after the file.</li><li><code>use module (Name, Other)</code> imports names; <code>use module</code> imports the module and you write <code>module.name</code>.</li><li>Only <code>public</code> items can be used from other files.</li><li>Folders become dotted paths: <code>use shapes.circle (Circle)</code>.</li><li>A package puts modules under <code>src/</code>; see <a href="packages.html">Packages</a>.</li></ul>
 <nav class="pager"><a class="prev" href="generics.html"><span>Previous</span>Generics</a><a class="next" href="packages.html"><span>Next</span>Packages</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#your-first-module">Your first module</a></li><li><a href="#what-public-does">What <code>public</code> does</a></li><li><a href="#choosing-names">Choosing names</a></li><li><a href="#folders">Folders</a></li><li><a href="#the-standard-library-s-modules">The standard library's modules</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

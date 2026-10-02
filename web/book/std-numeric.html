@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Numbers and arrays &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Science is built for numerical work, so the library for it is large. This chapter starts with the math you can do on a single number, then moves to complex numbers, random numbers, statistics, and finally whole arrays and linear algebra.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,278 @@
 <main>
 <p class="crumb">The library</p>
 <h1>Numbers and arrays</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Science is built for numerical work, so the library for it is large. This chapter starts with the math you can do on a single number, then moves to complex numbers, random numbers, statistics, and finally whole arrays and linear algebra.</p>
+<h2 id="math-on-numbers">Math on numbers<a class="anchor" href="#math-on-numbers" aria-hidden="true">#</a></h2>
+<p>Floating-point numbers (<code>F64</code>) and integers (<code>Int</code>) have methods for the common operations. You call them with a dot:</p>
+<pre data-science><code>def main():
+    let x be 2.0
+    print(x.sqrt())
+    print(x.pow(10.0))
+    let negative be -3.5
+    print(negative.abs())
+    let height be 2.7
+    print(height.floor())
+    print(3.0.hypot(4.0))
+    print(7.5.clamp(0.0, 5.0))</code></pre>
+<pre class="output"><code>1.4142135623730951
+1024.0
+3.5
+2.0
+5.0
+5.0</code></pre>
+<p>The usual functions are there: <code>sqrt</code>, <code>cbrt</code>, <code>exp</code>, <code>ln</code>, <code>log2</code>, <code>log10</code>, <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>, <code>atan2</code>, <code>sinh</code>, <code>cosh</code>, <code>tanh</code>, <code>floor</code>, <code>ceil</code>, <code>round</code>, <code>trunc</code>, <code>min</code>, <code>max</code> and <code>clamp</code>. <code>to_degrees</code> and <code>to_radians</code> convert angles.</p>
+<p>Integers have <code>abs</code>, <code>pow</code>, <code>min</code>, <code>max</code>, <code>clamp</code> and <code>rem_euclid</code>. Division of two integers gives an integer, and <code>%</code> gives the remainder:</p>
+<pre data-science><code>def main():
+    let n be -7
+    print(n.abs())
+    print(2.pow(10))
+    print(n.rem_euclid(3))
+    print(10 / 4)
+    print(10 % 4)
+    print(7 as F64 / 2.0)</code></pre>
+<pre class="output"><code>7
+1024
+2
+2
+2
+3.5</code></pre>
+<p><code>as F64</code> converts an integer to a float so that the division keeps its fraction.</p>
+<p>Floating-point arithmetic is not exact, so never test two results for equality with <code>is</code>. Use <code>is_close</code>:</p>
+<pre data-science><code>def main():
+    let sum be 0.1 + 0.2
+    print(sum)
+    print(sum is 0.3)
+    print(sum.is_close(0.3))</code></pre>
+<pre class="output"><code>0.30000000000000004
+false
+true</code></pre>
+<h2 id="complex-numbers">Complex numbers<a class="anchor" href="#complex-numbers" aria-hidden="true">#</a></h2>
+<p>The <code>complex</code> module has a <code>Complex</code> type with a real part <code>re</code> and an imaginary part <code>im</code>. Arithmetic uses the ordinary operators:</p>
+<pre data-science><code>use complex (Complex)
+
+def main():
+    let z be Complex.new(3.0, 4.0)
+    let w be Complex.new(1.0, -2.0)
+    print(z.modulus())
+    print(z + w)
+    print(z * w)
+    print(z.conjugate())
+    print(z * 2.0)
+    print(z.re)</code></pre>
+<pre class="output"><code>5.0
+4.0+2.0i
+11.0-2.0i
+3.0-4.0i
+6.0+8.0i
+3.0</code></pre>
+<p><code>modulus()</code> is the distance from zero. Other methods include <code>argument</code>, <code>exp</code>, <code>ln</code>, <code>sqrt</code>, <code>sin</code>, <code>cos</code>, <code>pow</code> and <code>from_polar</code>.</p>
+<h2 id="random-numbers">Random numbers<a class="anchor" href="#random-numbers" aria-hidden="true">#</a></h2>
+<p>Computers do not make truly random numbers. They make a sequence that is fixed by a starting value, so that you can repeat a result exactly. The <code>random</code> module gives you two ways to use that.</p>
+<p>The first is a <code>Key</code>. A key is made from a seed, and the same seed always produces the same number, on every machine:</p>
+<pre data-science><code>use random (Key, uniform, integer)
+
+def main():
+    print(uniform(Key.from_seed(42)))
+    print(uniform(Key.from_seed(42)))
+    print(uniform(Key.from_seed(43)))
+    print(integer(Key.from_seed(1), 1, 7))</code></pre>
+<pre class="output"><code>0.8449312962951291
+0.8449312962951291
+0.5326758737214929
+3</code></pre>
+<p><code>uniform</code> gives a number from 0 up to 1. <code>integer(key, low, high)</code> gives a whole number from <code>low</code> up to but not including <code>high</code>. <code>normal(key, mean, standard_deviation)</code> gives a bell-curve number.</p>
+<p>A key is used up by the draw: using the same key twice is refused, so you cannot accidentally reuse a number you meant to be different. When you need several independent numbers from one seed, <code>split</code> makes two new keys:</p>
+<pre data-science><code>use random (Key, uniform)
+
+def main():
+    let left, right be Key.from_seed(42).split()
+    print(uniform(left))
+    print(uniform(right))</code></pre>
+<pre class="output"><code>0.7156521212346931
+0.4892723909023393</code></pre>
+<p><code>split_many(n)</code> makes <code>n</code> keys, and <code>fold_in(step)</code> makes a key for step number <code>step</code>, which is handy inside a loop.</p>
+<p>Keys also shuffle:</p>
+<pre data-science><code>use random (Key, shuffle, permutation)
+
+def main():
+    let mutable cards be [1, 2, 3, 4, 5]
+    shuffle(Key.from_seed(7), &amp;mut cards)
+    for card in cards:
+        write(f&quot;{card} &quot;)
+    print(&quot;&quot;)
+    for index in permutation(Key.from_seed(1), 5):
+        write(f&quot;{index} &quot;)
+    print(&quot;&quot;)</code></pre>
+<pre class="output"><code>4 3 5 2 1 
+0 2 1 4 3 </code></pre>
+<p>The second way is a <code>Stream</code>, which keeps its own position so you do not have to split keys. Use it for things that do not need to be repeated, like a quick experiment:</p>
+<pre data-science><code>use random (Stream, uniform_from, integer_from)
+
+def main():
+    let mutable stream be Stream.from_seed(5)
+    let a be uniform_from(&amp;mut stream)
+    let b be integer_from(&amp;mut stream, 0, 10)
+    print(a &lt; 1.0)
+    print(b &lt; 10)</code></pre>
+<pre class="output"><code>true
+true</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> Neither kind is secure. Do not use them for passwords or keys that protect anything.</p></aside>
+<h2 id="statistics">Statistics<a class="anchor" href="#statistics" aria-hidden="true">#</a></h2>
+<p>The <code>stats</code> module computes summaries of an array of <code>F64</code>. Each function returns a value that may be missing, because the mean of no numbers is not defined:</p>
+<pre data-science><code>use stats (mean, variance, std, median, quantile, min, correlation)
+
+def main():
+    let xs be [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+    let m be mean(xs)
+    if m?:
+        print(m)
+    let v be variance(xs, 0)
+    if v?:
+        print(v)
+    let spread be std(xs, 1)
+    if spread?:
+        print(spread)
+    let mid be median(xs)
+    if mid?:
+        print(mid)
+    let top be quantile(xs, 0.9)
+    if top?:
+        print(top)
+    let lowest be min(xs)
+    if lowest?:
+        print(lowest)
+    let ys be [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    let r be correlation(xs, ys)
+    if r?:
+        print(r)</code></pre>
+<pre class="output"><code>5.0
+4.0
+2.138089935299395
+4.5
+7.6
+2.0
+0.9274260335029677</code></pre>
+<p><code>variance</code> and <code>std</code> take a second number, <code>ddof</code>. Use 0 to divide by the count and 1 to divide by the count minus one, the sample variance.</p>
+<p>To summarize numbers one at a time, without keeping them all, use <code>Welford</code>:</p>
+<pre data-science><code>use stats (Welford)
+
+def main():
+    let mutable running be Welford.new()
+    for x in [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]:
+        running.add(x)
+    print(running.count())
+    let m be running.mean()
+    if m?:
+        print(m)</code></pre>
+<pre class="output"><code>8
+5.0</code></pre>
+<h2 id="arrays-of-numbers">Arrays of numbers<a class="anchor" href="#arrays-of-numbers" aria-hidden="true">#</a></h2>
+<p>An <code>NdArray</code> is a grid of <code>F64</code> with any number of dimensions. It lives in the <code>ndarray</code> module. <code>from_array</code> takes the values and the dimensions. It checks that the count matches, so it returns an error too:</p>
+<pre data-science><code>use ndarray (NdArray)
+
+def main():
+    let a, err be NdArray.from_array([1.0, 2.0, 3.0, 4.0], [2, 2])
+    if err?:
+        print(&quot;wrong number of values&quot;)
+        return
+    print(a)
+    print(a.size())
+    print(a.sum())
+    print(a.mean())</code></pre>
+<pre class="output"><code>[[1.0 2.0]
+ [3.0 4.0]]
+4
+10.0
+2.5</code></pre>
+<p>Here <code>[2, 2]</code> means two rows and two columns. The values are stored row by row.</p>
+<p>The operators work element by element, and a single number applies to every element:</p>
+<pre data-science><code>use ndarray (NdArray)
+
+def main():
+    let a, err be NdArray.from_array([1.0, 2.0, 3.0, 4.0], [2, 2])
+    if err?:
+        return
+    print(a * 2.0)
+    print(a + a)
+    print(a * a)</code></pre>
+<pre class="output"><code>[[2.0 4.0]
+ [6.0 8.0]]
+[[2.0 4.0]
+ [6.0 8.0]]
+[[1.0 4.0]
+ [9.0 16.0]]</code></pre>
+<p><code>a * a</code> multiplies matching elements. It is not the matrix product; for that, use <code>matmul</code>, shown below.</p>
+<p>There are several ways to make an array without listing its values, and several ways to summarize one along a direction:</p>
+<pre data-science><code>use ndarray (NdArray)
+
+def main():
+    print(NdArray.zeros([2, 3]))
+    print(NdArray.linspace(0.0, 1.0, 5))
+    let a, err be NdArray.from_array([1.0, 2.0, 3.0, 4.0], [2, 2])
+    if err?:
+        return
+    let columns, axis_err be a.sum_axis(0)
+    if not axis_err?:
+        print(columns)
+    let item be a.get_2d(1, 0)
+    if item?:
+        print(item)
+    let flipped, flip_err be a.transpose()
+    if not flip_err?:
+        print(flipped)</code></pre>
+<pre class="output"><code>[[0.0 0.0 0.0]
+ [0.0 0.0 0.0]]
+[0.0 0.25 0.5 0.75 1.0]
+[4.0 6.0]
+3.0
+[[1.0 3.0]
+ [2.0 4.0]]</code></pre>
+<p><code>sum_axis(0)</code> adds down the rows, giving one total per column. <code>get_2d(row, column)</code> reads one element and gives a value that may be missing, in case the position is outside the array. <code>ones</code>, <code>full</code> and <code>arange</code> also create arrays, and <code>reshape</code>, <code>min_axis</code>, <code>max_axis</code> and <code>mean_axis</code> do what their names say.</p>
+<aside class="callout-note"><p><strong>Note:</strong> An array's dimensions are the field <code>a.dims</code>, an <code>Array[Int]</code>, so you cannot print it directly. Loop over it with <code>for</code>.</p></aside>
+<h2 id="linear-algebra">Linear algebra<a class="anchor" href="#linear-algebra" aria-hidden="true">#</a></h2>
+<p>The <code>linalg</code> module works on <code>NdArray</code>s. Each function that can fail returns the result and an error. Here is a system of equations, 2x + y = 3 and x + 3y = 5:</p>
+<pre data-science><code>use ndarray (NdArray)
+use linalg (solve, determinant)
+
+def main():
+    let a, a_err be NdArray.from_array([2.0, 1.0, 1.0, 3.0], [2, 2])
+    let b, b_err be NdArray.from_array([3.0, 5.0], [2, 1])
+    if a_err? or b_err?:
+        return
+    let det, det_err be determinant(a)
+    if not det_err?:
+        print(det)
+    let x, err be solve(a, b)
+    if err?:
+        print(err.message())
+    else:
+        print(x)</code></pre>
+<pre class="output"><code>5.0
+[[0.8]
+ [1.4]]</code></pre>
+<p><code>solve(a, b)</code> finds the <code>x</code> that makes <code>a * x</code> equal <code>b</code>. A matrix with no solution is reported as an error rather than a wrong answer:</p>
+<pre data-science><code>use ndarray (NdArray)
+use linalg (solve)
+
+def main():
+    let flat, flat_err be NdArray.from_array([1.0, 2.0, 2.0, 4.0], [2, 2])
+    let b, b_err be NdArray.from_array([1.0, 1.0], [2, 1])
+    if flat_err? or b_err?:
+        return
+    let x, err be solve(flat, b)
+    if err?:
+        print(err.message())</code></pre>
+<pre class="output"><code>solve: the matrix is singular</code></pre>
+<p>The matrix product is <code>matmul(a, b)</code>. <code>linalg</code> also has <code>inverse</code>, <code>transpose</code>, <code>trace</code>, <code>identity(n)</code>, the decompositions <code>lu</code>, <code>qr</code> and <code>cholesky</code>, and the norms <code>norm_frobenius</code>, <code>norm_1</code>, <code>norm_inf</code> and <code>norm_2</code>.</p>
+<aside class="callout-note"><p><strong>Note:</strong> These routines are written in Science and are meant to be correct and clear, not fast. Very large matrices will be slow.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>F64</code> and <code>Int</code> have math methods; use <code>is_close</code> to compare floats.</li><li><code>use complex (Complex)</code> gives complex numbers with the usual operators.</li><li><code>use random</code> gives reproducible <code>Key</code>s for repeatable results and <code>Stream</code>s for quick work. A key is used up by each draw.</li><li><code>use stats</code> summarizes arrays of <code>F64</code>; results that may not exist are checked with <code>?</code>.</li><li><code>use ndarray (NdArray)</code> is a grid of numbers with element-wise operators and axis sums.</li><li><code>use linalg</code> solves, inverts and decomposes matrices, and reports failure as an error.</li></ul>
+<p>Next: <a href="std-formats.html">Data formats</a>.</p>
 <nav class="pager"><a class="prev" href="std-io.html"><span>Previous</span>Files and the system</a><a class="next" href="std-formats.html"><span>Next</span>Data formats</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#math-on-numbers">Math on numbers</a></li><li><a href="#complex-numbers">Complex numbers</a></li><li><a href="#random-numbers">Random numbers</a></li><li><a href="#statistics">Statistics</a></li><li><a href="#arrays-of-numbers">Arrays of numbers</a></li><li><a href="#linear-algebra">Linear algebra</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Interfaces &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="An interface names a set of methods. Any type that provides those methods can be used wherever the interface is asked for.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,255 @@
 <main>
 <p class="crumb">Core ideas</p>
 <h1>Interfaces</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>An <strong>interface</strong> names a set of methods. Any type that provides those methods can be used wherever the interface is asked for.</p>
+<h2 id="defining-an-interface">Defining an interface<a class="anchor" href="#defining-an-interface" aria-hidden="true">#</a></h2>
+<p>An interface lists method signatures with no body:</p>
+<pre data-science><code>interface Speak:
+    def speak(self) -&gt; String</code></pre>
+<p><code>self</code> is the value the method is called on. This interface says: a type that is <code>Speak</code> has a method <code>speak</code> that returns a <code>String</code>.</p>
+<h2 id="implementing-it">Implementing it<a class="anchor" href="#implementing-it" aria-hidden="true">#</a></h2>
+<p><code>Type implements Interface:</code> gives a type its methods:</p>
+<pre data-science><code>type Dog:
+    name: String
+
+type Robot:
+    id: Int
+
+interface Speak:
+    def speak(self) -&gt; String
+
+Dog implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;{self.name} says woof&quot;
+
+Robot implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;unit {self.id} says beep&quot;
+
+def main():
+    print(Dog(name: &quot;Rex&quot;).speak())
+    print(Robot(id: 7).speak())</code></pre>
+<pre class="output"><code>Rex says woof
+unit 7 says beep</code></pre>
+<p>The type comes first, then <code>implements</code>, then the interface. Two unrelated types now share one method name.</p>
+<h2 id="default-methods">Default methods<a class="anchor" href="#default-methods" aria-hidden="true">#</a></h2>
+<p>An interface can give a method a body. Every implementer gets it for free, and may replace it:</p>
+<pre data-science><code>type Dog:
+    name: String
+
+type Robot:
+    id: Int
+
+interface Speak:
+    def speak(self) -&gt; String
+
+    def shout(self) -&gt; String:
+        f&quot;{self.speak()}!&quot;
+
+Dog implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;{self.name} says woof&quot;
+
+Robot implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;unit {self.id} says beep&quot;
+
+    def shout(self) -&gt; String:
+        &quot;BEEP&quot;
+
+def main():
+    print(Dog(name: &quot;Rex&quot;).shout())
+    print(Robot(id: 7).shout())</code></pre>
+<pre class="output"><code>Rex says woof!
+BEEP</code></pre>
+<p><code>Dog</code> only wrote <code>speak</code>, so its <code>shout</code> is the default, which calls <code>speak</code>. <code>Robot</code> wrote its own <code>shout</code>.</p>
+<h2 id="methods-that-change-the-value">Methods that change the value<a class="anchor" href="#methods-that-change-the-value" aria-hidden="true">#</a></h2>
+<p><code>mutable self</code> lets a method modify the value. The caller needs a <code>let mutable</code> binding:</p>
+<pre data-science><code>type Counter:
+    n: Int
+
+interface Reset:
+    def reset(mutable self)
+
+Counter implements Reset:
+    def reset(mutable self):
+        self.n be 0
+
+def main():
+    let mutable c be Counter(n: 5)
+    c.reset()
+    print(c.n)</code></pre>
+<pre class="output"><code>0</code></pre>
+<h2 id="methods-without-an-interface">Methods without an interface<a class="anchor" href="#methods-without-an-interface" aria-hidden="true">#</a></h2>
+<p>For methods that belong to one type and no interface, use <code>has:</code>. A function with no <code>self</code> is called through the type, which is how you write constructors:</p>
+<pre data-science><code>type Counter:
+    n: Int
+
+Counter has:
+    def new() -&gt; Counter:
+        Counter(n: 5)
+
+    def doubled(self) -&gt; Int:
+        self.n * 2
+
+def main():
+    let c be Counter.new()
+    print(c.doubled())</code></pre>
+<pre class="output"><code>10</code></pre>
+<h2 id="using-an-interface-as-a-bound">Using an interface as a bound<a class="anchor" href="#using-an-interface-as-a-bound" aria-hidden="true">#</a></h2>
+<p>A generic function can ask for "any type that is <code>Speak</code>". The <code>[T: Speak]</code> after the name is the bound; <a href="generics.html">Generics</a> covers it fully:</p>
+<pre data-science><code>type Dog:
+    name: String
+
+interface Speak:
+    def speak(self) -&gt; String
+
+Dog implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;{self.name} says woof&quot;
+
+def announce[T: Speak](item: &amp;T):
+    print(item.speak())
+
+def main():
+    announce(Dog(name: &quot;Rex&quot;))</code></pre>
+<pre class="output"><code>Rex says woof</code></pre>
+<p>The compiler builds a copy of <code>announce</code> for each type it is used with, so this costs nothing at run time.</p>
+<h2 id="mixing-types-any">Mixing types: <code>any</code><a class="anchor" href="#mixing-types-any" aria-hidden="true">#</a></h2>
+<p>A bound fixes one type per call. To hold different types in one collection, use <code>any Interface</code> inside a <code>Box</code>:</p>
+<pre data-science><code>type Dog:
+    name: String
+
+type Robot:
+    id: Int
+
+interface Speak:
+    def speak(self) -&gt; String
+
+Dog implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;{self.name} says woof&quot;
+
+Robot implements Speak:
+    def speak(self) -&gt; String:
+        f&quot;unit {self.id} says beep&quot;
+
+def main():
+    let crowd: Array[Box[any Speak]] be [Box.new(Dog(name: &quot;A&quot;)), Box.new(Robot(id: 2))]
+    for member in crowd:
+        print(member.speak())</code></pre>
+<pre class="output"><code>A says woof
+unit 2 says beep</code></pre>
+<p><code>Box.new(value)</code> puts a value on the heap, and <code>any Speak</code> forgets which type it was, remembering only that it can <code>speak</code>. The right method is picked while the program runs.</p>
+<p>A function can also take a borrowed <code>&amp;any Speak</code> without a <code>Box</code>.</p>
+<h2 id="interfaces-from-the-prelude">Interfaces from the prelude<a class="anchor" href="#interfaces-from-the-prelude" aria-hidden="true">#</a></h2>
+<p>Some interfaces are built in. Implementing them lets your type work with the language itself.</p>
+<h3 id="display">Display<a class="anchor" href="#display" aria-hidden="true">#</a></h3>
+<p><code>print</code> and <code>f&quot;…&quot;</code> need <code>Display</code>. Its method writes into a <code>Formatter</code>:</p>
+<pre data-science><code>type Point:
+    x: F64
+    y: F64
+
+Point implements Display:
+    def display(self, into: &amp;mut Formatter):
+        into.raw(&quot;(&quot;)
+        into.number(self.x)
+        into.raw(&quot;, &quot;)
+        into.number(self.y)
+        into.raw(&quot;)&quot;)
+
+def main():
+    let p be Point(x: 1.0, y: 2.5)
+    print(p)
+    print(f&quot;point: {p}&quot;)</code></pre>
+<pre class="output"><code>(1.0, 2.5)
+point: (1.0, 2.5)</code></pre>
+<h3 id="clone">Clone<a class="anchor" href="#clone" aria-hidden="true">#</a></h3>
+<p><code>Clone</code> gives an explicit way to copy a value:</p>
+<pre data-science><code>type Note:
+    text: String
+
+Note implements Clone:
+    def clone(self) -&gt; Note:
+        Note(text: f&quot;{self.text}&quot;)
+
+def main():
+    let a be Note(text: &quot;hi&quot;)
+    let b be a.clone()
+    print(b.text)</code></pre>
+<pre class="output"><code>hi</code></pre>
+<p><code>f&quot;{self.text}&quot;</code> is the way to make an owned copy of a borrowed <code>String</code>.</p>
+<h3 id="eq-and-ord">Eq and Ord<a class="anchor" href="#eq-and-ord" aria-hidden="true">#</a></h3>
+<p><code>Eq</code> defines <code>is</code>; <code>Ord</code> defines <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code> and <code>&gt;=</code> from one method, <code>less</code>:</p>
+<pre data-science><code>type Note:
+    text: String
+
+Note implements Eq:
+    def eq(self, other: Note) -&gt; Bool:
+        self.text is other.text
+
+Note implements Ord:
+    def less(self, other: &amp;Note) -&gt; Bool:
+        self.text.length() &lt; other.text.length()
+
+def main():
+    let a be Note(text: &quot;hi&quot;)
+    let b be Note(text: &quot;longer&quot;)
+    print(a &lt; b)
+    print(b &lt; a)
+    print(a is b)</code></pre>
+<pre class="output"><code>true
+false
+false</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> <code>is</code> hands its right-hand side to <code>eq</code> by value, so a value that is not <code>Copy</code> cannot be used again afterwards. Compare last, or give the type a <code>Copy</code> implementation if it is small.</p></aside>
+<h2 id="operator-overloading">Operator overloading<a class="anchor" href="#operator-overloading" aria-hidden="true">#</a></h2>
+<p>The operators are interfaces too: <code>Add</code> for <code>+</code>, <code>Sub</code> for <code>-</code>, <code>Mul</code> for <code>*</code>, <code>Neg</code> for unary <code>-</code>. Implement one and the operator works on your type:</p>
+<pre data-science><code>type Vector2:
+    x: F64
+    y: F64
+
+Vector2 implements Add:
+    def add(self, other: Vector2) -&gt; Vector2:
+        Vector2(x: self.x + other.x, y: self.y + other.y)
+
+Vector2 implements Mul:
+    def mul(self, scale: F64) -&gt; Vector2:
+        Vector2(x: self.x * scale, y: self.y * scale)
+
+Vector2 implements Display:
+    def display(self, into: &amp;mut Formatter):
+        into.number(self.x)
+        into.raw(&quot; &quot;)
+        into.number(self.y)
+
+def main():
+    let a be Vector2(x: 1.0, y: 2.0)
+    let b be Vector2(x: 0.5, y: 0.5)
+    print(a + b)
+    print(a * 3.0)</code></pre>
+<pre class="output"><code>1.5 2.5
+3.0 6.0</code></pre>
+<h2 id="a-missing-implementation">A missing implementation<a class="anchor" href="#a-missing-implementation" aria-hidden="true">#</a></h2>
+<p>If a type does not implement the interface, the compiler says so before the program runs:</p>
+<pre data-science class="refused"><code>type Rock:
+    weight: Int
+
+interface Speak:
+    def speak(self) -&gt; String
+
+def announce[T: Speak](item: &amp;T):
+    print(item.speak())
+
+def main():
+    announce(Rock(weight: 3))</code></pre>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>interface Name:</code> lists methods; a method with a body is a default.</li><li><code>Type implements Interface:</code> provides them. Methods that belong to one type go in <code>Type has:</code>.</li><li><code>[T: Interface]</code> accepts any type that implements it; <code>Box[any Interface]</code> holds a mix of types.</li><li><code>Display</code>, <code>Clone</code>, <code>Eq</code>, <code>Ord</code> and the operator interfaces (<code>Add</code>, <code>Sub</code>, <code>Mul</code>, <code>Neg</code>) connect your types to <code>print</code>, <code>is</code>, <code>&lt;</code> and <code>+</code>.</li></ul>
+<p>Next: <a href="generics.html">Generics</a>.</p>
 <nav class="pager"><a class="prev" href="errors.html"><span>Previous</span>Missing values and errors</a><a class="next" href="generics.html"><span>Next</span>Generics</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#defining-an-interface">Defining an interface</a></li><li><a href="#implementing-it">Implementing it</a></li><li><a href="#default-methods">Default methods</a></li><li><a href="#methods-that-change-the-value">Methods that change the value</a></li><li><a href="#methods-without-an-interface">Methods without an interface</a></li><li><a href="#using-an-interface-as-a-bound">Using an interface as a bound</a></li><li><a href="#mixing-types-any">Mixing types: <code>any</code></a></li><li><a href="#interfaces-from-the-prelude">Interfaces from the prelude</a></li><li><a href="#operator-overloading">Operator overloading</a></li><li><a href="#a-missing-implementation">A missing implementation</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

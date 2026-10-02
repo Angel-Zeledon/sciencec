@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Keywords and reserved words &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A few words belong to the language, so you cannot use them as names for your own variables, functions or fields. This page lists them all, and what to write instead when you reach for one.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,41 @@
 <main>
 <p class="crumb">Going further</p>
 <h1>Keywords and reserved words</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A few words belong to the language, so you cannot use them as names for your own variables, functions or fields. This page lists them all, and what to write instead when you reach for one.</p>
+<h2 id="words-with-a-meaning-today">Words with a meaning today<a class="anchor" href="#words-with-a-meaning-today" aria-hidden="true">#</a></h2>
+<p>These are in use. Each one is covered in the chapter named beside it.</p>
+<div class="scroller"><table><thead><tr><th>Group</th><th>Words</th><th>Chapter</th></tr></thead><tbody><tr><td>Bindings</td><td><code>let</code> <code>be</code> <code>mutable</code> <code>const</code></td><td><a href="variables.html">Variables</a></td></tr><tr><td>Functions</td><td><code>def</code> <code>return</code> <code>giving</code> <code>each</code></td><td><a href="functions.html">Functions</a>, <a href="chains.html">Chains and closures</a></td></tr><tr><td>Control flow</td><td><code>if</code> <code>else</code> <code>match</code> <code>for</code> <code>in</code> <code>loop</code> <code>break</code> <code>continue</code></td><td><a href="control-flow.html">Control flow</a></td></tr><tr><td>Types</td><td><code>type</code> <code>choice</code> <code>interface</code> <code>implements</code> <code>has</code> <code>any</code> <code>Self</code> <code>self</code> <code>where</code> <code>as</code></td><td><a href="types.html">Types</a>, <a href="interfaces.html">Interfaces</a>, <a href="generics.html">Generics</a></td></tr><tr><td>Values</td><td><code>true</code> <code>false</code> <code>null</code></td><td><a href="basic-types.html">Numbers, text and truth</a></td></tr><tr><td>Logic</td><td><code>and</code> <code>or</code> <code>not</code> <code>is</code></td><td><a href="control-flow.html">Control flow</a></td></tr><tr><td>Checking</td><td><code>assert</code></td><td><a href="testing.html">Testing</a></td></tr><tr><td>Modules</td><td><code>use</code> <code>public</code></td><td><a href="modules.html">Modules</a></td></tr><tr><td>Low level</td><td><code>extern</code> <code>unsafe</code> <code>tool</code></td><td><a href="ffi.html">Calling C</a></td></tr></tbody></table></div>
+<p>Two things are easy to miss:</p>
+<ul><li><code>is</code> is how you test equality: <code>a is b</code>, <code>a is not b</code>. There is no <code>==</code>.</li><li><code>each</code> is not a loop word. It names the item in a one-use closure, as in <code>docs.iterate().map(each.title)</code>.</li></ul>
+<h2 id="words-that-only-give-a-better-error">Words that only give a better error<a class="anchor" href="#words-that-only-give-a-better-error" aria-hidden="true">#</a></h2>
+<p><code>of</code>, <code>borrowed</code> and <code>mut</code> are not part of everyday Science. They are reserved so that code written in another style gets a message that names the right spelling. <code>mut</code> appears in one place that is valid, the type <code>&amp;mut T</code>.</p>
+<h2 id="words-kept-for-later">Words kept for later<a class="anchor" href="#words-kept-for-later" aria-hidden="true">#</a></h2>
+<p>These words do nothing yet, but the language keeps them for features that are planned. Using one as a name is an error.</p>
+<div class="scroller"><table><thead><tr><th>Area</th><th>Words</th></tr></thead><tbody><tr><td>Concurrency</td><td><code>async</code> <code>await</code> <code>parallel</code> <code>spawn</code> <code>send</code> <code>receive</code> <code>supervise</code> <code>pure</code></td></tr><tr><td>Agents and state</td><td><code>agent</code> <code>prompt</code> <code>durable</code> <code>checkpoint</code> <code>resume</code></td></tr><tr><td>Numerics</td><td><code>tensor</code> <code>shape</code> <code>kernel</code> <code>equation</code> <code>model</code></td></tr><tr><td>Language</td><td><code>mod</code> <code>macro</code> <code>static</code> <code>move</code> <code>union</code> <code>yield</code> <code>import</code> <code>on</code> <code>with</code></td></tr></tbody></table></div>
+<h2 id="choosing-another-name">Choosing another name<a class="anchor" href="#choosing-another-name" aria-hidden="true">#</a></h2>
+<p>The reserved words you are most likely to want are ordinary English. Here is what to write instead.</p>
+<div class="scroller"><table><thead><tr><th>You want</th><th>It is reserved</th><th>Write</th></tr></thead><tbody><tr><td>a <code>send</code> function or field</td><td><code>send</code></td><td><code>deliver</code>, <code>post</code>, <code>transmit</code></td></tr><tr><td>a variable called <code>model</code></td><td><code>model</code></td><td><code>weights</code></td></tr><tr><td>the dimensions of an array</td><td><code>shape</code></td><td><code>dims</code></td></tr><tr><td>a parameter called <code>tensor</code></td><td><code>tensor</code></td><td><code>values</code>, <code>input</code></td></tr><tr><td>a remainder function</td><td><code>mod</code></td><td><code>remainder</code></td></tr><tr><td>a set operation</td><td><code>union</code></td><td><code>merged</code></td></tr><tr><td>a reaction <code>yield</code></td><td><code>yield</code></td><td><code>produced</code>, <code>efficiency</code></td></tr><tr><td>a convolution <code>kernel</code></td><td><code>kernel</code></td><td><code>window</code>, <code>weights</code></td></tr><tr><td>parameters called <code>with</code> or <code>on</code></td><td><code>with</code>, <code>on</code></td><td><code>using</code>, <code>target</code></td></tr><tr><td>a module called <code>const</code></td><td><code>const</code></td><td><code>constants</code></td></tr><tr><td>a field called <code>def</code></td><td><code>def</code></td><td><code>definition</code></td></tr><tr><td>a field called <code>tool</code></td><td><code>tool</code></td><td><code>helper</code>, <code>utility</code></td></tr></tbody></table></div>
+<p>Using a reserved word as a name is refused:</p>
+<pre data-science class="refused"><code>def main():
+    let model be 3
+    print(model)</code></pre>
+<p>Rename it, and the program is fine:</p>
+<pre data-science><code>def main():
+    let weights be 3
+    print(weights)</code></pre>
+<pre class="output"><code>3</code></pre>
+<h2 id="words-that-look-reserved-but-are-not">Words that look reserved but are not<a class="anchor" href="#words-that-look-reserved-but-are-not" aria-hidden="true">#</a></h2>
+<p>Some words are common in other languages and are free here. You can use them as names, and some are the names of things you will use all the time:</p>
+<ul><li><code>while</code>, <code>try</code>, <code>trait</code>, <code>function</code>, <code>returns</code>, <code>methods</code>, <code>at</code>, <code>above</code>, <code>below</code>, <code>most</code> and <code>least</code>.</li><li><code>grad</code>, <code>dim</code>, <code>dims</code>, <code>axis</code>, <code>device</code>, <code>dtype</code>, <code>unit</code> and <code>alias</code>.</li><li><code>print</code>, <code>write</code> and <code>panic</code> are ordinary functions, not keywords.</li></ul>
+<p>Even so, writing <code>while</code> or <code>function</code> where the language expects its own syntax gets a message that points at the Science form: <code>loop:</code> for <code>while</code>, <code>def</code> for <code>function</code>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>Keywords in use have chapters of their own; the table above says which.</li><li><code>of</code>, <code>borrowed</code> and <code>mut</code> are kept so that old spellings get a helpful error.</li><li>The "later" words are refused as names now so that the features can arrive without breaking your code.</li><li>When a name is taken, use the table above to pick another.</li></ul>
+<p>Back to the <a href="index.html">start of the book</a>.</p>
 <nav class="pager"><a class="prev" href="from-rust.html"><span>Previous</span>Coming from Rust</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#words-with-a-meaning-today">Words with a meaning today</a></li><li><a href="#words-that-only-give-a-better-error">Words that only give a better error</a></li><li><a href="#words-kept-for-later">Words kept for later</a></li><li><a href="#choosing-another-name">Choosing another name</a></li><li><a href="#words-that-look-reserved-but-are-not">Words that look reserved but are not</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Coming from Python &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="If you know Python, you already know most of what Science asks of you: indentation makes blocks, for walks a collection, f-strings build text. This page shows the Python you would write on the left and the Science on the right, then looks at the habits that need to change.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,140 @@
 <main>
 <p class="crumb">Going further</p>
 <h1>Coming from Python</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>If you know Python, you already know most of what Science asks of you: indentation makes blocks, <code>for</code> walks a collection, f-strings build text. This page shows the Python you would write on the left and the Science on the right, then looks at the habits that need to change.</p>
+<h2 id="side-by-side">Side by side<a class="anchor" href="#side-by-side" aria-hidden="true">#</a></h2>
+<div class="scroller"><table><thead><tr><th>Python</th><th>Science</th></tr></thead><tbody><tr><td><code>x = 5</code></td><td><code>let x be 5</code></td></tr><tr><td><code>x = 6</code> (reassign)</td><td><code>x be 6</code> (after <code>let mutable x be 5</code>)</td></tr><tr><td><code>def f(a, b):</code></td><td><code>def f(a: Int, b: Int) -&gt; Int:</code></td></tr><tr><td><code>class Point:</code></td><td><code>type Point:</code></td></tr><tr><td><code>if x == 3:</code></td><td><code>if x is 3:</code></td></tr><tr><td><code>if x != 3:</code></td><td><code>if x is not 3:</code></td></tr><tr><td><code>!x</code> is <code>not x</code></td><td><code>not x</code></td></tr><tr><td><code>while cond:</code></td><td><code>loop:</code> and <code>break</code></td></tr><tr><td><code>for i in range(n):</code></td><td><code>for i in 0..n:</code></td></tr><tr><td><code>[1, 2, 3]</code></td><td><code>[1, 2, 3]</code></td></tr><tr><td><code>{&quot;a&quot;: 1}</code></td><td><code>Map[String, Int]</code></td></tr><tr><td><code>None</code></td><td><code>null</code></td></tr><tr><td><code>Optional[int]</code></td><td><code>Int?</code></td></tr><tr><td><code>raise</code> / <code>try</code> / <code>except</code></td><td>return <code>(value, Error?)</code></td></tr><tr><td><code>[x * 2 for x in xs]</code></td><td><code>xs.iterate().map(x giving x * 2).collect()</code></td></tr><tr><td><code>print(f&quot;{x}&quot;)</code></td><td><code>print(f&quot;{x}&quot;)</code></td></tr><tr><td><code>import math</code></td><td><code>use math</code></td></tr><tr><td><code># comment</code></td><td><code># comment</code></td></tr></tbody></table></div>
+<p>The rest of this page explains the rows that are not obvious.</p>
+<h2 id="names-and-assignment">Names and assignment<a class="anchor" href="#names-and-assignment" aria-hidden="true">#</a></h2>
+<p>In Python one symbol, <code>=</code>, creates a variable and changes it. In Science the word <code>be</code> does both, and <code>let</code> marks the first time:</p>
+<pre data-science><code>def main():
+    let total be 10
+    let mutable count be 0
+    count be count + 1
+    print(total)
+    print(count)</code></pre>
+<pre class="output"><code>10
+1</code></pre>
+<p>A name made with <code>let</code> cannot be changed. If you will change it, say <code>let mutable</code>. That is the only way the compiler can tell, when you read code, which values stay fixed.</p>
+<pre data-science class="refused"><code>def main():
+    let count be 0
+    count be count + 1</code></pre>
+<p>There is no <code>=</code> operator at all. Equality is the word <code>is</code>:</p>
+<pre data-science><code>def main():
+    let answer be 42
+    if answer is 42:
+        print(&quot;yes&quot;)
+    if answer is not 7:
+        print(&quot;not seven&quot;)</code></pre>
+<pre class="output"><code>yes
+not seven</code></pre>
+<h2 id="types-are-written-down">Types are written down<a class="anchor" href="#types-are-written-down" aria-hidden="true">#</a></h2>
+<p>Python lets a function take anything. In Science each parameter and the result have a type, and the compiler checks every call:</p>
+<pre data-science><code>def area(width: F64, height: F64) -&gt; F64:
+    width * height
+
+def main():
+    print(area(3.0, 4.5))</code></pre>
+<pre class="output"><code>13.5</code></pre>
+<p>The last expression in a function is its result, so there is no <code>return</code>. You can write <code>return</code> to leave early, as in Python.</p>
+<aside class="callout-note"><p><strong>Note:</strong> The Python habit of leaving types out does not carry over. Inside a function, though, you rarely need to write a type: <code>let total be 10</code> already knows it is an <code>Int</code>.</p></aside>
+<h2 id="no-while-no-range">No <code>while</code>, no <code>range</code><a class="anchor" href="#no-while-no-range" aria-hidden="true">#</a></h2>
+<p>Counting uses a range of numbers. <code>0..n</code> goes from 0 up to, but not including, <code>n</code>, the same as <code>range(n)</code>:</p>
+<pre data-science><code>def main():
+    for i in 0..3:
+        print(i)</code></pre>
+<pre class="output"><code>0
+1
+2</code></pre>
+<p>A loop that repeats until something is true is <code>loop:</code> with a <code>break</code>. Put the test inside:</p>
+<pre data-science><code>def main():
+    let mutable n be 1
+    loop:
+        if n &gt;= 100:
+            break
+        n be n * 2
+    print(n)</code></pre>
+<pre class="output"><code>128</code></pre>
+<h2 id="lists-and-no-comprehensions">Lists, and no comprehensions<a class="anchor" href="#lists-and-no-comprehensions" aria-hidden="true">#</a></h2>
+<p>A list is written the same way, but its name is <code>Array</code>, and every item has the same type. Where Python would use a comprehension, Science chains steps onto <code>.iterate()</code>:</p>
+<pre data-science><code>def main():
+    let numbers be [1, 2, 3, 4]
+    let doubled be numbers.iterate().map(n giving n * 2).collect()
+    for n in doubled:
+        print(n)</code></pre>
+<pre class="output"><code>2
+4
+6
+8</code></pre>
+<p><code>map</code> changes each item, <code>discard</code> drops items for which the test is true, and <code>collect()</code> gathers the result into a new array. The word before <code>giving</code> names the item. <a href="chains.html">Chains and closures</a> has the full set.</p>
+<p>Python's <code>xs[5]</code> raises <code>IndexError</code> when the list is too short. Here <code>get</code> hands back a value that may be missing, which leads to the next section.</p>
+<h2 id="none-is-null-and-it-is-in-the-type"><code>None</code> is <code>null</code>, and it is in the type<a class="anchor" href="#none-is-null-and-it-is-in-the-type" aria-hidden="true">#</a></h2>
+<p>In Python any variable might be <code>None</code>, and you find out when the program crashes. In Science a value that may be missing has a <code>?</code> in its type, and you must check it before use:</p>
+<pre data-science><code>def main():
+    let scores be [3, 9, 4]
+    let first be scores.get(0)
+    if first?:
+        print(f&quot;first: {first}&quot;)
+    let missing be scores.get(10)
+    if not missing?:
+        print(&quot;no tenth score&quot;)</code></pre>
+<pre class="output"><code>first: 3
+no tenth score</code></pre>
+<p><code>first?</code> asks "is there a value?". Inside the <code>if</code>, the value can be used directly. <a href="errors.html">Missing values and errors</a> covers this in full.</p>
+<h2 id="no-exceptions">No exceptions<a class="anchor" href="#no-exceptions" aria-hidden="true">#</a></h2>
+<p>Python signals failure by raising and catching. Science functions that can fail return the value and an error side by side, and the caller checks:</p>
+<pre data-science><code>def main():
+    let value, err be &quot;forty&quot;.parse_int()
+    if err?:
+        print(&quot;not a number&quot;)
+    else:
+        print(value)
+
+    let ok, bad be &quot;42&quot;.parse_int()
+    if bad?:
+        print(&quot;not a number&quot;)
+    else:
+        print(ok)</code></pre>
+<pre class="output"><code>not a number
+42</code></pre>
+<p>There is no <code>try</code>, <code>except</code> or <code>raise</code>. The failure is part of the function's signature, so you cannot forget that it can happen. A function that can fail says <code>-&gt; (Int, Error?)</code>.</p>
+<h2 id="indentation-is-the-same">Indentation is the same<a class="anchor" href="#indentation-is-the-same" aria-hidden="true">#</a></h2>
+<p>Blocks are the lines indented under a <code>:</code>. Four spaces is the convention, and tabs are refused. A short body can sit on the same line, when it is a single expression:</p>
+<pre data-science><code>def main():
+    let n be 5
+    if n &gt; 3: print(&quot;big&quot;) else: print(&quot;small&quot;)</code></pre>
+<pre class="output"><code>big</code></pre>
+<h2 id="classes-become-types">Classes become types<a class="anchor" href="#classes-become-types" aria-hidden="true">#</a></h2>
+<p>Python puts data and methods together in <code>class</code>. Science separates them: <code>type</code> holds the fields, and a <code>has</code> block holds the methods.</p>
+<pre data-science><code>type Point:
+    x: F64
+    y: F64
+
+Point has:
+    def length(self) -&gt; F64:
+        (self.x * self.x + self.y * self.y).sqrt()
+
+def main():
+    let p be Point(x: 3.0, y: 4.0)
+    print(p.length())</code></pre>
+<pre class="output"><code>5.0</code></pre>
+<p>There is no <code>__init__</code>. You build a value by naming its fields, <code>Point(x: 3.0, y: 4.0)</code>. <code>self</code> is written as the first parameter of a method and is never passed by the caller. <a href="types.html">Types</a> has more.</p>
+<h2 id="imports">Imports<a class="anchor" href="#imports" aria-hidden="true">#</a></h2>
+<p><code>use</code> replaces <code>import</code>, and you list the names you want:</p>
+<pre data-science><code>use complex (Complex)
+
+def main():
+    print(Complex.new(3.0, 4.0).modulus())</code></pre>
+<pre class="output"><code>5.0</code></pre>
+<p><a href="std.html">The standard library tour</a> lists what you can <code>use</code>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>let x be v</code> creates a name; <code>x be v</code> changes it; <code>let mutable</code> allows change.</li><li>Equality is <code>is</code>, not <code>==</code>. There is no <code>=</code> operator.</li><li>No <code>while</code> and no <code>range</code>: use <code>loop:</code> with <code>break</code>, and <code>for i in 0..n:</code>.</li><li>Types are written on parameters and results.</li><li><code>None</code> is <code>null</code>, and <code>T?</code> in a type means "might be missing".</li><li>Failure is a returned pair, not an exception.</li><li>Comprehensions are chains: <code>.iterate().map(...).collect()</code>.</li><li><code>class</code> becomes <code>type</code> plus a <code>has</code> block.</li></ul>
+<p>Next: <a href="from-rust.html">coming from Rust</a>, or the list of <a href="keywords.html">keywords</a>.</p>
 <nav class="pager"><a class="prev" href="ffi.html"><span>Previous</span>Calling C</a><a class="next" href="from-rust.html"><span>Next</span>Coming from Rust</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#side-by-side">Side by side</a></li><li><a href="#names-and-assignment">Names and assignment</a></li><li><a href="#types-are-written-down">Types are written down</a></li><li><a href="#no-while-no-range">No <code>while</code>, no <code>range</code></a></li><li><a href="#lists-and-no-comprehensions">Lists, and no comprehensions</a></li><li><a href="#none-is-null-and-it-is-in-the-type"><code>None</code> is <code>null</code>, and it is in the type</a></li><li><a href="#no-exceptions">No exceptions</a></li><li><a href="#indentation-is-the-same">Indentation is the same</a></li><li><a href="#classes-become-types">Classes become types</a></li><li><a href="#imports">Imports</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

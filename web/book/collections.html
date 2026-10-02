@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Arrays, maps and sets &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Most data comes in bulk: a series of measurements, a table of names and values, a collection of unique labels. Science has three built-in collections for this. An array is an ordered list, a map looks values up by key, and a set remembers which items are present.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,174 @@
 <main>
 <p class="crumb">Structuring data</p>
 <h1>Arrays, maps and sets</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Most data comes in bulk: a series of measurements, a table of names and values, a collection of unique labels. Science has three built-in collections for this. An <strong>array</strong> is an ordered list, a <strong>map</strong> looks values up by key, and a <strong>set</strong> remembers which items are present.</p>
+<h2 id="arrays">Arrays<a class="anchor" href="#arrays" aria-hidden="true">#</a></h2>
+<p>An array literal is a comma-separated list in square brackets:</p>
+<pre data-science><code>def main():
+    let readings be [3, 9, 4]
+    print(readings.length())
+    print(readings[0])
+    print(readings[2])</code></pre>
+<pre class="output"><code>3
+3
+4</code></pre>
+<p><code>length()</code> is the number of elements, and <code>readings[i]</code> is the element at position <code>i</code>. Positions start at zero.</p>
+<p>All elements share one type. <code>[3, 9, 4]</code> is an <code>Array[Int]</code>, and <code>[&quot;a&quot;, &quot;b&quot;]</code> is an <code>Array[String]</code>.</p>
+<h2 id="adding-and-removing-elements">Adding and removing elements<a class="anchor" href="#adding-and-removing-elements" aria-hidden="true">#</a></h2>
+<p>An array that changes must be declared <code>let mutable</code>. <code>push</code> adds to the end, and <code>pop</code> removes the last element:</p>
+<pre data-science><code>def main():
+    let mutable readings be [3, 9, 4]
+    readings.push(7)
+    print(readings.length())
+    readings.pop()
+    readings.pop()
+    print(readings.length())</code></pre>
+<pre class="output"><code>4
+2</code></pre>
+<p>You can also assign to a position, again on a mutable array:</p>
+<pre data-science><code>def main():
+    let mutable readings be [3, 9, 4]
+    readings[0] be 100
+    print(readings[0])</code></pre>
+<pre class="output"><code>100</code></pre>
+<h2 id="an-empty-array">An empty array<a class="anchor" href="#an-empty-array" aria-hidden="true">#</a></h2>
+<p>An empty array has no elements to take its type from, so name the type, either on the binding or on <code>new</code>:</p>
+<pre data-science><code>def main():
+    let mutable names be Array[String].new()
+    names.push(&quot;Ada&quot;)
+    names.push(&quot;Grace&quot;)
+    print(names.length())
+
+    let nothing: Array[Int] be []
+    print(nothing.is_empty())</code></pre>
+<pre class="output"><code>2
+true</code></pre>
+<p>The type goes in square brackets after the collection's name.</p>
+<h2 id="going-through-an-array">Going through an array<a class="anchor" href="#going-through-an-array" aria-hidden="true">#</a></h2>
+<p><code>for</code> visits each element in order:</p>
+<pre data-science><code>def main():
+    let readings be [3, 9, 4]
+    let mutable total be 0
+    for reading in readings:
+        total be total + reading
+    print(total)</code></pre>
+<pre class="output"><code>16</code></pre>
+<p>When you need the position as well, loop over a range of positions:</p>
+<pre data-science><code>def main():
+    let readings be [3, 9, 4]
+    for i in 0..readings.length():
+        print(f&quot;reading {i} is {readings[i]}&quot;)</code></pre>
+<pre class="output"><code>reading 0 is 3
+reading 1 is 9
+reading 2 is 4</code></pre>
+<p><code>0..n</code> counts from 0 up to, but not including, <code>n</code>.</p>
+<h2 id="asking-for-an-element-that-may-not-exist">Asking for an element that may not exist<a class="anchor" href="#asking-for-an-element-that-may-not-exist" aria-hidden="true">#</a></h2>
+<p>Indexing past the end stops the program with the message <code>index out of bounds</code>. When you are not sure a position exists, ask with <code>get</code>. It returns the element if it is there and <code>null</code> if it is not:</p>
+<pre data-science><code>def main():
+    let readings be [3, 9, 4]
+
+    let second be readings.get(1)
+    if second?:
+        print(f&quot;found {second}&quot;)
+
+    let tenth be readings.get(10)
+    if tenth?:
+        print(&quot;found a tenth&quot;)
+    else:
+        print(&quot;there is no tenth&quot;)</code></pre>
+<pre class="output"><code>found 9
+there is no tenth</code></pre>
+<p>The <code>?</code> after a name asks whether it holds a value. Inside <code>if second?:</code> you can use <code>second</code> as the number it holds. <a href="errors.html">Missing values and errors</a> covers this in full.</p>
+<h2 id="maps">Maps<a class="anchor" href="#maps" aria-hidden="true">#</a></h2>
+<p>A map pairs keys with values. Name both types in the brackets, <code>Map[Key, Value]</code>, then <code>insert</code> and <code>get</code>:</p>
+<pre data-science><code>def main():
+    let mutable atomic_numbers be Map[String, Int].new()
+    atomic_numbers.insert(&quot;hydrogen&quot;, 1)
+    atomic_numbers.insert(&quot;helium&quot;, 2)
+
+    let found be atomic_numbers.get(&quot;helium&quot;)
+    if found?:
+        print(found)
+
+    print(atomic_numbers.contains(&quot;carbon&quot;))
+    print(atomic_numbers.length())</code></pre>
+<pre class="output"><code>2
+false
+2</code></pre>
+<p>Like an array's <code>get</code>, a map's <code>get</code> returns <code>null</code> when the key is absent, so you check with <code>?</code> before using it. <code>contains</code> answers yes or no.</p>
+<p>Inserting a key that is already there replaces its value. <code>remove</code> takes a key out.</p>
+<pre data-science><code>def main():
+    let mutable counts be Map[String, Int].new()
+    counts.insert(&quot;hits&quot;, 1)
+    counts.insert(&quot;hits&quot;, 10)
+    counts.insert(&quot;misses&quot;, 3)
+    counts.remove(&quot;misses&quot;)
+
+    let hits be counts.get(&quot;hits&quot;)
+    if hits?:
+        print(hits)
+    print(counts.length())</code></pre>
+<pre class="output"><code>10
+1</code></pre>
+<h2 id="going-through-a-map">Going through a map<a class="anchor" href="#going-through-a-map" aria-hidden="true">#</a></h2>
+<p>A <code>for</code> over a map visits its entries in the order they were first inserted. Each entry has a <code>key</code> and a <code>value</code>:</p>
+<pre data-science><code>def main():
+    let mutable atomic_numbers be Map[String, Int].new()
+    atomic_numbers.insert(&quot;hydrogen&quot;, 1)
+    atomic_numbers.insert(&quot;helium&quot;, 2)
+    atomic_numbers.insert(&quot;lithium&quot;, 3)
+
+    for entry in atomic_numbers:
+        print(f&quot;{entry.key} has number {entry.value}&quot;)</code></pre>
+<pre class="output"><code>hydrogen has number 1
+helium has number 2
+lithium has number 3</code></pre>
+<p><code>keys()</code> and <code>values()</code> give you just one side:</p>
+<pre data-science><code>def main():
+    let mutable stock be Map[String, Int].new()
+    stock.insert(&quot;pipettes&quot;, 40)
+    stock.insert(&quot;flasks&quot;, 12)
+
+    for name in stock.keys():
+        print(name)
+    for amount in stock.values():
+        print(amount)</code></pre>
+<pre class="output"><code>pipettes
+flasks
+40
+12</code></pre>
+<h2 id="sets">Sets<a class="anchor" href="#sets" aria-hidden="true">#</a></h2>
+<p>A set holds each item at most once. Adding something already present changes nothing:</p>
+<pre data-science><code>def main():
+    let mutable elements be Set[String].new()
+    elements.insert(&quot;zinc&quot;)
+    elements.insert(&quot;argon&quot;)
+    elements.insert(&quot;zinc&quot;)
+
+    print(elements.length())
+    print(elements.contains(&quot;argon&quot;))
+    print(elements.contains(&quot;neon&quot;))</code></pre>
+<pre class="output"><code>2
+true
+false</code></pre>
+<p>Use a set when the only question is "have I seen this?". Walk one with <code>for</code>, in insertion order, and take an item out with <code>remove</code>:</p>
+<pre data-science><code>def main():
+    let mutable seen be Set[Int].new()
+    seen.insert(5)
+    seen.insert(3)
+    seen.insert(5)
+    for item in seen:
+        print(item)</code></pre>
+<pre class="output"><code>5
+3</code></pre>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li>An array is <code>[a, b, c]</code>: one element type, positions from 0. <code>length()</code>, <code>push</code>, <code>pop</code>, <code>contains</code>, <code>is_empty</code>.</li><li>Changing a collection needs <code>let mutable</code>.</li><li>An empty collection needs its type: <code>Array[Int].new()</code> or <code>let xs: Array[Int] be []</code>.</li><li><code>xs[i]</code> stops the program if <code>i</code> is out of range; <code>xs.get(i)</code> returns <code>null</code> instead, which you test with <code>?</code>.</li><li><code>Map[K, V]</code> has <code>insert</code>, <code>get</code>, <code>contains</code>, <code>remove</code>, <code>keys()</code> and <code>values()</code>.</li><li>A <code>for</code> over a map or set follows insertion order.</li><li><code>Set[T]</code> keeps each item once.</li></ul>
+<p>Next: doing work on whole collections at once, in <a href="chains.html">Chains and closures</a>.</p>
 <nav class="pager"><a class="prev" href="choices.html"><span>Previous</span>Choices and match</a><a class="next" href="chains.html"><span>Next</span>Chains and closures</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#arrays">Arrays</a></li><li><a href="#adding-and-removing-elements">Adding and removing elements</a></li><li><a href="#an-empty-array">An empty array</a></li><li><a href="#going-through-an-array">Going through an array</a></li><li><a href="#asking-for-an-element-that-may-not-exist">Asking for an element that may not exist</a></li><li><a href="#maps">Maps</a></li><li><a href="#going-through-a-map">Going through a map</a></li><li><a href="#sets">Sets</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

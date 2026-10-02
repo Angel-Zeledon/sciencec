@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Functions &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A function is a named piece of code you can run as often as you like. You have already used one, main; this chapter shows how to write your own.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,127 @@
 <main>
 <p class="crumb">The basics</p>
 <h1>Functions</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A function is a named piece of code you can run as often as you like. You have already used one, <code>main</code>; this chapter shows how to write your own.</p>
+<h2 id="defining-and-calling">Defining and calling<a class="anchor" href="#defining-and-calling" aria-hidden="true">#</a></h2>
+<p><code>def</code> starts a function. The name is followed by parentheses, a colon, and an indented body:</p>
+<pre data-science><code>def greet():
+    print(&quot;Hello!&quot;)
+
+def main():
+    greet()
+    greet()</code></pre>
+<pre class="output"><code>Hello!
+Hello!</code></pre>
+<p>Calling a function always uses parentheses, even when there is nothing inside them. A function can be defined above or below the place that calls it.</p>
+<h2 id="parameters">Parameters<a class="anchor" href="#parameters" aria-hidden="true">#</a></h2>
+<p>Parameters go between the parentheses. Each has a name and a type:</p>
+<pre data-science><code>def greet(name: String):
+    print(f&quot;Hello, {name}!&quot;)
+
+def main():
+    greet(&quot;Ada&quot;)
+    greet(&quot;Grace&quot;)</code></pre>
+<pre class="output"><code>Hello, Ada!
+Hello, Grace!</code></pre>
+<p>Unlike a <code>let</code>, a parameter's type is always written out. That is how the compiler checks every call: passing a number to <code>greet</code> would be refused.</p>
+<p>Several parameters are separated by commas, and the arguments are given in the same order:</p>
+<pre data-science><code>def describe(name: String, age: Int):
+    print(f&quot;{name} is {age}&quot;)
+
+def main():
+    describe(&quot;Ada&quot;, 36)</code></pre>
+<pre class="output"><code>Ada is 36</code></pre>
+<h2 id="returning-a-value">Returning a value<a class="anchor" href="#returning-a-value" aria-hidden="true">#</a></h2>
+<p>To give a result back, write <code>-&gt;</code> and its type after the parameters. The <strong>last expression</strong> in the body is the result:</p>
+<pre data-science><code>def square(n: Int) -&gt; Int:
+    n * n
+
+def main():
+    print(square(7))
+    let total be square(3) + square(4)
+    print(total)</code></pre>
+<pre class="output"><code>49
+25</code></pre>
+<p>There is no <code>return</code> here, and no semicolon. A line that is just an expression, as the last line of a body, becomes the value of the function.</p>
+<h2 id="returning-early">Returning early<a class="anchor" href="#returning-early" aria-hidden="true">#</a></h2>
+<p>Use <code>return</code> when you want to leave the function before its last line:</p>
+<pre data-science><code>def absolute(n: Int) -&gt; Int:
+    if n &lt; 0:
+        return -n
+    n
+
+def main():
+    print(absolute(-5))
+    print(absolute(8))</code></pre>
+<pre class="output"><code>5
+8</code></pre>
+<p><code>return</code> is only necessary for leaving early. The final <code>n</code> is still the ordinary way to produce the result.</p>
+<h2 id="choosing-between-values">Choosing between values<a class="anchor" href="#choosing-between-values" aria-hidden="true">#</a></h2>
+<p>Because <code>if</code> can be used as an expression, a function can be as short as one <code>if</code>/<code>else</code>:</p>
+<pre data-science><code>def sign(n: Int) -&gt; String:
+    if n &lt; 0:
+        &quot;negative&quot;
+    else if n is 0:
+        &quot;zero&quot;
+    else:
+        &quot;positive&quot;
+
+def main():
+    print(sign(-4))
+    print(sign(0))
+    print(sign(12))</code></pre>
+<pre class="output"><code>negative
+zero
+positive</code></pre>
+<p>Every branch must produce a value of the same type, and the final <code>else</code> is required so that there is always an answer.</p>
+<h2 id="returning-more-than-one-value">Returning more than one value<a class="anchor" href="#returning-more-than-one-value" aria-hidden="true">#</a></h2>
+<p>A function can return several values at once, as a tuple. Write the types in parentheses, and receive the values by listing names after <code>let</code>:</p>
+<pre data-science><code>def divide(a: Int, b: Int) -&gt; (Int, Int):
+    (a / b, a % b)
+
+def main():
+    let quotient, remainder be divide(17, 5)
+    print(f&quot;17 = 5 * {quotient} + {remainder}&quot;)</code></pre>
+<pre class="output"><code>17 = 5 * 3 + 2</code></pre>
+<p>If you want to keep the pair together, bind it to a single name and take the parts out by position:</p>
+<pre data-science><code>def divide(a: Int, b: Int) -&gt; (Int, Int):
+    (a / b, a % b)
+
+def main():
+    let pair be divide(17, 5)
+    print(pair.0)
+    print(pair.1)</code></pre>
+<pre class="output"><code>3
+2</code></pre>
+<h2 id="functions-that-call-themselves">Functions that call themselves<a class="anchor" href="#functions-that-call-themselves" aria-hidden="true">#</a></h2>
+<p>A function may call itself, which is called <strong>recursion</strong>. There must be a case where it stops:</p>
+<pre data-science><code>def factorial(n: Int) -&gt; Int:
+    if n &lt;= 1:
+        return 1
+    n * factorial(n - 1)
+
+def main():
+    print(factorial(5))
+    print(factorial(10))</code></pre>
+<pre class="output"><code>120
+3628800</code></pre>
+<h2 id="mistakes-the-compiler-catches">Mistakes the compiler catches<a class="anchor" href="#mistakes-the-compiler-catches" aria-hidden="true">#</a></h2>
+<p>The compiler checks that every call matches the definition. Passing the wrong type is refused before the program runs:</p>
+<pre data-science class="refused"><code>def square(n: Int) -&gt; Int:
+    n * n
+
+def main():
+    print(square(&quot;seven&quot;))</code></pre>
+<pre class="err"><code>error[SC0525]: expected `I64`, found `String`</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> Arguments are matched to parameters by position. A function call cannot name its arguments the way a record can; that form is for <a href="types.html">types</a>.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>def name(param: Type, ...) -&gt; ReturnType:</code> defines a function.</li><li>Parameter types are always written. Without <code>-&gt;</code>, a function returns nothing.</li><li>The last expression is the result; <code>return</code> leaves early.</li><li><code>(A, B)</code> returns two values at once; receive them with <code>let a, b be f()</code>.</li><li>A function can call itself.</li></ul>
+<p>Next: <a href="control-flow.html">control flow</a>.</p>
 <nav class="pager"><a class="prev" href="basic-types.html"><span>Previous</span>Numbers, text and truth</a><a class="next" href="control-flow.html"><span>Next</span>Control flow</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#defining-and-calling">Defining and calling</a></li><li><a href="#parameters">Parameters</a></li><li><a href="#returning-a-value">Returning a value</a></li><li><a href="#returning-early">Returning early</a></li><li><a href="#choosing-between-values">Choosing between values</a></li><li><a href="#returning-more-than-one-value">Returning more than one value</a></li><li><a href="#functions-that-call-themselves">Functions that call themselves</a></li><li><a href="#mistakes-the-compiler-catches">Mistakes the compiler catches</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

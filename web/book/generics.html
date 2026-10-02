@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Generics &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A generic function or type works for many types at once. You write it one time, with a placeholder for the type.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,153 @@
 <main>
 <p class="crumb">Core ideas</p>
 <h1>Generics</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A <strong>generic</strong> function or type works for many types at once. You write it one time, with a placeholder for the type.</p>
+<h2 id="a-generic-function">A generic function<a class="anchor" href="#a-generic-function" aria-hidden="true">#</a></h2>
+<p>Square brackets after the name declare a placeholder, conventionally <code>T</code>:</p>
+<pre data-science><code>def identity[T](value: T) -&gt; T:
+    value
+
+def main():
+    print(identity(5))
+    print(identity(&quot;text&quot;))</code></pre>
+<pre class="output"><code>5
+text</code></pre>
+<p><code>identity</code> takes a <code>T</code> and gives back a <code>T</code>. The compiler works out what <code>T</code> is from the argument: <code>Int</code> in the first call, <code>String</code> in the second. It makes a separate, fully typed copy of the function for each, so generics cost nothing at run time.</p>
+<h2 id="bounds">Bounds<a class="anchor" href="#bounds" aria-hidden="true">#</a></h2>
+<p>A placeholder on its own can do almost nothing, because the compiler knows nothing about it. A <strong>bound</strong> says what <code>T</code> must be able to do. Write it after a colon:</p>
+<pre data-science><code>def largest[T: Ord](items: &amp;Array[T]) -&gt; (&amp;T)?:
+    let mutable best be items.get(0)
+    for item in items:
+        if best?:
+            if item &gt; best:
+                best be item
+        else:
+            best be item
+    best
+
+def main():
+    let nums be [3, 9, 4]
+    let top be largest(nums)
+    if top?:
+        print(top)
+
+    let words: Array[String] be [&quot;pear&quot;, &quot;apple&quot;]
+    let first be largest(words)
+    if first?:
+        print(first)</code></pre>
+<pre class="output"><code>9
+pear</code></pre>
+<p><code>T: Ord</code> means "any type that can be compared with <code>&lt;</code> and <code>&gt;</code>", so the body may use <code>&gt;</code>. The result is <code>(&amp;T)?</code>: a borrowed element, or <code>null</code> for an empty array. <a href="errors.html">Missing values and errors</a> explains the <code>?</code>.</p>
+<p>Call a bounded function with a type that does not meet the bound and the compiler refuses:</p>
+<pre data-science class="refused"><code>interface Speak:
+    def speak(self) -&gt; String
+
+type Rock:
+    weight: Int
+
+def announce[T: Speak](item: &amp;T):
+    print(item.speak())
+
+def main():
+    announce(Rock(weight: 3))</code></pre>
+<h2 id="several-bounds">Several bounds<a class="anchor" href="#several-bounds" aria-hidden="true">#</a></h2>
+<p>Join bounds with <code>+</code>:</p>
+<pre data-science><code>type Pair[A, B]:
+    first: A
+    second: B
+
+def duplicate[T: Clone + Eq](value: &amp;T) -&gt; Pair[T, T]:
+    Pair(first: value.clone(), second: value.clone())
+
+def main():
+    let copies be duplicate(5)
+    print(copies.first + copies.second)</code></pre>
+<pre class="output"><code>10</code></pre>
+<h2 id="where-clauses">Where clauses<a class="anchor" href="#where-clauses" aria-hidden="true">#</a></h2>
+<p>When the bounds make the signature long, move them to a <code>where</code> clause on the next, indented line:</p>
+<pre data-science><code>interface Summarize:
+    def summarize(self) -&gt; String
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -&gt; String:
+        f&quot;doc: {self.title}&quot;
+
+def both[A, B](left: &amp;A, right: &amp;B) -&gt; String
+        where A: Summarize, B: Summarize:
+    f&quot;{left.summarize()} and {right.summarize()}&quot;
+
+def main():
+    let a be Doc(title: &quot;one&quot;)
+    let b be Doc(title: &quot;two&quot;)
+    print(both(a, b))</code></pre>
+<pre class="output"><code>doc: one and doc: two</code></pre>
+<p>Each placeholder can have its own bounds, separated by commas. Your own <a href="interfaces.html">interfaces</a> work as bounds just like the built-in ones.</p>
+<h2 id="generic-types">Generic types<a class="anchor" href="#generic-types" aria-hidden="true">#</a></h2>
+<p>Types take placeholders too:</p>
+<pre data-science><code>type Pair[A, B]:
+    first: A
+    second: B
+
+def main():
+    let a be Pair(first: 1, second: &quot;one&quot;)
+    let b: Pair[Float, Bool] be Pair(first: 2.5, second: true)
+    print(a.second)
+    print(b.first)</code></pre>
+<pre class="output"><code>one
+2.5</code></pre>
+<p><code>Pair[Int, String]</code> and <code>Pair[Float, Bool]</code> are different types built from one definition. Generic arguments go in square brackets, and they nest: <code>Array[Pair[Int, String]]</code>.</p>
+<h2 id="methods-on-a-generic-type">Methods on a generic type<a class="anchor" href="#methods-on-a-generic-type" aria-hidden="true">#</a></h2>
+<p>Repeat the placeholders on the left of <code>has:</code>:</p>
+<pre data-science><code>type Pair[A, B]:
+    first: A
+    second: B
+
+Pair[A, B] has:
+    def new(first: A, second: B) -&gt; Pair[A, B]:
+        Pair(first: first, second: second)
+
+    def swapped(self: Self) -&gt; Pair[B, A]:
+        Pair(first: self.second, second: self.first)
+
+def main():
+    let p be Pair[Int, String].new(1, &quot;one&quot;)
+    let q be p.swapped()
+    print(q.first)
+    print(q.second)</code></pre>
+<pre class="output"><code>one
+1</code></pre>
+<p><code>self: Self</code> takes the value itself rather than borrowing it, so <code>swapped</code> can move the fields into the new pair.</p>
+<p>When you call a function like <code>new</code> through the type, give the type arguments in brackets, as in <code>Pair[Int, String].new(...)</code>. Written as <code>Pair.new(...)</code>, there is nothing to say what <code>A</code> and <code>B</code> are, and the compiler asks you to spell them out.</p>
+<h2 id="numbers-as-parameters">Numbers as parameters<a class="anchor" href="#numbers-as-parameters" aria-hidden="true">#</a></h2>
+<p>A type can also be generic over a whole number. Mark it <code>const</code>:</p>
+<pre data-science><code>type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
+
+Grid[T, const ROWS: Int, const COLS: Int] has:
+    def rows(self) -&gt; Int:
+        ROWS
+
+    def size(self) -&gt; Int:
+        ROWS * COLS
+
+def main():
+    let g: Grid[Int, 2, 3] be Grid(cells: [1, 2, 3, 4, 5, 6])
+    print(g.rows())
+    print(g.size())</code></pre>
+<pre class="output"><code>2
+6</code></pre>
+<p>The size is part of the type, so a <code>Grid[Int, 2, 3]</code> and a <code>Grid[Int, 3, 2]</code> are different types and cannot be mixed up. Inside the type, <code>ROWS</code> is an ordinary <code>Int</code>.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>def name[T](...)</code> declares a generic function; <code>type Name[A, B]:</code> a generic type.</li><li><code>[T: Ord]</code> is a bound: <code>T</code> must implement that interface. Join bounds with <code>+</code>, or put them in a <code>where</code> clause.</li><li>Methods on a generic type are written <code>Pair[A, B] has:</code>.</li><li>Call associated functions with explicit arguments: <code>Pair[Int, String].new(...)</code>.</li><li><code>const N: Int</code> makes a number a parameter of a type.</li></ul>
+<p>Next: split a program across files with <a href="modules.html">modules</a>.</p>
 <nav class="pager"><a class="prev" href="interfaces.html"><span>Previous</span>Interfaces</a><a class="next" href="modules.html"><span>Next</span>Modules</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#a-generic-function">A generic function</a></li><li><a href="#bounds">Bounds</a></li><li><a href="#several-bounds">Several bounds</a></li><li><a href="#where-clauses">Where clauses</a></li><li><a href="#generic-types">Generic types</a></li><li><a href="#methods-on-a-generic-type">Methods on a generic type</a></li><li><a href="#numbers-as-parameters">Numbers as parameters</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

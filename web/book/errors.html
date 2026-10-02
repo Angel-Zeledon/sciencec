@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Missing values and errors &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="Some questions have no answer: the first negative number in a list of positives, or the square root of -1. Some operations fail: a file that is not there, text that is not a number. Science handles both with small, explicit tools, and none of them is hidden control flow.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,132 @@
 <main>
 <p class="crumb">Core ideas</p>
 <h1>Missing values and errors</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>Some questions have no answer: the first negative number in a list of positives, or the square root of -1. Some operations fail: a file that is not there, text that is not a number. Science handles both with small, explicit tools, and none of them is hidden control flow.</p>
+<h2 id="a-value-that-may-be-absent">A value that may be absent<a class="anchor" href="#a-value-that-may-be-absent" aria-hidden="true">#</a></h2>
+<p>Add <code>?</code> to a type to say "this, or nothing": <code>Int?</code> is an <code>Int</code> or <code>null</code>. A function that might not find an answer returns one:</p>
+<pre data-science><code>def first_negative(values: &amp;Array[Int]) -&gt; Int?:
+    for value in values:
+        if value &lt; 0:
+            return value
+    null
+
+def main():
+    let found be first_negative([3, -2, 5])
+    if found?:
+        print(found)
+    let missing be first_negative([1, 2])
+    print(missing?)</code></pre>
+<pre class="output"><code>-2
+false</code></pre>
+<p><code>null</code> is the "nothing" value. After a name, <code>?</code> is a question: <em>is there a value here?</em> It gives <code>true</code> or <code>false</code>.</p>
+<h2 id="using-what-you-found">Using what you found<a class="anchor" href="#using-what-you-found" aria-hidden="true">#</a></h2>
+<p>Inside <code>if found?:</code> the compiler knows <code>found</code> is present, so you use it as a plain <code>Int</code>, with no unwrapping:</p>
+<pre data-science><code>def describe(maybe: Int?) -&gt; String:
+    if maybe?:
+        f&quot;the value is {maybe}&quot;
+    else:
+        &quot;nothing there&quot;
+
+def main():
+    print(describe(4))
+    print(describe(null))</code></pre>
+<pre class="output"><code>the value is 4
+nothing there</code></pre>
+<p>You can pass a plain <code>4</code> where an <code>Int?</code> is expected. Outside the <code>if</code>, using <code>maybe</code> as a number is an error, because it might be <code>null</code>. That is the point: you cannot forget the check.</p>
+<p>You met the same idea in <code>get</code> on <a href="collections.html">arrays and maps</a>.</p>
+<h2 id="failure-a-value-and-an-error">Failure: a value and an error<a class="anchor" href="#failure-a-value-and-an-error" aria-hidden="true">#</a></h2>
+<p>A function that can fail returns two things: the result and an error that may be <code>null</code>. The type is written <code>(Result, Error?)</code>:</p>
+<pre data-science><code>type RangeError:
+    value: F64
+
+RangeError implements Error:
+    def message(self) -&gt; String:
+        f&quot;{self.value} is below zero&quot;
+
+def checked_sqrt(x: F64) -&gt; (F64, RangeError?):
+    if x &lt; 0.0:
+        return (0.0, RangeError(value: x))
+    (x.sqrt(), null)
+
+def main():
+    let root, err be checked_sqrt(9.0)
+    if err?:
+        print(err.message())
+    else:
+        print(root)
+
+    let bad, err2 be checked_sqrt(-4.0)
+    if err2?:
+        print(err2.message())</code></pre>
+<pre class="output"><code>3.0
+-4.0 is below zero</code></pre>
+<p>There is a lot here, so in pieces:</p>
+<ul><li><code>type RangeError</code> is your own error. It is an ordinary type; <code>RangeError implements Error:</code> with a <code>message</code> method is all it takes to be an error. <a href="interfaces.html">Interfaces</a> explains <code>implements</code>.</li><li><code>-&gt; (F64, RangeError?)</code> says: a number, plus possibly a <code>RangeError</code>.</li><li><code>return (0.0, RangeError(...))</code> returns a pair. On failure the number is a placeholder that nobody should use.</li><li><code>(x.sqrt(), null)</code> is success: the result and no error.</li><li><code>let root, err be ...</code> takes the pair apart into two names, and <code>err?</code> asks whether something went wrong.</li></ul>
+<h2 id="library-functions-fail-the-same-way">Library functions fail the same way<a class="anchor" href="#library-functions-fail-the-same-way" aria-hidden="true">#</a></h2>
+<p><code>parse_int</code> turns text into a number and can fail, so it returns the same pair shape:</p>
+<pre data-science><code>def main():
+    let n, err be &quot;42&quot;.parse_int()
+    if not err?:
+        print(n + 1)
+
+    let m, err2 be &quot;forty&quot;.parse_int()
+    if err2?:
+        print(err2.message())</code></pre>
+<pre class="output"><code>43
+not a number</code></pre>
+<p>Every error has a <code>message()</code> for people to read. If you bind an error and never test it, the compiler complains. When you really want to ignore it, name it with a leading underscore, such as <code>_err</code>.</p>
+<h2 id="passing-an-error-up">Passing an error up<a class="anchor" href="#passing-an-error-up" aria-hidden="true">#</a></h2>
+<p>When your function calls something that can fail, it usually tests the error and, on failure, returns its own pair carrying that error. Otherwise it carries on with the value. <code>total</code> below does exactly that.</p>
+<h2 id="putting-it-together">Putting it together<a class="anchor" href="#putting-it-together" aria-hidden="true">#</a></h2>
+<pre data-science><code>type CountError:
+    text: String
+
+CountError implements Error:
+    def message(self) -&gt; String:
+        f&quot;not a count: {self.text}&quot;
+
+def parse_count(text: &amp;String) -&gt; (Int, CountError?):
+    let value, err be text.parse_int()
+    if err?:
+        return (0, CountError(text: f&quot;{text}&quot;))
+    (value, null)
+
+def total(first: &amp;String, second: &amp;String) -&gt; (Int, CountError?):
+    let a, err_a be parse_count(first)
+    if err_a?:
+        return (0, err_a)
+    let b, err_b be parse_count(second)
+    if err_b?:
+        return (0, err_b)
+    (a + b, null)
+
+def main():
+    let sum, err be total(&quot;40&quot;, &quot;2&quot;)
+    if not err?:
+        print(sum)
+
+    let _sum, err2 be total(&quot;40&quot;, &quot;two&quot;)
+    if err2?:
+        print(err2.message())</code></pre>
+<pre class="output"><code>42
+not a count: two</code></pre>
+<p><code>f&quot;{text}&quot;</code> makes an owned copy of a borrowed <code>String</code>, which the error needs to keep.</p>
+<h2 id="when-it-cannot-go-on-panic-and-assert">When it cannot go on: panic and assert<a class="anchor" href="#when-it-cannot-go-on-panic-and-assert" aria-hidden="true">#</a></h2>
+<p>Some situations are bugs, not conditions to handle. <code>panic</code> stops the program at once with a message, and <code>assert</code> stops it if a condition you expected to hold does not:</p>
+<pre data-science><code>def main():
+    let readings be [3, 9, 4]
+    assert(readings.length() is 3, &quot;expected three readings&quot;)
+    panic(&quot;this should never happen&quot;)</code></pre>
+<p>The program ends with <code>panic: this should never happen</code> and a non-zero exit status. <code>assert(condition)</code> alone uses the message <code>assertion failed</code>. Indexing outside an array stops the program the same way.</p>
+<p>Use <code>assert</code> in tests and to state what you believe to be true. Use <code>?</code> and error pairs for things that can reasonably go wrong, such as bad input.</p>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>T?</code> is a <code>T</code> or <code>null</code>. <code>x?</code> asks whether it is present; inside <code>if x?:</code> you use <code>x</code> as a plain <code>T</code>.</li><li>A function that can fail returns <code>(Result, Error?)</code>. Take it apart with <code>let value, err be f()</code>.</li><li>Test the error with <code>if err?:</code>, and return early to pass it up.</li><li>Your own error is a type with <code>implements Error:</code> and a <code>message</code> method.</li><li><code>panic(message)</code> and <code>assert(condition, message)</code> stop the program for bugs.</li></ul>
+<p>Next: how types share behaviour, in <a href="interfaces.html">Interfaces</a>.</p>
 <nav class="pager"><a class="prev" href="ownership.html"><span>Previous</span>Ownership and borrowing</a><a class="next" href="interfaces.html"><span>Next</span>Interfaces</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#a-value-that-may-be-absent">A value that may be absent</a></li><li><a href="#using-what-you-found">Using what you found</a></li><li><a href="#failure-a-value-and-an-error">Failure: a value and an error</a></li><li><a href="#library-functions-fail-the-same-way">Library functions fail the same way</a></li><li><a href="#passing-an-error-up">Passing an error up</a></li><li><a href="#putting-it-together">Putting it together</a></li><li><a href="#when-it-cannot-go-on-panic-and-assert">When it cannot go on: panic and assert</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

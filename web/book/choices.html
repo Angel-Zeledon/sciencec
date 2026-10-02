@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Choices and match &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="A type holds several values at once. A choice holds exactly one of several alternatives. Use it when something can be one kind of thing or another, such as a unit, a shape or the result of a parse.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,185 @@
 <main>
 <p class="crumb">Structuring data</p>
 <h1>Choices and match</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>A <code>type</code> holds several values at once. A <code>choice</code> holds exactly one of several alternatives. Use it when something can be one kind of thing or another, such as a unit, a shape or the result of a parse.</p>
+<h2 id="declaring-a-choice">Declaring a choice<a class="anchor" href="#declaring-a-choice" aria-hidden="true">#</a></h2>
+<p>List the alternatives, called <strong>variants</strong>, one per line:</p>
+<pre data-science><code>choice Unit:
+    Meters
+    Feet
+    Miles</code></pre>
+<p>A value of type <code>Unit</code> is always one of those three. To make one, write the variant's name:</p>
+<pre data-science><code>choice Unit:
+    Meters
+    Feet
+    Miles
+
+def main():
+    let u be Feet
+    print(&quot;made a unit&quot;)</code></pre>
+<pre class="output"><code>made a unit</code></pre>
+<h2 id="looking-inside-with-match">Looking inside with match<a class="anchor" href="#looking-inside-with-match" aria-hidden="true">#</a></h2>
+<p><code>match</code> asks which variant a value is and runs the branch for it. Each branch is a pattern, a colon and what to do:</p>
+<pre data-science><code>choice Unit:
+    Meters
+    Feet
+    Miles
+
+def symbol(unit: Unit) -&gt; String:
+    match unit:
+        Meters: &quot;m&quot;
+        Feet: &quot;ft&quot;
+        Miles: &quot;mi&quot;
+
+def main():
+    print(symbol(Feet))
+    print(symbol(Miles))</code></pre>
+<pre class="output"><code>ft
+mi</code></pre>
+<p><code>match</code> is an expression: it produces the value of the branch that ran, so here it is the last line of the function and becomes its result.</p>
+<h2 id="variants-that-carry-data">Variants that carry data<a class="anchor" href="#variants-that-carry-data" aria-hidden="true">#</a></h2>
+<p>A variant can hold values. List their types in parentheses:</p>
+<pre data-science><code>choice Shape:
+    Circle(F64)
+    Rect(F64, F64)
+    Point</code></pre>
+<p>A <code>Circle</code> carries a radius, a <code>Rect</code> carries a width and a height, and a <code>Point</code> carries nothing. You build one by calling the variant like a function:</p>
+<pre data-science><code>choice Shape:
+    Circle(F64)
+    Rect(F64, F64)
+    Point
+
+def area(figure: Shape) -&gt; F64:
+    match figure:
+        Circle(radius): 3.0 * radius * radius
+        Rect(width, height): width * height
+        Point: 0.0
+
+def main():
+    print(area(Rect(3.0, 4.0)))
+    print(area(Circle(2.0)))
+    print(area(Point))</code></pre>
+<pre class="output"><code>12.0
+12.0
+0.0</code></pre>
+<p>In the pattern <code>Rect(width, height)</code>, the two names are new: they are bound to the values inside, and you can use them in that branch only.</p>
+<h2 id="no-case-can-be-forgotten">No case can be forgotten<a class="anchor" href="#no-case-can-be-forgotten" aria-hidden="true">#</a></h2>
+<p>A <code>match</code> has to cover every variant. If you leave one out, the program does not compile:</p>
+<pre data-science class="refused"><code>choice Unit:
+    Meters
+    Feet
+    Miles
+
+def symbol(unit: Unit) -&gt; String:
+    match unit:
+        Meters: &quot;m&quot;
+        Feet: &quot;ft&quot;</code></pre>
+<p>The error names the variant you missed. This is the main reason to prefer a <code>choice</code> over a handful of numeric codes: when you add a variant later, the compiler shows you every <code>match</code> that needs a new branch.</p>
+<p>When you do not care about the rest, <code>_</code> matches anything:</p>
+<pre data-science><code>choice Unit:
+    Meters
+    Feet
+    Miles
+
+def is_metric(unit: Unit) -&gt; Bool:
+    match unit:
+        Meters: true
+        _: false
+
+def main():
+    print(is_metric(Meters))
+    print(is_metric(Feet))</code></pre>
+<pre class="output"><code>true
+false</code></pre>
+<h2 id="matching-plain-values">Matching plain values<a class="anchor" href="#matching-plain-values" aria-hidden="true">#</a></h2>
+<p><code>match</code> is not only for choices. It works on numbers, text, characters and <code>Bool</code>s, and a branch can list several patterns with <code>|</code>:</p>
+<pre data-science><code>def size_class(n: Int) -&gt; String:
+    match n:
+        0: &quot;none&quot;
+        1 | 2 | 3: &quot;few&quot;
+        _: &quot;many&quot;
+
+def main():
+    print(size_class(0))
+    print(size_class(2))
+    print(size_class(40))</code></pre>
+<pre class="output"><code>none
+few
+many</code></pre>
+<p>Branches are tried from the top, and the first that fits wins.</p>
+<h2 id="a-choice-for-results">A choice for results<a class="anchor" href="#a-choice-for-results" aria-hidden="true">#</a></h2>
+<p>A very common use is a function that either works or explains why not:</p>
+<pre data-science><code>choice Outcome:
+    Value(Int)
+    Failed(String)
+
+def halve(n: Int) -&gt; Outcome:
+    if n % 2 is 0:
+        Value(n / 2)
+    else:
+        Failed(f&quot;{n} is odd&quot;)
+
+def show(outcome: Outcome):
+    match outcome:
+        Value(n): print(f&quot;half is {n}&quot;)
+        Failed(reason): print(reason)
+
+def main():
+    show(halve(10))
+    show(halve(7))</code></pre>
+<pre class="output"><code>half is 5
+7 is odd</code></pre>
+<p>When a branch is a single statement it can sit on the same line as its pattern. <a href="errors.html">Missing values and errors</a> shows the form the language itself prefers for failure; this is the general tool.</p>
+<h2 id="choices-with-parameters">Choices with parameters<a class="anchor" href="#choices-with-parameters" aria-hidden="true">#</a></h2>
+<p>Like a <code>type</code>, a <code>choice</code> can leave its payload type open, so one definition works for any payload:</p>
+<pre data-science><code>choice Outcome[T, E]:
+    Ok(T)
+    Err(E)
+
+def checked_divide(a: Int, b: Int) -&gt; Outcome[Int, String]:
+    if b is 0:
+        Err(&quot;division by zero&quot;)
+    else:
+        Ok(a / b)
+
+def main():
+    match checked_divide(84, 2):
+        Ok(value): print(value)
+        Err(message): print(message)
+    match checked_divide(1, 0):
+        Ok(value): print(value)
+        Err(message): print(message)</code></pre>
+<pre class="output"><code>42
+division by zero</code></pre>
+<p><code>Outcome[Int, String]</code> is the choice with <code>T</code> set to <code>Int</code> and <code>E</code> to <code>String</code>. <a href="generics.html">Generics</a> explains how the open parts work.</p>
+<h2 id="choices-inside-a-type-and-the-reverse">Choices inside a type, and the reverse<a class="anchor" href="#choices-inside-a-type-and-the-reverse" aria-hidden="true">#</a></h2>
+<p>Choices and types combine freely. A type can have a choice as a field, and a variant can carry a whole type:</p>
+<pre data-science><code>choice Unit:
+    Meters
+    Feet
+
+type Length:
+    amount: F64
+    unit: Unit
+
+def in_meters(length: &amp;Length) -&gt; F64:
+    match length.unit:
+        Meters: length.amount
+        Feet: length.amount * 0.3048
+
+def main():
+    print(in_meters(Length(amount: 10.0, unit: Feet)))
+    print(in_meters(Length(amount: 2.5, unit: Meters)))</code></pre>
+<pre class="output"><code>3.048
+2.5</code></pre>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>choice Name:</code> lists variants; a value is exactly one of them.</li><li>A variant can carry values: <code>Rect(F64, F64)</code>. Build it by calling the variant.</li><li><code>match</code> runs the branch for the variant and binds the data inside it. It is an expression.</li><li>A <code>match</code> must cover every variant; <code>_</code> covers all the rest.</li><li><code>match</code> also works on numbers, text, characters and <code>Bool</code>s, and <code>|</code> joins patterns.</li><li><code>choice Outcome[T, E]</code> takes parameters, just as a <code>type</code> does.</li></ul>
+<p>Next: <a href="collections.html">arrays, maps and sets</a>, which hold many values of one type.</p>
 <nav class="pager"><a class="prev" href="types.html"><span>Previous</span>Types</a><a class="next" href="collections.html"><span>Next</span>Arrays, maps and sets</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#declaring-a-choice">Declaring a choice</a></li><li><a href="#looking-inside-with-match">Looking inside with match</a></li><li><a href="#variants-that-carry-data">Variants that carry data</a></li><li><a href="#no-case-can-be-forgotten">No case can be forgotten</a></li><li><a href="#matching-plain-values">Matching plain values</a></li><li><a href="#a-choice-for-results">A choice for results</a></li><li><a href="#choices-with-parameters">Choices with parameters</a></li><li><a href="#choices-inside-a-type-and-the-reverse">Choices inside a type, and the reverse</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Chains and closures &middot; The Science Book</title>
-<meta name="description" content="">
+<meta name="description" content="The usual way to process a collection is a loop. For common jobs, such as keeping some items, transforming each one or adding them up, a chain says the same thing in one line.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -69,12 +69,160 @@
 <main>
 <p class="crumb">Structuring data</p>
 <h1>Chains and closures</h1>
-<aside class="callout-note"><p><strong>Note:</strong> this chapter has not been written yet.</p></aside>
+<p>The usual way to process a collection is a loop. For common jobs, such as keeping some items, transforming each one or adding them up, a <strong>chain</strong> says the same thing in one line.</p>
+<h2 id="starting-a-chain">Starting a chain<a class="anchor" href="#starting-a-chain" aria-hidden="true">#</a></h2>
+<p>Call <code>iterate()</code> on an array. That gives you a stream of its elements, which you can pass through steps, one <code>.step()</code> after another, until a final step produces a result.</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    print(readings.iterate().sum())
+    print(readings.iterate().count())</code></pre>
+<pre class="output"><code>16
+4</code></pre>
+<p><code>sum()</code> adds the elements and <code>count()</code> counts them. These are <em>final</em> steps: they use up the stream and give back a plain value.</p>
+<h2 id="transforming-each-item-with-map">Transforming each item with map<a class="anchor" href="#transforming-each-item-with-map" aria-hidden="true">#</a></h2>
+<p><code>map</code> makes a new stream by applying something to every element. The thing you apply is a <strong>closure</strong>, a tiny function written inline. The simplest form uses the word <code>each</code> for the element:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let doubled be readings.iterate().map(each * 2).collect()
+    for value in doubled:
+        print(value)</code></pre>
+<pre class="output"><code>10
+4
+16
+2</code></pre>
+<p><code>collect()</code> is the other common final step: it gathers the stream back into an array.</p>
+<h2 id="choosing-items-with-keep-and-discard">Choosing items with keep and discard<a class="anchor" href="#choosing-items-with-keep-and-discard" aria-hidden="true">#</a></h2>
+<p><code>keep</code> passes only the elements for which the closure is true. <code>discard</code> is the opposite:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let high be readings.iterate().keep(each &gt; 2).collect()
+    let low be readings.iterate().discard(each &gt; 2).collect()
+    print(high.length())
+    print(low.length())</code></pre>
+<pre class="output"><code>2
+2</code></pre>
+<h2 id="fields-and-methods">Fields and methods<a class="anchor" href="#fields-and-methods" aria-hidden="true">#</a></h2>
+<p><code>each</code> can be followed by a field or a method call. Given a type with fields, this pulls one out of every element:</p>
+<pre data-science><code>type Sample:
+    label: String
+    hits: Int
+
+def main():
+    let samples be [Sample(label: &quot;a&quot;, hits: 3), Sample(label: &quot;b&quot;, hits: 10)]
+    let total be samples.iterate().map(each.hits).sum()
+    print(total)
+
+    let labels be samples.iterate().map(each.label).collect()
+    for label in labels:
+        print(f&quot;{label}&quot;)</code></pre>
+<pre class="output"><code>13
+a
+b</code></pre>
+<h2 id="chaining-several-steps">Chaining several steps<a class="anchor" href="#chaining-several-steps" aria-hidden="true">#</a></h2>
+<p>The steps compose from left to right. When a chain gets long, put each step on its own line starting with a dot:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let total_of_big_squares be readings
+        .iterate()
+        .keep(each &gt; 1)
+        .map(each * each)
+        .sum()
+    print(total_of_big_squares)</code></pre>
+<pre class="output"><code>93</code></pre>
+<p>Read it as a sentence: take the readings, keep those above 1, square each, add them up. That is <code>25 + 4 + 64</code>.</p>
+<h2 id="when-each-is-not-enough-giving">When <code>each</code> is not enough: giving<a class="anchor" href="#when-each-is-not-enough-giving" aria-hidden="true">#</a></h2>
+<p><code>each</code> works when the element appears once in the closure. If you need it twice, or want to give it a name, write the name, then <code>giving</code>, then the expression:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let in_range be readings.iterate().keep(x giving x &gt; 1 and x &lt; 8).collect()
+    print(in_range.length())</code></pre>
+<pre class="output"><code>2</code></pre>
+<p><code>x giving x &gt; 1 and x &lt; 8</code> reads as "given <code>x</code>, produce <code>x &gt; 1 and x &lt; 8</code>". The name is yours to choose.</p>
+<h2 id="sorting">Sorting<a class="anchor" href="#sorting" aria-hidden="true">#</a></h2>
+<p><code>sorted(by: ...)</code> orders the stream by a number you compute from each element. Smaller numbers come first:</p>
+<pre data-science><code>def main():
+    let words be [&quot;pear&quot;, &quot;fig&quot;, &quot;banana&quot;]
+    let by_length be words.iterate().sorted(by: w giving w.length()).collect()
+    for word in by_length:
+        print(f&quot;{word}&quot;)</code></pre>
+<pre class="output"><code>fig
+pear
+banana</code></pre>
+<p>To sort from largest to smallest, sort by the negative: <code>by: n giving 0 - n</code>.</p>
+<h2 id="other-final-steps">Other final steps<a class="anchor" href="#other-final-steps" aria-hidden="true">#</a></h2>
+<p>A few more steps that finish a chain:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    print(readings.iterate().product())
+    print(readings.iterate().has_any(x giving x &gt; 7))
+    print(readings.iterate().has_all(x giving x &gt; 7))
+
+    let biggest be readings.iterate().maximum(by: x giving x)
+    if biggest?:
+        print(biggest)
+
+    let first_large be readings.iterate().find(x giving x &gt; 4)
+    if first_large?:
+        print(first_large)</code></pre>
+<pre class="output"><code>80
+true
+false
+8
+5</code></pre>
+<p><code>maximum</code>, <code>minimum</code>, <code>find</code> and <code>first</code> might find nothing, for instance on an empty array, so they give back a value that may be <code>null</code>. Test it with <code>?</code> before use, as you did with <code>get</code> in <a href="collections.html">Arrays, maps and sets</a>.</p>
+<p><code>reduce</code> folds the whole stream into one value, starting from a value you supply. Its closure takes two names, the running result and the next element:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let sum_of_squares be readings.iterate().reduce(0, (acc, x) giving acc + x * x)
+    print(sum_of_squares)</code></pre>
+<pre class="output"><code>94</code></pre>
+<h2 id="trimming-a-stream">Trimming a stream<a class="anchor" href="#trimming-a-stream" aria-hidden="true">#</a></h2>
+<p><code>take(n)</code> keeps the first <code>n</code> elements, <code>skip(n)</code> drops them, and <code>reverse()</code> flips the order:</p>
+<pre data-science><code>def main():
+    let readings be [5, 2, 8, 1]
+    let middle be readings.iterate().skip(1).take(2).collect()
+    for value in middle:
+        print(value)</code></pre>
+<pre class="output"><code>2
+8</code></pre>
+<p><code>numbered()</code> pairs every element with its position. Each pair has an <code>index</code> (starting at 0) and the <code>item</code>:</p>
+<pre data-science><code>def main():
+    let names be [&quot;Ada&quot;, &quot;Grace&quot;]
+    for entry in names.iterate().numbered().collect():
+        print(f&quot;{entry.index}: {entry.item}&quot;)</code></pre>
+<pre class="output"><code>0: Ada
+1: Grace</code></pre>
+<h2 id="closures-as-values">Closures as values<a class="anchor" href="#closures-as-values" aria-hidden="true">#</a></h2>
+<p>A closure is a value, so you can give it a name with <code>let</code> and call it like a function:</p>
+<pre data-science><code>def main():
+    let add_one be x giving x + 1
+    print(add_one(3))
+
+    let offset be 10
+    let shifted be x giving x + offset
+    print(shifted(1))</code></pre>
+<pre class="output"><code>4
+11</code></pre>
+<p>The second one uses <code>offset</code> from the code around it. A closure may read values from where it was written.</p>
+<p>You can also hand a closure to a function that expects one. A parameter of type <code>(Int) -&gt; Int</code> takes an <code>Int</code> and returns an <code>Int</code>:</p>
+<pre data-science><code>def apply_twice(f: (Int) -&gt; Int, n: Int) -&gt; Int:
+    f(f(n))
+
+def main():
+    let add_one be x giving x + 1
+    print(apply_twice(add_one, 5))
+    print(apply_twice(n giving n * 3, 2))</code></pre>
+<pre class="output"><code>7
+18</code></pre>
+<aside class="callout-note"><p><strong>Note:</strong> A chain's closure receives each array element as a borrow (see <a href="ownership.html">Ownership and borrowing</a>), so a closure stored with <code>let</code> is for calling directly or passing to functions. Inside a chain, write the closure in place.</p></aside>
+<h2 id="summary">Summary<a class="anchor" href="#summary" aria-hidden="true">#</a></h2>
+<ul><li><code>array.iterate()</code> starts a chain; a final step such as <code>sum()</code>, <code>count()</code> or <code>collect()</code> ends it.</li><li><code>map</code> transforms, <code>keep</code> and <code>discard</code> filter, <code>sorted(by:)</code> orders, <code>take</code> and <code>skip</code> trim.</li><li><code>each</code> names the element when it is used once; <code>name giving expression</code> when it is used more than once.</li><li><code>maximum</code>, <code>minimum</code>, <code>find</code> and <code>first</code> may find nothing, so test them with <code>?</code>.</li><li><code>reduce(start, (acc, x) giving ...)</code> folds a stream into one value.</li><li>A closure is a value: store it with <code>let</code>, call it, or pass it to a function.</li></ul>
+<p>Next: how Science decides who owns a value and who may borrow it, in <a href="ownership.html">Ownership and borrowing</a>.</p>
 <nav class="pager"><a class="prev" href="collections.html"><span>Previous</span>Arrays, maps and sets</a><a class="next" href="ownership.html"><span>Next</span>Ownership and borrowing</a></nav>
 </main>
 
 <aside class="onpage">
-
+<p class="group">On this page</p><ul><li><a href="#starting-a-chain">Starting a chain</a></li><li><a href="#transforming-each-item-with-map">Transforming each item with map</a></li><li><a href="#choosing-items-with-keep-and-discard">Choosing items with keep and discard</a></li><li><a href="#fields-and-methods">Fields and methods</a></li><li><a href="#chaining-several-steps">Chaining several steps</a></li><li><a href="#when-each-is-not-enough-giving">When <code>each</code> is not enough: giving</a></li><li><a href="#sorting">Sorting</a></li><li><a href="#other-final-steps">Other final steps</a></li><li><a href="#trimming-a-stream">Trimming a stream</a></li><li><a href="#closures-as-values">Closures as values</a></li><li><a href="#summary">Summary</a></li></ul>
 </aside>
 </div>
 
