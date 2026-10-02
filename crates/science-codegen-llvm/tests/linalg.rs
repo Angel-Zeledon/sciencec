@@ -55,7 +55,7 @@ fn prints(name: &str, source: &str) -> String {
 fn program(body: &str) -> String {
     format!(
         "use ndarray (NdArray)
-use linalg (identity, transpose, matmul, dot, trace, determinant, lu, solve, inverse, cholesky, qr, norm_frobenius, norm_1, norm_inf, norm_2, LinalgError, eigh, eig, svd, rank, cond, pinv, lstsq, slogdet, norm, Norm, Lstsq)
+use linalg (identity, transpose, matmul, dot, trace, determinant, lu, solve, inverse, cholesky, qr, norm_frobenius, norm_1, norm_inf, norm_2, LinalgError, eigh, eig, svd, rank, cond, pinv, pseudo_inverse, lstsq, slogdet, norm, Norm, Lstsq)
 
 def emit(label: String, a: &NdArray):
     let mutable line be label
@@ -888,6 +888,11 @@ def main():
     if perr?:
         panic(perr.message())
     scalar(\"inv_vs_pinv\", residual(inv, pi))
+    # The named default is pinv at numpy's 1e-15.
+    let pd, pderr be pseudo_inverse(matrix([4.0, 7.0, 2.0, 6.0], 2, 2))
+    if pderr?:
+        panic(pderr.message())
+    scalar(\"pseudo_vs_pinv\", residual(pd, pi))
     # A cutoff above the small singular value drops it.
     let cut, cerr be pinv(matrix([3.0, 0.0, 0.0, 1e-3], 2, 2), 1e-2)
     if cerr?:
@@ -926,6 +931,7 @@ def main():
     near(&out, "rank1", &[0.04, 0.08, 0.08, 0.16], 1e-14);
     exactly(&out, "zero", &[0.0; 6]);
     tiny(&out, "inv_vs_pinv");
+    exactly(&out, "pseudo_vs_pinv", &[0.0]);
     near(&out, "cut", &[1.0 / 3.0, 0.0, 0.0, 0.0], 1e-14);
 }
 

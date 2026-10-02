@@ -826,6 +826,11 @@ public def pinv(a: &NdArray, rcond: F64) -> (NdArray, LinalgError?):
         top be d.s.data[0]
     (pinv_from(d, rcond * top), null)
 
+# `pinv` with numpy's default cutoff, `rcond = 1e-15`. Science has no default
+# parameter values and no overloading, so the default is a name of its own.
+public def pseudo_inverse(a: &NdArray) -> (NdArray, LinalgError?):
+    pinv(a, 1e-15)
+
 # --- Sign and logarithm of the determinant ---------------------------------------
 
 # `(sign, log|det|)`: sign `0.0` and log `-inf` for a singular matrix; refused
