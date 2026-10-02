@@ -5293,6 +5293,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             direct(PUSH_U64)
         } else if is("U8") || is("U16") || is("U32") {
             Push::Value { symbol: PUSH_U64, widen: Some("U64") }
+        } else if ["CChar", "CInt", "CLong", "CLongLong", "CPtrDiff"].iter().any(|name| is(name)) {
+            // **The C integers print like the integer they are**, widened to
+            // `I64`/`U64` through a cast whose source width and signedness the
+            // backend reads off the target (`CLong` is 32 bits under LLP64).
+            // They are still not aliases of the Science primitives; only the
+            // rendering is shared.
+            Push::Value { symbol: PUSH_I64, widen: Some("I64") }
+        } else if ["CUInt", "CULong", "CULongLong", "CSizeT"].iter().any(|name| is(name)) {
+            Push::Value { symbol: PUSH_U64, widen: Some("U64") }
+        } else if is("CDouble") {
+            direct(PUSH_F64)
+        } else if is("CFloat") {
+            direct(PUSH_F32)
         } else if is("F64") || is("Float") {
             // **`Float` is a prelude name of its own, not a spelling of
             // `F64`.** Decision 2 defaults a floating-point literal to `F64`
