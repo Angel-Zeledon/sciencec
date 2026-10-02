@@ -450,7 +450,7 @@ def main():
     print(\"\")
 ";
     assert_eq!(
-        prints("strings", source),
+        prints("strings_leak", source),
         "uno -> one (3)\ndos -> TWO (3)\ntres -> three (4)\n\
          uno/dos uno/tres dos/uno dos/tres tres/uno tres/dos \n"
     );

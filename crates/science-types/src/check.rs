@@ -2347,6 +2347,41 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Borrowed { mutable, expr: inner } => {
                 let typed = self.synth(inner);
                 let inner_ty = self.known_or_error(typed.ty);
+                // **`&e` of a `T?` place that nothing has narrowed is `(&T)?`.**
+                // It is the one rule that lets an owned nullable be inspected
+                // without being consumed: `&e` was `&(T?)`, a borrow with no
+                // fields and no way to ask whether it is present. It is
+                // written as the program the author would write by hand,
+                // `if e?: &e else: null`, and checked as that: inside the
+                // `then` arm `e` is narrowed to `T`, so the inner `&e` is an
+                // ordinary borrow and this arm is not entered again. Shared
+                // borrows of a place only; an exclusive borrow of a nullable
+                // keeps its meaning (a slot that may be assigned).
+                if !*mutable && self.body.place_of(typed.id).is_some() {
+                    let revealed = self.revealed(inner_ty, span);
+                    if let TyKind::Nullable(payload) = *self.types.kind(revealed) {
+                        let held = self.types.borrowed(false, payload);
+                        let wanted = self.types.nullable(held);
+                        let again = hir::Expr { kind: expr.kind.clone(), span };
+                        let guarded = hir::IfExpr {
+                            cond: Box::new(hir::Expr {
+                                kind: hir::ExprKind::Present(inner.clone()),
+                                span,
+                            }),
+                            then_branch: hir::Block {
+                                stmts: Vec::new(),
+                                tail: Some(Box::new(again)),
+                                span,
+                            },
+                            else_branch: Some(Box::new(hir::Expr {
+                                kind: hir::ExprKind::Literal(Literal::Null),
+                                span,
+                            })),
+                            span,
+                        };
+                        return self.if_expr(&guarded, span, Some((wanted, Site::Elsewhere)));
+                    }
+                }
                 if *mutable {
                     // Decision 8: the invalidation is at the point the
                     // exclusive borrow is *created*. `narrow`'s §4.

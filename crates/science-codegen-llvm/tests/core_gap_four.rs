@@ -183,3 +183,46 @@ print(xs.iterate().map(half).sum())
 "#;
     assert_eq!(prints("function_value", source), "3\n1\n12\n6\n");
 }
+
+/// `&e` of an owned `T?` is `(&T)?`: the nullable can be inspected, passed
+/// and narrowed as a borrowed view without being consumed, present or absent.
+#[test]
+fn a_borrow_of_an_owned_nullable_is_a_nullable_borrow() {
+    let source = r#"type E:
+    text: String
+
+E implements Error:
+    def message(self) -> String:
+        f"m {self.text}"
+
+def f() -> E?:
+    E(text: "x")
+
+def g() -> E?:
+    null
+
+def show(v: (&E)?) -> String:
+    if v?:
+        return v.message()
+    "none"
+
+def main():
+    let e be f()
+    let v be &e
+    if v?:
+        print(v.text)
+        print(v.message())
+    print(show(&e))
+    let n be g()
+    let w be &n
+    print(w?)
+    print(show(&n))
+    print(e?)
+    if e?:
+        print(e.text)
+"#;
+    assert_eq!(
+        prints("borrow_nullable", source),
+        "x\nm x\nm x\nfalse\nnone\ntrue\nx\n"
+    );
+}
