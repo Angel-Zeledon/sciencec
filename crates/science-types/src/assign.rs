@@ -1091,6 +1091,17 @@ fn copies(
     if mutable && !site.copies_exclusively() {
         return false;
     }
+    // **Through a stack of shared borrows to the value.** A chain's key
+    // closure sees `&Item`, and after another link the item is itself a
+    // borrow, so `sorted(by: each)` returns a `&&Int` where an `Int` is
+    // wanted. Operators already read through any number of borrows; this does
+    // the same for a copy out, and only for a copy out: the result is the
+    // owned `Copy` value, never a borrow, so `&&T` into `&T` stays refused
+    // ([`copyable`]). Each level beyond the first must be shared.
+    let mut inner = inner;
+    while let TyKind::Borrowed { mutable: false, inner: deeper } = *types.kind(inner) {
+        inner = deeper;
+    }
     types.compatible(inner, target)
         && copyable(types, inner)
         && methods.declares(types, inner, copy)

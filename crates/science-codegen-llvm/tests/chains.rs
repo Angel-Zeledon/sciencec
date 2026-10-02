@@ -1713,3 +1713,29 @@ fn partition_splits_items_into_kept_and_discarded() {
         "3 4\n2\n4\n6\n1\n3\n5\n7\navocado apple\n0\n2 2\n"
     );
 }
+
+// --- keys after another link ------------------------------------------------
+
+/// **A key closure after another link sees `&&Int`** (the item is already a
+/// borrow, and the closure takes a borrow of the item), and returning it as
+/// the `Int` key is a copy out through both borrows: `sorted(by: each)`,
+/// `minimum` and `maximum` all run after a `keep`.
+#[test]
+fn a_key_returned_through_two_borrows_is_copied_out() {
+    assert_eq!(
+        prints(
+            "key-two-borrows",
+            r#"def main():
+    let xs be [3, 1, 2, 5, 4]
+    let sorted be xs.iterate().keep(each > 1).sorted(by: each).collect()
+    for v in sorted:
+        print(v)
+    let lowest be xs.iterate().keep(each > 1).minimum(by: v giving v)
+    let highest be xs.iterate().discard(each > 4).maximum(by: v giving v)
+    if lowest? and highest?:
+        print(f"{lowest} {highest}")
+"#,
+        ),
+        "2\n3\n4\n5\n2 4\n"
+    );
+}
