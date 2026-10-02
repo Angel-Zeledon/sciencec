@@ -53,12 +53,9 @@ impl Drop for Ran {
     }
 }
 
-/// The same budget `harness::RUN_BUDGET` gives, for its reasons.
-const BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
-
 /// Builds `source`, writes `files` into an empty working directory, runs the
 /// program there with `input` on its standard input, and returns what came
-/// back. A program still running after [`BUDGET`] is killed and reported.
+/// back. A program still running after [`harness::RUN_BUDGET`] is killed and reported.
 fn feeds(name: &str, source: &str, files: &[(&str, &[u8])], input: &[u8]) -> Ran {
     use std::io::{Read, Write};
     use std::process::Stdio;
@@ -100,23 +97,12 @@ fn feeds(name: &str, source: &str, files: &[(&str, &[u8])], input: &[u8]) -> Ran
         buf
     });
 
-    let deadline = std::time::Instant::now() + BUDGET;
-    let status = loop {
-        match child.try_wait().expect("polling the child") {
-            Some(status) => break Some(status),
-            None if std::time::Instant::now() >= deadline => break None,
-            None => std::thread::sleep(std::time::Duration::from_millis(20)),
-        }
-    };
-    if status.is_none() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    let status = harness::wait_budgeted(&mut child);
     let _ = writer.join();
     let stdout = stdout_reader.join().expect("the stdout reader thread");
     let mut stderr = String::from_utf8_lossy(&stderr_reader.join().expect("the stderr reader")).into_owned();
     if status.is_none() {
-        stderr.push_str(&format!("\n[input] killed after not exiting within {BUDGET:?}"));
+        stderr.push_str(&format!("\n[input] killed after not exiting within {:?} of CPU time", harness::RUN_BUDGET));
     }
     Ran {
         stdout,

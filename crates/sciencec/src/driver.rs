@@ -575,8 +575,8 @@ impl Session {
             }
             Ok(RunOutcome::TimedOut) => {
                 print(&format!(
-                    "test {name} ... FAILED: did not exit within {}s and was killed — a hang, \
-                     not a wrong answer\n",
+                    "test {name} ... FAILED: did not exit within {}s of CPU time and was killed — a \
+                     hang, not a wrong answer\n",
                     RUN_BUDGET.as_secs()
                 ));
                 self.tally.error();
@@ -976,20 +976,22 @@ fn read_source(path: &Path, name: &str) -> Result<String, String> {
     })
 }
 
-/// How long [`Session::run_test`] waits for the executable before concluding
-/// it will never exit, killing it, and reporting that as its own kind of
-/// failure.
+/// How much CPU time [`Session::run_test`] lets the executable use before
+/// concluding it will never exit, killing it, and reporting that as its own
+/// kind of failure.
 ///
-/// Ten seconds against a program this driver just built itself and expects to
-/// finish close to instantly. Measured, not guessed: every execution test in
-/// this workspace that builds, links and runs a program — including
-/// `crates/science-codegen-llvm/tests/methods.rs`'s
-/// `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times`, the
-/// heaviest one, a real loop run ten thousand times — does all three in under
-/// half a second end to end on this machine. Twenty times that leaves room for
-/// a slow or loaded machine without leaving room for a program that is
-/// actually stuck, which is what a false positive here would have to mean.
-const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// **CPU time, not wall time**, for the reason `childwait.rs` gives: on macOS
+/// the first launch of a freshly linked binary was measured waiting up to
+/// forty seconds in a machine-wide queue under load, so a wall-clock budget
+/// failed correct programs. Thirty seconds of CPU is three times the heaviest
+/// test program in this workspace (about ten seconds, unoptimised) and a
+/// spinning loop reaches it in thirty.
+const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wall-clock backstop for a child that is stuck without computing (a
+/// deadlock, a blocked read) and so never reaches [`RUN_BUDGET`]. Longer than
+/// any launch queue measured.
+const RUN_WALL_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// What [`run_bounded`] found when the wait ended.
 enum RunOutcome {
@@ -1014,21 +1016,10 @@ enum RunOutcome {
 /// failure instead of this call blocking too.
 fn run_bounded(exe: &Path, budget: std::time::Duration) -> std::io::Result<RunOutcome> {
     let mut child = std::process::Command::new(exe).spawn()?;
-    let deadline = std::time::Instant::now() + budget;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(RunOutcome::Exited(status));
-        }
-        if std::time::Instant::now() >= deadline {
-            // Best-effort: the process is already misbehaving, and a kill or a
-            // reap failing here is not this function's failure to report —
-            // `TimedOut` is the true answer regardless.
-            let _ = child.kill();
-            let _ = child.wait();
-            return Ok(RunOutcome::TimedOut);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    Ok(match crate::childwait::wait_within(&mut child, budget, RUN_WALL_BACKSTOP)? {
+        Ok(status) => RunOutcome::Exited(status),
+        Err(_) => RunOutcome::TimedOut,
+    })
 }
 
 /// A platform-independent phrase for the errors a driver actually meets.

@@ -56,6 +56,7 @@
 //! and adding escape codes here would mean re-rendering diagnostics in the
 //! driver, which is exactly what this binary must not do.
 
+mod childwait;
 mod driver;
 mod package;
 mod tools;

@@ -70,14 +70,10 @@ fn run_with(name: &str, source: &str, configure: impl FnOnce(&mut Command)) -> S
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     configure(&mut command);
     let mut child = command.spawn().expect("the program spawns");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while child.try_wait().expect("polling the child").is_none() {
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("[os] killed after not exiting within 10s");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    // `wait_budgeted` reaps the child, so the output is read from a finished
+    // process: these programs print little, so no pipe can fill meanwhile.
+    let status = harness::wait_budgeted(&mut child);
+    assert!(status.is_some(), "[os] killed after not exiting within {:?} of CPU time", harness::RUN_BUDGET);
     let output = child.wait_with_output().expect("the program's output");
     let _ = std::fs::remove_dir_all(&dir);
     let stderr = String::from_utf8_lossy(&output.stderr);

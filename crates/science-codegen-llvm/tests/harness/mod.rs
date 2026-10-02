@@ -22,6 +22,10 @@
 //! warnings and the fix people reach for is to delete them.
 #![allow(dead_code)]
 
+/// The driver's own child-wait, compiled in here so the two cannot disagree.
+#[path = "../../../sciencec/src/childwait.rs"]
+mod childwait;
+
 use science_codegen::driver::BuildRequest;
 use science_codegen::target::OptLevel;
 use science_codegen_llvm::{BuildInput, Built, build};
@@ -269,18 +273,35 @@ pub struct Ran {
     pub status: Option<i32>,
 }
 
-/// How long [`run`] waits for the program before concluding it will never
-/// exit, killing it, and reporting that rather than blocking forever.
+/// How much CPU time [`run`] lets the program use before concluding it will
+/// never exit, killing it, and reporting that rather than blocking forever.
 ///
-/// Ten seconds against programs this crate's own tests build and run on
-/// purpose to finish near-instantly. Measured, not guessed:
-/// `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times` in
-/// `methods.rs` — the heaviest execution test in this crate, a real loop run
-/// ten thousand times — builds, links and runs in under half a second end to
-/// end. Twenty times that leaves room for a slow or loaded machine without
-/// leaving room for a program that is actually stuck, which is what a false
-/// positive here would have to mean.
-const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// **CPU time, not wall time.** This was a ten-second wall clock, and it failed
+/// correct programs constantly under load: macOS puts the first launch of each
+/// freshly linked binary through a machine-wide verification queue, and
+/// measured on a loaded machine a program that prints `1` took 1 to 40 seconds
+/// to *start* (ad-hoc `codesign -s -` does not avoid it). `childwait.rs` has
+/// the whole argument. A queued child has used no CPU, so it costs nothing to
+/// wait; a program stuck in a loop reaches the budget in as many seconds.
+///
+/// Thirty seconds against the heaviest legitimate test in this crate, about
+/// ten seconds of CPU unoptimised (`linalg`'s `rank_cond_pinv`, `closures`'s
+/// hundred-thousand-call test), which is also why ten was too tight under SMT
+/// contention even without the queue.
+pub const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wall-clock backstop for a program that is stuck without computing (a
+/// deadlock, a blocked read) and so never reaches [`RUN_BUDGET`]. Longer than
+/// any launch queue measured.
+pub const WALL_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Wait for `child` under [`RUN_BUDGET`] and [`WALL_BACKSTOP`]: `Some(status)`
+/// if it exited, `None` if it was killed for overrunning (and reaped).
+pub fn wait_budgeted(child: &mut std::process::Child) -> Option<std::process::ExitStatus> {
+    childwait::wait_within(child, RUN_BUDGET, WALL_BACKSTOP)
+        .expect("polling the child")
+        .ok()
+}
 
 /// Run a built program and collect all three, but do not wait past
 /// [`RUN_BUDGET`] for it.
@@ -326,21 +347,12 @@ pub fn run(built: &Built) -> Ran {
         buf
     });
 
-    let deadline = std::time::Instant::now() + RUN_BUDGET;
-    let status = loop {
-        match child.try_wait().expect("polling the child") {
-            Some(status) => break Some(status),
-            None if std::time::Instant::now() >= deadline => break None,
-            None => std::thread::sleep(std::time::Duration::from_millis(20)),
-        }
-    };
+    let status = wait_budgeted(&mut child);
 
     let timed_out = status.is_none();
     if timed_out {
-        // The pipe readers above are still blocked in `read_to_end` until the
-        // child's ends close, which a kill (rather than a plain drop) does.
-        let _ = child.kill();
-        let _ = child.wait();
+        // `wait_budgeted` has already killed and reaped the child, which is
+        // what closes the pipes the reader threads below are blocked on.
     }
 
     let stdout = stdout_reader.join().expect("the stdout reader thread");
@@ -348,8 +360,8 @@ pub fn run(built: &Built) -> Ran {
     if timed_out {
         stderr.extend_from_slice(
             format!(
-                "\n[harness] killed after not exiting within {:?} — see harness::RUN_BUDGET",
-                RUN_BUDGET
+                "\n[harness] killed after not exiting within {:?} of CPU time (or {:?} of wall time) — see harness::RUN_BUDGET",
+                RUN_BUDGET, WALL_BACKSTOP
             )
             .as_bytes(),
         );
