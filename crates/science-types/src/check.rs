@@ -7590,6 +7590,28 @@ impl<'a> BodyChecker<'a> {
     /// statement is in `builtins.rs` beside the declaration; what is closed
     /// here is the disagreement between the ends, which is the mistake an
     /// author actually makes.
+    /// An indexed read of a `Copy` element in a value position (`0..a.dims[0]`)
+    /// is the element, as `let held be items[i]` makes it: a `&T` read through
+    /// `Index` with a `Copy` coercion to `T` is copied out.
+    fn copy_out_of_index(&mut self, written: &hir::Expr, typed: Typed) -> Typed {
+        if !matches!(written.kind, hir::ExprKind::Index { .. }) {
+            return typed;
+        }
+        let InferTy::Known(found) = typed.ty else { return typed };
+        let found = self.revealed(found, written.span);
+        let TyKind::Borrowed { mutable: false, inner } = *self.types.kind(found) else {
+            return typed;
+        };
+        let methods = self.decls.methods();
+        if assignable(self.types, methods, self.coercions, Site::Elsewhere, found, inner)
+            .is_some_and(|coercion| coercion == Coercion::Copy)
+        {
+            let id = self.coerce(typed.id, found, inner, Site::Elsewhere, written.span);
+            return Typed { id, ty: InferTy::Known(inner) };
+        }
+        typed
+    }
+
     fn range_expr(
         &mut self,
         start: &hir::Expr,
@@ -7598,7 +7620,9 @@ impl<'a> BodyChecker<'a> {
         span: Span,
     ) -> Typed {
         let start_typed = self.synth(start);
+        let start_typed = self.copy_out_of_index(start, start_typed);
         let end_typed = self.synth(end);
+        let end_typed = self.copy_out_of_index(end, end_typed);
         let element = match self.unify_element(start_typed.ty, end_typed.ty, end.span) {
             Some(joined) => joined,
             None => {

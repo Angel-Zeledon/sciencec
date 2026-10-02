@@ -732,3 +732,21 @@ def main():
 ";
     assert_eq!(prints("empty_array_argument", source), "0\n3\n0\n2\n");
 }
+
+/// An indexed `Copy` element ends a range by value: `0..g.dims[0]`.
+#[test]
+fn an_indexed_element_ends_a_range() {
+    let source = "type Grid:
+    dims: Array[Int]
+
+def main():
+    let g be Grid(dims: [3, 4])
+    let mutable t be 0
+    for i in 0..g.dims[0]:
+        t be t + g.dims[1] * i
+    print(t)
+    for j in g.dims[0]..=g.dims[1]:
+        print(j)
+";
+    assert_eq!(prints("indexed_range_end", source), "12\n3\n4\n");
+}
