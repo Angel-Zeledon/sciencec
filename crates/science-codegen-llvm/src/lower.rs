@@ -11589,6 +11589,7 @@ impl<'a> Lowerer<'a> {
             // cannot express, so it stays missing until that shape exists.
             ("Map", "new", "science_map_new"),
             ("Map", "get", "science_map_get"),
+            ("Map", "get_mutably", "science_map_get"),
             ("Map", "contains", "science_map_contains"),
             ("Map", "length", "science_map_len"),
             // `Set of T`: four of its five are a map's entry points over a

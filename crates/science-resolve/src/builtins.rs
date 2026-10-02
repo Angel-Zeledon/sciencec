@@ -1906,6 +1906,17 @@ const BLOCKS: &[Block] = &[
                 params: &[("key", Ty::Ref(&Ty::Var("K")))],
                 ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("V")))),
             },
+            // `Array.get_mutably`'s twin (`indexing-and-array-literals.md`
+            // §1.4 Decision 5; DREAM's `get_mut`, spelled the way the prelude
+            // spells it): the value comes back as a writable borrow of the
+            // map, `null` when the key is absent. Same runtime lookup as `get`.
+            Method {
+                name: "get_mutably",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("key", Ty::Ref(&Ty::Var("K")))],
+                ret: Some(Ty::Opt(&Ty::MutRef(&Ty::Var("V")))),
+            },
             // §3.4: membership is `contains` on both `Map` and `Set`, because
             // `has` is a keyword and *"between two names that read equally
             // well, the one that compiles wins"*.

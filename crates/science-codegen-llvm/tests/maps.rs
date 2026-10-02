@@ -902,3 +902,25 @@ def main():
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Map.get_mutably` is `get`'s writable twin: a write through the borrow
+/// reaches the stored value, and an absent key is `null`.
+#[test]
+fn a_write_through_map_get_mutably_reaches_the_value() {
+    assert_eq!(
+        prints(
+            "map-get-mutably",
+            "let mutable m be Map[String, Int].new()\n\
+             m.insert(\"a\", 1)\n\
+             m.insert(\"b\", 2)\n\
+             let p be m.get_mutably(\"a\")\n\
+             if p?:\n\
+             \x20   p be 50\n\
+             let q be m.get_mutably(\"zz\")\n\
+             print(q?)\n\
+             for entry in m:\n\
+             \x20   print(f\"{entry.key} {entry.value}\")\n",
+        ),
+        "false\na 50\nb 2\n"
+    );
+}
