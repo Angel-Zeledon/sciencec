@@ -1203,6 +1203,21 @@ impl<'a> BodyChecker<'a> {
     fn coerce(&mut self, expr: ExprId, from: Ty, to: Ty, site: Site, span: Span) -> ExprId {
         let source = self.revealed(from, span);
         let target = self.revealed(to, span);
+        // A value wanted and a borrow of a borrow given (`sorted(by: each)`
+        // after another link, where the item is already a borrow): peel the
+        // outer layer the way an operator's operand is peeled, one `Copy`
+        // load per layer, and coerce what is left.
+        if !matches!(self.types.kind(target), TyKind::Borrowed { .. })
+            && assignable(self.types, self.decls.methods(), self.coercions, site, source, target)
+                .is_none()
+        {
+            let typed = Typed { id: expr, ty: InferTy::Known(source) };
+            if let Some(peeled) = self.read_through_borrows(typed, source, span) {
+                if let InferTy::Known(now) = self.infer.resolve(peeled.ty) {
+                    return self.coerce(peeled.id, now, to, site, span);
+                }
+            }
+        }
         // `Never` coerces to anything, and to nothing in particular: the
         // expression never produces a value, so there is no value to convert
         // and no node to record. `diverged` is what tells the rest of the

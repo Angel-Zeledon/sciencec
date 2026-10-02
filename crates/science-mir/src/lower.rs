@@ -1940,44 +1940,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // it, and `science-regions`' `moved` reported `SC0301` against
                 // a line that moves nothing. §5's exception, the same
                 // `force_copy` the comparison operators take.
-                let mut value = match coercion {
+                let value = match coercion {
                     Coercion::Copy => force_copy(value),
                     _ => value,
                 };
-                // A copy out through a stack of shared borrows (`&&Int` into
-                // `Int`): read down to the innermost borrow first, so the
-                // coercion itself is always the one-level load.
-                if coercion == Coercion::Copy {
-                    let mut current = self.thir.ty(*operand);
-                    loop {
-                        let revealed = self.revealed(current);
-                        let TyKind::Borrowed { inner, .. } = *self.context.types.kind(revealed)
-                        else {
-                            break;
-                        };
-                        let inner_revealed = self.revealed(inner);
-                        if !matches!(
-                            self.context.types.kind(inner_revealed),
-                            TyKind::Borrowed { .. }
-                        ) {
-                            break;
-                        }
-                        let (Operand::Copy(place) | Operand::Move(place)) = value.clone() else {
-                            break;
-                        };
-                        let step = self.temp(inner, span, block);
-                        self.assign(
-                            block,
-                            Place::local(step),
-                            Rvalue::Use(Operand::Copy(
-                                place.project(Projection::Deref { ty: inner }),
-                            )),
-                            span,
-                        );
-                        value = Operand::Copy(Place::local(step));
-                        current = inner;
-                    }
-                }
                 self.assign(block, dest, Rvalue::Coerce { operand: value, coercion, ty }, span);
                 block
             }
