@@ -777,3 +777,45 @@ def main():
 ";
     assert_eq!(prints("unsafe_def", source), "42\n7\n");
 }
+
+/// A chain stored in a variable (`collections-and-chains.md` section 2.3):
+/// `let evens be xs.iterate().keep(..)` then a terminal or a `for` on the name.
+/// No adapter has a runtime representation, so the binding records the chain
+/// and its one use fuses it; chains of chains, a captured local, a field source
+/// and a source mutated *after* the terminal all run. The refusal of a source
+/// mutated *before* the terminal is `tests/ui/regions/stored_chain_source_mutated.science`.
+#[test]
+fn a_chain_stored_in_a_variable_runs_at_its_use() {
+    let source = "type Bag:
+    items: Array[Int]
+
+def total_of(bag: &Bag) -> Int:
+    let big be bag.items.iterate().keep(each > 2)
+    big.sum()
+
+def main():
+    let xs be [1, 2, 3, 4, 5, 6]
+    let limit be 5
+    let base be xs.iterate().keep(x giving x < limit)
+    let doubled be base.map(each * 2)
+    let firstthree be doubled.take(3)
+    print(firstthree.sum())
+    let evens be xs.iterate().keep(each % 2 is 0)
+    let kept be evens.collect()
+    print(kept.length())
+    let again be xs.iterate().map(each + 1)
+    print(again.count())
+    print(total_of(Bag(items: [1, 3, 5])))
+    let names be [\"a\", \"bb\", \"ccc\"]
+    let lens be names.iterate().map(n giving n.length())
+    for l in lens:
+        print(l)
+    let mutable later be [1, 2, 3]
+    let pending be later.iterate().map(each * 10)
+    let got be pending.collect()
+    later.push(4)
+    print(got.length())
+    print(later.length())
+";
+    assert_eq!(prints("stored_chain", source),"12\n3\n6\n8\n1\n2\n3\n3\n4\n");
+}

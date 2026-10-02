@@ -1,0 +1,25 @@
+error[SC0330]: `docs` is borrowed here and borrowed exclusively before the borrow ends
+  --> tests/ui/regions/stored_chain_source_mutated.science:12:5
+   |
+11 |     let titles be docs.iterate().map(each.length())
+   |     ----------------------------------------------- `docs` is borrowed here, shared
+12 |     docs.push("late arrival")
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ ...and borrowed here, exclusively
+13 |     let out be titles.collect()
+   |                ---------------- the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix
+
+error[SC0330]: `limit` is borrowed here and modified before the borrow ends
+  --> tests/ui/regions/stored_chain_source_mutated.science:19:14
+   |
+18 |     let small be xs.iterate().keep(x giving x < limit)
+   |     -------------------------------------------------- `limit` is borrowed here, shared
+19 |     limit be 3
+   |              ^ ...and modified here, which needs it exclusively
+20 |     print(small.count())
+   |           ------------- the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix

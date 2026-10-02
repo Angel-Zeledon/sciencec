@@ -1,0 +1,25 @@
+# UI test: the source of a stored chain is modified before the chain runs.
+#
+# `collections-and-chains.md` section 2.3: a chain bound to a name is a borrow
+# of what it reads, live until the terminal. `docs.push(..)` between the `let`
+# and `titles.collect()` wants exclusive access while the chain holds a shared
+# one. The same holds for a local the chain's closure captures (`limit`).
+# Running the terminal before the `push` is the fix, and is accepted.
+
+def main():
+    let mutable docs be ["a", "bb"]
+    let titles be docs.iterate().map(each.length())
+    docs.push("late arrival")
+    let out be titles.collect()
+    print(out.length())
+
+    let mutable xs be [1, 2, 3]
+    let mutable limit be 2
+    let small be xs.iterate().keep(x giving x < limit)
+    limit be 3
+    print(small.count())
+
+    let fine be xs.iterate().map(each + 1)
+    let ok be fine.collect()
+    xs.push(4)
+    print(ok.length())

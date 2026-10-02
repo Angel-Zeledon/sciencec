@@ -593,7 +593,7 @@
 //! as [`Unresolved::Display`], rather than lowered to the nearest width and
 //! found by whoever ran the program.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use science_diagnostics::Span;
 use science_lexer::IntBase;
@@ -926,6 +926,12 @@ struct Builder<'a, 'ctx> {
     blocks: Vec<BasicBlock>,
     borrows: Vec<BorrowData>,
     bindings: HashMap<DefId, Local>,
+    /// Chains stored in a variable (`collections-and-chains.md` section 2.3):
+    /// the binding is not a local, it names the chain expression, which is
+    /// fused into its one use. See [`Builder::try_store_chain`].
+    stored_chains: HashMap<DefId, StoredChain>,
+    /// The stored chains already consumed by a terminal or a `for`.
+    stored_used: HashSet<DefId>,
     scopes: Vec<Scope>,
     loops: Vec<LoopScope>,
     arg_count: usize,
@@ -999,6 +1005,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             blocks: Vec::new(),
             borrows: Vec::new(),
             bindings: HashMap::new(),
+            stored_chains: HashMap::new(),
+            stored_used: HashSet::new(),
             scopes: Vec::new(),
             loops: Vec::new(),
             arg_count: 0,
@@ -1638,6 +1646,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // The block's scope, not the statement's: `register_at` says why.
         let scope = self.scopes.len().saturating_sub(2);
         if bindings.len() == 1 {
+            if let Some(next) = self.try_store_chain(bindings[0], value, block, span) {
+                return next;
+            }
             let local = self.declare_binding(bindings[0], block, scope);
             return self.expr_into(Place::local(local), value, block);
         }
@@ -6850,6 +6861,19 @@ struct Chain {
     /// [`Builder::chain_pass`] reads it off the source array it is already
     /// holding rather than off a field that could disagree with it.
     steps: Vec<(Step, Ty)>,
+    /// Every argument written at a link, through any stored chain the walk
+    /// went through.
+    args: Vec<ExprId>,
+    /// The stored chains the walk went through, outermost first.
+    stored: Vec<DefId>,
+}
+
+/// A chain bound to a name: the expression it was written as, and the shared
+/// borrows taken at the `let` that keep every place it reads from live until it
+/// is used, which is `collections-and-chains.md` section 2.3's `SC0330`.
+struct StoredChain {
+    expr: ExprId,
+    guards: Vec<Local>,
 }
 
 impl Builder<'_, '_> {
@@ -6911,16 +6935,30 @@ impl Builder<'_, '_> {
     /// steps come out in the order the author wrote them.
     fn chain_of(&self, mut expr: ExprId) -> Option<Chain> {
         let mut steps: Vec<(Step, Ty)> = Vec::new();
+        let mut stored: Vec<DefId> = Vec::new();
+        let mut all_args: Vec<ExprId> = Vec::new();
         loop {
             let node = self.thir.expr(expr);
+            // A name bound to a chain stands for the chain, once.
+            if let ExprKind::Local(def) = node.kind {
+                if let Some(chain) = self.stored_chains.get(&def) {
+                    if self.stored_used.contains(&def) || stored.contains(&def) {
+                        return None;
+                    }
+                    stored.push(def);
+                    expr = chain.expr;
+                    continue;
+                }
+            }
             let ExprKind::MethodCall { receiver, method: Some(method), args } = &node.kind else {
                 return None;
             };
             let (receiver, method, args) = (*receiver, *method, args.clone());
             if let Some(kind) = self.chain_source_kind(method) {
                 steps.reverse();
-                return Some(Chain { source: receiver, kind, steps });
+                return Some(Chain { source: receiver, kind, steps, args: all_args, stored });
             }
+            all_args.extend(args.iter().copied());
             let (_, name) = self.chain_method(method)?;
             let item = self.thir.expr(expr).ty;
             let item = self.chain_item(item)?;
@@ -7037,8 +7075,148 @@ impl Builder<'_, '_> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
+        // A stored chain is consumed here: the guards taken where it was bound
+        // are read now, so the borrows they hold are live from the `let` to this
+        // point and a write to what the chain reads in between is refused.
+        for def in &chain.stored {
+            self.stored_used.insert(*def);
+            let guards = self.stored_chains.get(def).map(|c| c.guards.clone()).unwrap_or_default();
+            for guard in guards {
+                let ty = self.place_ty(&Place::local(guard));
+                let temp = self.temp(ty, span, block);
+                self.assign(
+                    block,
+                    Place::local(temp),
+                    Rvalue::Use(Operand::Copy(Place::local(guard))),
+                    span,
+                );
+            }
+        }
         let (source, block) = self.chain_source(chain.source, block, span);
         self.lower_chain_over(dest, terminal, chain.kind, &source, &chain.steps, block, span)
+    }
+
+    /// `let evens be xs.iterate().keep(each % 2 is 0)` — a chain bound to a
+    /// name (`collections-and-chains.md` section 2.3).
+    ///
+    /// **Nothing is built.** Every adapter is a type that does no work (section
+    /// 2.1) and has no layout, so the binding is not a local: it records the
+    /// expression, and the one terminal or `for` that consumes it fuses it as if
+    /// it had been written there. A chain is neither `Copy` nor `Clone` and its
+    /// terminals take `self` by value, so one use is all the checker allows, and
+    /// a second use of the name is refused here too (`stored_used`).
+    ///
+    /// **What keeps this the same program.** The chain is lazy, so running it at
+    /// its use is what section 2.3 means. What the deferral could change is what
+    /// the chain reads in between, and that is section 2.3's `SC0331`: for every
+    /// local the chain names — its source, a captured variable, a count — this
+    /// takes a shared borrow *here*, in a temporary that lives as long as the
+    /// binding, and the use reads it. The region check then refuses a write to
+    /// any of them between the two, as it would a borrow held by a value.
+    ///
+    /// **What is not stored, and falls through to the backend's refusal:** a
+    /// chain over a source that is not a plain place (evaluating `make().iterate()`
+    /// later would run `make` later), an argument that is not a closure, a
+    /// literal or a name (its evaluation would move), a closure that writes or
+    /// consumes what it captures, and a `zip`/`followed_by`, whose second source
+    /// is an expression of its own.
+    fn try_store_chain(
+        &mut self,
+        binding: DefId,
+        value: ExprId,
+        mut block: BlockId,
+        span: Span,
+    ) -> Option<BlockId> {
+        let written = self.thir.ty(value);
+        let ty = self.revealed(written);
+        let TyKind::Named { def, .. } = self.context.types.kind(ty) else { return None };
+        let entry = self.context.defs.get(*def);
+        if !entry.is_builtin() || !CHAIN_TYPES.contains(&entry.name.as_str()) {
+            return None;
+        }
+        let chain = self.chain_of(value)?;
+        let mut guarded: Vec<DefId> = Vec::new();
+        if !self.chain_source_is_place(chain.source, &mut guarded) {
+            return None;
+        }
+        for arg in &chain.args {
+            if !self.chain_arg_is_stable(*arg, &mut guarded) {
+                return None;
+            }
+        }
+        let mut seen: HashSet<DefId> = HashSet::new();
+        guarded.retain(|def| seen.insert(*def));
+        let locals: Vec<Local> = guarded
+            .iter()
+            .map(|def| self.bindings.get(def).copied())
+            .collect::<Option<Vec<_>>>()?;
+        let scope = self.scopes.len().saturating_sub(2);
+        let mut guards = Vec::with_capacity(locals.len());
+        for local in locals {
+            let place = self.auto_deref(Place::local(local));
+            let referent = self.place_ty(&place);
+            let borrowed = self.context.types.borrowed(false, referent);
+            let guard = self.push_local(borrowed, LocalKind::Temp, span);
+            self.register_at(scope, guard);
+            self.push_statement(block, StatementKind::StorageLive(guard), span);
+            block = self.borrow_place(Place::local(guard), false, place, block, span, false);
+            guards.push(guard);
+        }
+        self.stored_chains.insert(binding, StoredChain { expr: value, guards });
+        Some(block)
+    }
+
+    /// Whether a chain's source is a place that can be named again later:
+    /// a local, `self`, or a field of one.
+    fn chain_source_is_place(&self, source: ExprId, guarded: &mut Vec<DefId>) -> bool {
+        match &self.thir.expr(source).kind {
+            ExprKind::Local(def) | ExprKind::SelfValue(def) => {
+                guarded.push(*def);
+                true
+            }
+            ExprKind::Field { base, .. } | ExprKind::TupleField { base, .. } => {
+                self.chain_source_is_place(*base, guarded)
+            }
+            ExprKind::Coerce { operand, .. } | ExprKind::Narrow(operand) => {
+                self.chain_source_is_place(*operand, guarded)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a link's argument means the same wherever it is evaluated, and
+    /// which locals it reads. See [`Builder::try_store_chain`].
+    fn chain_arg_is_stable(&mut self, arg: ExprId, guarded: &mut Vec<DefId>) -> bool {
+        match &self.thir.expr(arg).kind {
+            ExprKind::Literal(_) | ExprKind::Item(_) | ExprKind::Unit => true,
+            ExprKind::Local(def) => {
+                guarded.push(*def);
+                true
+            }
+            ExprKind::Coerce { operand, .. } => self.chain_arg_is_stable(*operand, guarded),
+            ExprKind::Closure { param, rest, body } => {
+                let mut params = vec![*param];
+                params.extend(rest.iter().copied());
+                let found =
+                    crate::capture::captures_of(self.context.decls, self.thir, &params, *body);
+                for capture in found {
+                    // The strength `lower_captures` would borrow it at: a
+                    // consume of nodes that all copy is a read.
+                    let moves = capture.consumed.iter().any(|node| {
+                        let node_ty = self.thir.ty(*node);
+                        !self.is_copy(node_ty)
+                    });
+                    match capture.use_kind {
+                        crate::capture::Use::Read => {}
+                        crate::capture::Use::Consume if !moves => {}
+                        _ => return false,
+                    }
+                    guarded.push(capture.def);
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// A chain over `source`, split at its first barrier.
